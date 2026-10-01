@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createApiApp } from "../worker/index";
@@ -18,7 +19,24 @@ const backupDir = process.env.BACKUP_DIR || path.join(projectRoot, "data", "back
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(backupDir, { recursive: true });
 
+function applyMigrations() {
+  const script = path.join(projectRoot, "scripts", "migrate.mjs");
+  if (!fs.existsSync(script)) {
+    console.warn("scripts/migrate.mjs missing; skip db migrate");
+    return;
+  }
+  const result = spawnSync(process.execPath, [script], {
+    stdio: "inherit",
+    env: process.env,
+    cwd: projectRoot,
+  });
+  if (result.status) {
+    throw new Error(`Database migrate failed with code ${result.status}`);
+  }
+}
+
 async function main() {
+  applyMigrations();
   const db = await openMysql();
   const app = createApiApp();
   const env = {
