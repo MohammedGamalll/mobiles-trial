@@ -41,6 +41,13 @@ function Guard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function PermGuard({ perm, children }: { perm: string | string[]; children: React.ReactNode }) {
+  const { can } = useApp();
+  const ok = Array.isArray(perm) ? can(...perm) : can(perm);
+  if (!ok) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   const { user, tr } = useApp();
   return (
@@ -73,10 +80,10 @@ function AppRoutes() {
         <Route path="hr/payroll" element={<PayrollPage />} />
         <Route path="products" element={<Products />} />
         <Route path="products/:id" element={<ProductDetail />} />
-        <Route path="inventory" element={<InventoryPage />} />
-        <Route path="batches" element={<BatchesPage />} />
-        <Route path="purchases" element={<PurchasesPage />} />
-        <Route path="purchases/:id" element={<PurchaseDetail />} />
+        <Route path="inventory" element={<PermGuard perm="inventory.view"><InventoryPage /></PermGuard>} />
+        <Route path="batches" element={<PermGuard perm="inventory.view"><BatchesPage /></PermGuard>} />
+        <Route path="purchases" element={<PermGuard perm="purchases.view"><PurchasesPage /></PermGuard>} />
+        <Route path="purchases/:id" element={<PermGuard perm="purchases.view"><PurchaseDetail /></PermGuard>} />
         <Route path="customers" element={<CustomersPage />} />
         <Route path="customers/:id" element={<CustomerDetail />} />
         <Route path="suppliers" element={<SuppliersPage />} />
@@ -87,14 +94,14 @@ function AppRoutes() {
         <Route path="part-types" element={<CatalogCrud table="part_types" title={tr("partTypes")} />} />
         <Route path="categories" element={<CatalogCrud table="categories" title={tr("categories")} />} />
         <Route path="models" element={<CatalogCrud table="models" title={tr("models")} />} />
-        <Route path="locations" element={<LocationsPage />} />
-        <Route path="transfers" element={<TransfersPage />} />
-        <Route path="transfers/:id" element={<TransferDetail />} />
-        <Route path="stocktake" element={<StocktakesPage />} />
-        <Route path="stocktake/:id" element={<StocktakeDetail />} />
+        <Route path="locations" element={<PermGuard perm="locations.manage"><LocationsPage /></PermGuard>} />
+        <Route path="transfers" element={<PermGuard perm="transfers.view"><TransfersPage /></PermGuard>} />
+        <Route path="transfers/:id" element={<PermGuard perm="transfers.view"><TransferDetail /></PermGuard>} />
+        <Route path="stocktake" element={<PermGuard perm="stocktake.view"><StocktakesPage /></PermGuard>} />
+        <Route path="stocktake/:id" element={<PermGuard perm="stocktake.view"><StocktakeDetail /></PermGuard>} />
         <Route path="expenses" element={<ExpensesPage />} />
         <Route path="payments" element={<PaymentsPage />} />
-        <Route path="serials" element={<SerialsPage />} />
+        <Route path="serials" element={<PermGuard perm="serials.manage"><SerialsPage /></PermGuard>} />
         <Route path="cheques" element={<ChequesPage />} />
         <Route path="installments" element={<InstallmentsPage />} />
         <Route path="ledger/cash" element={<CashAccountsPage />} />

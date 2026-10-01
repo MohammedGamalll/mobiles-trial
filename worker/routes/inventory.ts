@@ -42,7 +42,7 @@ inventoryRoutes.get("/batches", requirePerm("inventory.view"), async (c) => {
   const url = new URL(c.req.url);
   const p = listParams(url);
   const { page, pageSize, offset } = paginate(url);
-  const where = ["1=1"];
+  const where = ["p.deleted_at IS NULL"];
   const params: (string | number)[] = [];
   applyEq(where, params, "ib.product_id", p.product_id, true);
   applyEq(where, params, "p.brand_id", p.brand_id, true);
@@ -121,7 +121,13 @@ inventoryRoutes.post("/adjust", requirePerm("inventory.adjust"), async (c) => {
   const b = await c.req.json<{ product_id: number; batch_id?: number; qty: number; reason: string }>();
   if (!b.product_id || !b.qty) return c.json({ error: "missing" }, 400);
   const user = c.get("user");
+  const prod = await c.env.DB.prepare("SELECT location_id FROM products WHERE id = ?").bind(b.product_id).first<{ location_id: number | null }>();
+  let locId = prod?.location_id || null;
   let batchId = b.batch_id;
+  if (batchId) {
+    const batch = await c.env.DB.prepare("SELECT location_id FROM inventory_batches WHERE id = ?").bind(batchId).first<{ location_id: number | null }>();
+    if (batch?.location_id) locId = batch.location_id;
+  }
   if (!batchId) {
     const batches = await availableBatches(c.env.DB, b.product_id);
     if (!batches.length && b.qty < 0) return c.json({ error: "no_batch" }, 400);
@@ -129,14 +135,17 @@ inventoryRoutes.post("/adjust", requirePerm("inventory.adjust"), async (c) => {
       const code = await nextNumber(c.env.DB, "batch");
       const ins = await c.env.DB
         .prepare(
-          `INSERT INTO inventory_batches (batch_code, product_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, notes)
-           VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,
+          `INSERT INTO inventory_batches (batch_code, product_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, notes, location_id)
+           VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`,
         )
-        .bind(code, b.product_id, todayIso(), b.qty, b.qty, b.reason || "adjustment")
+        .bind(code, b.product_id, todayIso(), b.qty, b.qty, b.reason || "adjustment", locId)
         .run();
       batchId = ins.meta.last_row_id;
+      await c.env.DB.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(b.qty, b.product_id).run();
     } else {
       batchId = batches[0].id;
+      const fromBatch = await c.env.DB.prepare("SELECT location_id FROM inventory_batches WHERE id = ?").bind(batchId).first<{ location_id: number | null }>();
+      if (fromBatch?.location_id) locId = fromBatch.location_id;
     }
   }
   if (b.qty > 0 && b.batch_id) {
@@ -160,6 +169,8 @@ inventoryRoutes.post("/adjust", requirePerm("inventory.adjust"), async (c) => {
     referenceId: 0,
     notes: b.reason || "",
     userId: user.id,
+    toLocationId: b.qty > 0 ? locId : null,
+    fromLocationId: b.qty < 0 ? locId : null,
   });
   await audit(c.env.DB, user, "stock_adjustment", "product", b.product_id, `Adjust ${b.qty}: ${b.reason || ""}`);
   await maybeStockAlerts(c.env.DB, b.product_id);
@@ -242,6 +253,8 @@ inventoryRoutes.post("/purchases", requirePerm("purchases.create"), async (c) =>
     items: { product_id: number; quantity: number; unit_cost: number; discount?: number; expiry_date?: string; production_date?: string }[];
   }>();
   if (!b.items?.length) return c.json({ error: "no_items" }, 400);
+  if (!b.supplier_id) return c.json({ error: "supplier_required" }, 400);
+  if (b.items.some((i) => Number(i.quantity) <= 0)) return c.json({ error: "invalid_qty" }, 400);
   const number = await nextNumber(c.env.DB, "purchase");
   const subtotal = round2(b.items.reduce((s, i) => s + i.quantity * i.unit_cost - (i.discount || 0), 0));
   const total = round2(subtotal - (b.discount || 0) + (b.extra_expenses || 0));
@@ -393,9 +406,57 @@ inventoryRoutes.post("/purchases/:id/reject", requirePerm("purchases.approve"), 
 
 inventoryRoutes.post("/purchases/:id/void", requirePerm("purchases.approve"), async (c) => {
   const id = Number(c.req.param("id"));
-  const inv = await c.env.DB.prepare("SELECT * FROM purchase_invoices WHERE id = ?").bind(id).first<{ status: string; number: string }>();
+  const inv = await c.env.DB.prepare("SELECT * FROM purchase_invoices WHERE id = ?").bind(id).first<{
+    status: string;
+    number: string;
+    supplier_id: number | null;
+    remaining: number;
+  }>();
   if (!inv) return c.json({ error: "not_found" }, 404);
-  if (inv.status === "approved") return c.json({ error: "cannot_void_approved" }, 400);
+  if (inv.status === "approved") {
+    const { results: batches } = await c.env.DB
+      .prepare(
+        "SELECT id, product_id, remaining_qty, original_qty, reserved_qty, location_id, unit_cost FROM inventory_batches WHERE purchase_id = ?",
+      )
+      .bind(id)
+      .all<{
+        id: number;
+        product_id: number;
+        remaining_qty: number;
+        original_qty: number;
+        reserved_qty: number;
+        location_id: number | null;
+        unit_cost: number;
+      }>();
+    if (batches.some((bt) => Number(bt.remaining_qty) < Number(bt.original_qty) || Number(bt.reserved_qty) > 0)) {
+      return c.json({ error: "stock_already_consumed" }, 400);
+    }
+    const user = c.get("user");
+    for (const bt of batches) {
+      const qty = Number(bt.remaining_qty);
+      if (qty <= 0) continue;
+      await c.env.DB.batch([
+        c.env.DB.prepare("UPDATE inventory_batches SET remaining_qty = 0 WHERE id = ?").bind(bt.id),
+        c.env.DB.prepare("UPDATE products SET current_stock = current_stock - ?, updated_at = datetime('now') WHERE id = ?").bind(qty, bt.product_id),
+      ]);
+      await logMovement(c.env.DB, {
+        productId: bt.product_id,
+        batchId: bt.id,
+        type: "purchase_void",
+        qty: -qty,
+        unitCost: bt.unit_cost,
+        referenceType: "purchase",
+        referenceId: id,
+        notes: `Void ${inv.number}`,
+        userId: user.id,
+        fromLocationId: bt.location_id,
+      });
+    }
+    const remaining = round2(Number(inv.remaining || 0));
+    if (inv.supplier_id && remaining > 0) {
+      await c.env.DB.prepare("UPDATE suppliers SET balance = COALESCE(balance,0) - ? WHERE id = ?").bind(remaining, inv.supplier_id).run();
+    }
+  }
   await c.env.DB.prepare("UPDATE purchase_invoices SET deleted_at = datetime('now'), status = 'void' WHERE id = ?").bind(id).run();
   await audit(c.env.DB, c.get("user"), "purchase", "purchase", id, `Void ${inv.number}`);
   return c.json({ ok: true });

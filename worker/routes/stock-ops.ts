@@ -94,6 +94,11 @@ stockOpsRoutes.post("/locations", requirePerm("locations.manage"), async (c) => 
     }
   }
   const code = (b.code || b.name).replace(/\s+/g, "-").toUpperCase().slice(0, 32);
+  const dupCode = await c.env.DB
+    .prepare("SELECT id FROM storage_locations WHERE code = ? AND deleted_at IS NULL")
+    .bind(code)
+    .first();
+  if (dupCode) return c.json({ error: "duplicate_code" }, 400);
   const path = parentPath ? `${parentPath}/${code}` : code;
   const ins = await c.env.DB
     .prepare(
@@ -126,9 +131,23 @@ stockOpsRoutes.put("/locations/:id", requirePerm("locations.manage"), async (c) 
   const cur = await locationById(c.env.DB, id);
   if (!cur) return c.json({ error: "not_found" }, 404);
   const kind = KINDS.includes(String(b.kind || cur.kind || "bin") as (typeof KINDS)[number]) ? String(b.kind || cur.kind || "bin") : "bin";
+  const parentId = b.parent_id === undefined ? cur.parent_id : b.parent_id ? Number(b.parent_id) : null;
+  if (parentId === id) return c.json({ error: "invalid_parent" }, 400);
+  if (parentId) {
+    const desc = await descendantIds(c.env.DB, id);
+    if (desc.includes(parentId)) return c.json({ error: "invalid_parent" }, 400);
+  }
+  const code = String(b.code || cur.code || "");
+  if (code) {
+    const dupCode = await c.env.DB
+      .prepare("SELECT id FROM storage_locations WHERE code = ? AND deleted_at IS NULL AND id != ?")
+      .bind(code, id)
+      .first();
+    if (dupCode) return c.json({ error: "duplicate_code" }, 400);
+  }
   await c.env.DB
     .prepare("UPDATE storage_locations SET name=?, warehouse=?, notes=?, active=?, parent_id=?, kind=?, code=? WHERE id=?")
-    .bind(b.name || cur.name, b.warehouse ?? cur.warehouse, b.notes ?? cur.notes, b.active === 0 ? 0 : 1, b.parent_id === undefined ? cur.parent_id : b.parent_id || null, kind, b.code || cur.code, id)
+    .bind(b.name || cur.name, b.warehouse ?? cur.warehouse, b.notes ?? cur.notes, b.active === 0 ? 0 : 1, parentId, kind, code || cur.code, id)
     .run();
   await audit(c.env.DB, c.get("user"), "edit_location", "storage_locations", id, `Edit ${String(b.name || cur.name)}`);
   return c.json({ ok: true });
@@ -136,6 +155,13 @@ stockOpsRoutes.put("/locations/:id", requirePerm("locations.manage"), async (c) 
 
 stockOpsRoutes.delete("/locations/:id", requirePerm("locations.manage"), async (c) => {
   const id = Number(c.req.param("id"));
+  const ids = await descendantIds(c.env.DB, id);
+  const placeholders = ids.map(() => "?").join(",");
+  const stock = await c.env.DB
+    .prepare(`SELECT COUNT(*) as n FROM inventory_batches WHERE location_id IN (${placeholders}) AND remaining_qty > 0`)
+    .bind(...ids)
+    .first<{ n: number }>();
+  if (Number(stock?.n || 0) > 0) return c.json({ error: "location_has_stock" }, 400);
   await c.env.DB.prepare("UPDATE storage_locations SET deleted_at = datetime('now'), active = 0 WHERE id = ?").bind(id).run();
   await audit(c.env.DB, c.get("user"), "delete_location", "storage_locations", id, "Soft delete location");
   return c.json({ ok: true });
@@ -502,7 +528,7 @@ stockOpsRoutes.post("/stocktakes/:id/approve", requirePerm("stocktake.approve"),
   }>();
   if (!st) return c.json({ error: "not_found" }, 404);
   if (st.status === "approved") return c.json({ error: "already_approved" }, 400);
-  if (st.status === "cancelled") return c.json({ error: "cancelled" }, 400);
+  if (st.status !== "submitted") return c.json({ error: "not_submitted" }, 400);
   const { results: items } = await c.env.DB
     .prepare("SELECT * FROM stocktake_items WHERE stocktake_id = ? AND counted_qty IS NOT NULL")
     .bind(id)

@@ -121,3 +121,9 @@ export function paginate(url: URL) {
   const pageSize = Math.min(300, Math.max(1, Number(url.searchParams.get("pageSize") || 20)));
   return { page, pageSize, offset: (page - 1) * pageSize };
 }
+
+export function isDupEntry(err: unknown) {
+  const e = err as { errno?: number; code?: string; message?: string };
+  const msg = String(e?.message || "").toUpperCase();
+  return e?.errno === 1062 || e?.code === "ER_DUP_ENTRY" || msg.includes("UNIQUE");
+}

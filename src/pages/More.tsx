@@ -89,14 +89,22 @@ export function InventoryPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [sum, setSum] = useState<any>({});
   const [moves, setMoves] = useState<any[]>([]);
+  const [adjOpen, setAdjOpen] = useState(false);
+  const [adj, setAdj] = useState<any>({ product_id: "", qty: 1, reason: "" });
   const { confirmDelete, dialog } = useConfirm();
-  useEffect(() => {
+  function reload() {
     get("/api/inventory/summary").then(setSum).catch(() => {});
     get<{ data: any[] }>(`/api/products?${f.qs}&pageSize=80`).then((r) => setRows(r.data)).catch(() => {});
     get<{ data: any[] }>(`/api/inventory/movements?${m.qs}&pageSize=20`).then((r) => setMoves(r.data)).catch(() => {});
-  }, [f.qs, m.qs]);
+  }
+  useEffect(() => { reload(); }, [f.qs, m.qs]);
   return (
-    <Page title={tr("inventory")} action={<ExportBtn kind="inventory" query={f.qs} />}>
+    <Page title={tr("inventory")} action={
+      <>
+        {can("inventory.adjust") ? <Btn onClick={() => { setAdj({ product_id: "", qty: 1, reason: "" }); setAdjOpen(true); }}>{tr("easyAdjust")}</Btn> : null}
+        <ExportBtn kind="inventory" query={f.qs} />
+      </>
+    }>
       <div className="mb-4 grid gap-3 md:grid-cols-4">
         <Stat label={tr("stockValue")} value={money(sum.stock_value, lang)} />
         <Stat label={tr("lowStock")} value={num(sum.low, lang)} />
@@ -172,6 +180,31 @@ export function InventoryPage() {
         ])}
       />
       {dialog}
+      <Modal open={adjOpen} title={tr("easyAdjust")} onClose={() => setAdjOpen(false)}>
+        <Field label={tr("products")}>
+          <ProductPick value={adj.product_id} onChange={(id) => setAdj({ ...adj, product_id: id })} />
+        </Field>
+        <Field label={tr("qty")}>
+          <input className={inputCls} type="number" value={adj.qty} onChange={(e) => setAdj({ ...adj, qty: Number(e.target.value) })} />
+        </Field>
+        <Field label={tr("reason")}>
+          <input className={inputCls} value={adj.reason} onChange={(e) => setAdj({ ...adj, reason: e.target.value })} />
+        </Field>
+        <Btn className="mt-3" onClick={async () => {
+          if (!adj.product_id || !adj.qty) {
+            playSound("err");
+            return;
+          }
+          try {
+            await post("/api/inventory/adjust", { product_id: Number(adj.product_id), qty: Number(adj.qty), reason: adj.reason });
+            playSound("done");
+            setAdjOpen(false);
+            reload();
+          } catch {
+            playSound("err");
+          }
+        }}>{tr("save")}</Btn>
+      </Modal>
     </Page>
   );
 }
@@ -277,6 +310,14 @@ export function PurchasesPage() {
         ))}
         <button className="mt-2 text-sm font-bold text-cyan-700" onClick={() => setForm({ ...form, items: [...form.items, { product_id: "", quantity: 1, unit_cost: 0 }] })}>+ {tr("add")}</button>
         <Btn className="mt-4" onClick={async () => {
+          if (!form.supplier_id) {
+            playSound("err");
+            return;
+          }
+          if (!form.items?.length || form.items.some((it: any) => !it.product_id || Number(it.quantity) <= 0)) {
+            playSound("err");
+            return;
+          }
           try {
             await post("/api/inventory/purchases", form);
             playSound("done");
@@ -346,7 +387,7 @@ export function PurchaseDetail() {
   useEffect(() => { get<{ data: any }>(`/api/inventory/purchases/${id}`).then((r) => setD(r.data)); }, [id]);
   if (!d) return <div>{tr("loading")}</div>;
   return (
-    <Page title={d.number} action={<PrintBtn />}>
+    <Page title={d.number}>
       <div className="mb-3">{d.supplier_name} · {d.date} · {money(d.total, lang)}</div>
       <Table cols={[tr("sku"), tr("qty"), tr("unitCost"), tr("total")]} rows={(d.items || []).map((i: any) => [i.sku, i.quantity, money(i.unit_cost, lang), money(i.total, lang)])} />
       <div className="print-only label-sheet">

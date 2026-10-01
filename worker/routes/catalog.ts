@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { audit, like, nextNumber, paginate, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
+import { audit, isDupEntry, like, nextNumber, paginate, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { availableBatches, logMovement } from "../lib/stock";
 import { applyEq, applyLocationCol, applyRange, applySearch, listParams, PRODUCT_SORT, sortSql } from "../lib/filters";
@@ -270,35 +270,41 @@ catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const sku = String(b.sku || "").trim();
   if (!sku || !b.name_ar) return c.json({ error: "missing_fields" }, 400);
-  const result = await c.env.DB
-    .prepare(
-      `INSERT INTO products (sku, barcode, part_number, name_ar, name_en, brand_id, part_type_id, category_id, location_id, supplier_id,
-        purchase_price, selling_price, wholesale_price, min_selling_price, min_stock, image_url, description, notes, active, kind)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      sku,
-      b.barcode || null,
-      b.part_number || null,
-      b.name_ar,
-      b.name_en || b.name_ar,
-      b.brand_id || null,
-      b.part_type_id || null,
-      b.category_id || null,
-      b.location_id || null,
-      b.supplier_id || null,
-      Number(b.purchase_price || 0),
-      Number(b.selling_price || 0),
-      Number(b.wholesale_price || 0),
-      Number(b.min_selling_price || 0),
-      Number(b.min_stock || 0),
-      b.image_url || null,
-      b.description || null,
-      b.notes || null,
-      b.active === 0 ? 0 : 1,
-      b.kind === "service" ? "service" : "product",
-    )
-    .run();
+  let result;
+  try {
+    result = await c.env.DB
+      .prepare(
+        `INSERT INTO products (sku, barcode, part_number, name_ar, name_en, brand_id, part_type_id, category_id, location_id, supplier_id,
+          purchase_price, selling_price, wholesale_price, min_selling_price, min_stock, image_url, description, notes, active, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        sku,
+        b.barcode || null,
+        b.part_number || null,
+        b.name_ar,
+        b.name_en || b.name_ar,
+        b.brand_id || null,
+        b.part_type_id || null,
+        b.category_id || null,
+        b.location_id || null,
+        b.supplier_id || null,
+        Number(b.purchase_price || 0),
+        Number(b.selling_price || 0),
+        Number(b.wholesale_price || 0),
+        Number(b.min_selling_price || 0),
+        Number(b.min_stock || 0),
+        b.image_url || null,
+        b.description || null,
+        b.notes || null,
+        b.active === 0 ? 0 : 1,
+        b.kind === "service" ? "service" : "product",
+      )
+      .run();
+  } catch (err) {
+    if (isDupEntry(err)) return c.json({ error: "duplicate_sku" }, 400);
+    throw err;
+  }
   const id = result.meta.last_row_id;
   const models = Array.isArray(b.model_ids) ? (b.model_ids as number[]) : [];
   if (models.length) {
@@ -310,12 +316,13 @@ catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
   if (openQty > 0 && b.kind !== "service") {
     const cost = Number(b.purchase_price || 0);
     const code = await nextNumber(c.env.DB, "batch");
+    const locId = b.location_id ? Number(b.location_id) : null;
     const ins = await c.env.DB
       .prepare(
-        `INSERT INTO inventory_batches (batch_code, product_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, expiry_date, notes)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'opening')`,
+        `INSERT INTO inventory_batches (batch_code, product_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, expiry_date, notes, location_id)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'opening', ?)`,
       )
-      .bind(code, id, todayIso(), openQty, openQty, cost, b.expiry_date || null)
+      .bind(code, id, todayIso(), openQty, openQty, cost, b.expiry_date || null, locId)
       .run();
     await c.env.DB.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(openQty, id).run();
     await logMovement(c.env.DB, {
@@ -328,6 +335,7 @@ catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
       referenceId: id,
       notes: "كمية افتتاحية",
       userId: c.get("user").id,
+      toLocationId: locId,
     });
   }
   await audit(c.env.DB, c.get("user"), "create_product", "product", id, `Create ${sku}`);
@@ -338,36 +346,41 @@ catalogRoutes.put("/products/:id", requirePerm("products.edit"), async (c) => {
   const id = Number(c.req.param("id"));
   const prev = await c.env.DB.prepare("SELECT sku, name_ar, selling_price, min_selling_price, purchase_price, active, kind FROM products WHERE id = ?").bind(id).first();
   const b = await c.req.json<Record<string, unknown>>();
-  await c.env.DB
-    .prepare(
-      `UPDATE products SET sku=?, barcode=?, part_number=?, name_ar=?, name_en=?, brand_id=?, part_type_id=?, category_id=?, location_id=?, supplier_id=?,
-       purchase_price=?, selling_price=?, wholesale_price=?, min_selling_price=?, min_stock=?, image_url=?, description=?, notes=?, active=?, kind=?, updated_at=datetime('now')
-       WHERE id=?`,
-    )
-    .bind(
-      b.sku,
-      b.barcode || null,
-      b.part_number || null,
-      b.name_ar,
-      b.name_en || b.name_ar,
-      b.brand_id || null,
-      b.part_type_id || null,
-      b.category_id || null,
-      b.location_id || null,
-      b.supplier_id || null,
-      Number(b.purchase_price || 0),
-      Number(b.selling_price || 0),
-      Number(b.wholesale_price || 0),
-      Number(b.min_selling_price || 0),
-      Number(b.min_stock || 0),
-      b.image_url || null,
-      b.description || null,
-      b.notes || null,
-      b.active === 0 ? 0 : 1,
-      b.kind === "service" ? "service" : "product",
-      id,
-    )
-    .run();
+  try {
+    await c.env.DB
+      .prepare(
+        `UPDATE products SET sku=?, barcode=?, part_number=?, name_ar=?, name_en=?, brand_id=?, part_type_id=?, category_id=?, location_id=?, supplier_id=?,
+         purchase_price=?, selling_price=?, wholesale_price=?, min_selling_price=?, min_stock=?, image_url=?, description=?, notes=?, active=?, kind=?, updated_at=datetime('now')
+         WHERE id=?`,
+      )
+      .bind(
+        b.sku,
+        b.barcode || null,
+        b.part_number || null,
+        b.name_ar,
+        b.name_en || b.name_ar,
+        b.brand_id || null,
+        b.part_type_id || null,
+        b.category_id || null,
+        b.location_id || null,
+        b.supplier_id || null,
+        Number(b.purchase_price || 0),
+        Number(b.selling_price || 0),
+        Number(b.wholesale_price || 0),
+        Number(b.min_selling_price || 0),
+        Number(b.min_stock || 0),
+        b.image_url || null,
+        b.description || null,
+        b.notes || null,
+        b.active === 0 ? 0 : 1,
+        b.kind === "service" ? "service" : "product",
+        id,
+      )
+      .run();
+  } catch (err) {
+    if (isDupEntry(err)) return c.json({ error: "duplicate_sku" }, 400);
+    throw err;
+  }
   if (Array.isArray(b.model_ids)) {
     await c.env.DB.prepare("DELETE FROM product_models WHERE product_id = ?").bind(id).run();
     const models = b.model_ids as number[];

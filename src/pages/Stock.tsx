@@ -32,8 +32,8 @@ function Table({ cols, rows }: { cols: any[]; rows: any[][] }) {
   const { tr } = useApp();
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-      <div className="table-wrap">
-        <table>
+      <div className="table-wrap overflow-x-auto">
+        <table className="min-w-[720px]">
           <thead>
             <tr>{cols.map((c, i) => <th key={i}>{c}</th>)}</tr>
           </thead>
@@ -205,7 +205,7 @@ export function LocationsPage() {
         <Field label={tr("parentLocation")}>
           <select className={inputCls} value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })}>
             <option value="">-</option>
-            {rows.map((r) => <option key={r.id} value={r.id}>{r.path || r.name}</option>)}
+            {rows.map((r) => r.id === form.id ? null : <option key={r.id} value={r.id}>{r.path || r.name}</option>)}
           </select>
         </Field>
         <Field label={tr("locationCode")}><input className={inputCls} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
