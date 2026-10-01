@@ -13,6 +13,7 @@ const pages: { to: string; key: Msg; perm: string }[] = [
   { to: "/customers", key: "customers", perm: "customers.view" },
   { to: "/inventory", key: "inventory", perm: "inventory.view" },
   { to: "/delivery", key: "delivery", perm: "delivery.view" },
+  { to: "/delivery/settle", key: "settleCourier", perm: "delivery.update" },
   { to: "/purchases", key: "purchases", perm: "purchases.view" },
   { to: "/expenses", key: "expenses", perm: "expenses.view" },
   { to: "/reports", key: "reports", perm: "reports.view" },

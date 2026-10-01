@@ -5,7 +5,7 @@ import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PixelMark, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PixelMark, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
 
@@ -102,6 +102,8 @@ export default function POS() {
   const [heldOpen, setHeldOpen] = useState(false);
   const [heldTab, setHeldTab] = useState<"held" | "print" | "wa">("held");
   const [todayInv, setTodayInv] = useState<any[]>([]);
+  const [todayStats, setTodayStats] = useState({ sales_today: 0, collected_today: 0, credit_today: 0, invoices_today: 0 });
+  const [stockTick, setStockTick] = useState(0);
   const [doneOpen, setDoneOpen] = useState(false);
   const [doneInv, setDoneInv] = useState<any>(null);
   const [waOpen, setWaOpen] = useState(false);
@@ -162,7 +164,7 @@ export default function POS() {
       }).catch(() => {});
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [q, listId, kindFilter, typeFilter, brandFilter, catFilter]);
+  }, [q, listId, kindFilter, typeFilter, brandFilter, catFilter, stockTick]);
 
   useEffect(() => {
     const heldId = Number(params.get("held") || 0);
@@ -342,15 +344,35 @@ export default function POS() {
   const related = visible.filter((p) => !cart.some((c) => c.id === p.id) && (p.models || []).some((m) => cartModelNames.has(m.name))).slice(0, 8);
   const waEnabled = settings.whatsapp_enabled !== "0";
 
+  async function loadToday() {
+    const r = await get<{
+      sales_today: number;
+      collected_today: number;
+      credit_today: number;
+      invoices_today: number;
+      invoices: any[];
+    }>("/api/pos/today");
+    setTodayStats({
+      sales_today: Number(r.sales_today) || 0,
+      collected_today: Number(r.collected_today) || 0,
+      credit_today: Number(r.credit_today) || 0,
+      invoices_today: Number(r.invoices_today) || 0,
+    });
+    setTodayInv(r.invoices || []);
+  }
+
+  useEffect(() => {
+    loadToday().catch(() => {});
+  }, []);
+
   async function openHeld() {
-    const [heldInv, quoteInv, orderInv, today] = await Promise.all([
+    const [heldInv, quoteInv, orderInv] = await Promise.all([
       get<{ data: any[] }>("/api/invoices?status=held"),
       get<{ data: any[] }>("/api/invoices?status=quote"),
       get<{ data: any[] }>("/api/invoices?status=order"),
-      get<{ data: any[] }>("/api/invoices?period=today&pageSize=40"),
     ]);
     setHeld([...(heldInv.data || []), ...(quoteInv.data || []), ...(orderInv.data || [])]);
-    setTodayInv((today.data || []).filter((x) => !["held", "quote", "order"].includes(x.status)));
+    await loadToday().catch(() => {});
     setHeldTab("held");
     setHeldOpen(true);
   }
@@ -425,6 +447,8 @@ export default function POS() {
       playSound("done");
       setPrintSnap({ items: cart, total, extra: Number(extraAmount || 0) });
       setDoneInv(res.data);
+      setStockTick((n) => n + 1);
+      await loadToday().catch(() => {});
       if (customer?.id) {
         try {
           const fresh = await get<{ data: any }>(`/api/customers/${customer.id}`);
@@ -529,6 +553,29 @@ export default function POS() {
   return (
     <div>
       <PrintLetterhead title={quoteMode ? tr("quoteMode") : tr("pos")} />
+      <div className="no-print mb-3 grid gap-3 md:grid-cols-3">
+        <Stat label={tr("salesToday")} value={money(todayStats.sales_today, lang)} hint={`${num(todayStats.invoices_today, lang)} ${tr("invoicesCount")}`} />
+        <Stat label={tr("collected")} value={money(todayStats.collected_today, lang)} accent="emerald" />
+        <Stat label={tr("accountCredit")} value={money(todayStats.credit_today, lang)} accent="rose" />
+      </div>
+      <div className="no-print mb-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="mb-2 text-sm font-bold">{tr("todayTransactions")}</div>
+        {!todayInv.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : (
+          <div className="max-h-40 space-y-1 overflow-auto">
+            {todayInv.map((h) => (
+              <button
+                key={h.id}
+                type="button"
+                className="flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-start text-sm"
+                onClick={() => nav(`/sales/${h.id}`)}
+              >
+                <span>{h.number} · {h.customer_name || tr("walkIn")} · {statusLabel(h.status, lang)}</span>
+                <span className="font-bold">{money(h.total, lang)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="print-only table-wrap">
         <table>
           <thead>
@@ -1016,6 +1063,8 @@ export default function POS() {
                 try {
                   await post(`/api/invoices/${retInv.id}/returns`, { items: retItems.filter((x) => x.qty > 0) });
                   playSound("done");
+                  setStockTick((n) => n + 1);
+                  await loadToday().catch(() => {});
                   setRetOpen(false);
                   setRetInv(null);
                   setErr("");

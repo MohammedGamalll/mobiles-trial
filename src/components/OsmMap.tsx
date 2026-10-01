@@ -42,6 +42,7 @@ export function OsmMap({
   markers = [],
   trails = [],
   self,
+  onSelect,
 }: {
   center: LatLng;
   zoom?: number;
@@ -50,8 +51,9 @@ export function OsmMap({
   shop?: LatLng | null;
   geofence?: number;
   markers?: { id: string | number; lat: number; lng: number; label: string; color?: string; popup?: string; stale?: boolean }[];
-  trails?: { color?: string; points: LatLng[] }[];
+  trails?: { color?: string; points: LatLng[]; dashed?: boolean }[];
   self?: LatLng | null;
+  onSelect?: (id: string | number) => void;
 }) {
   const c = useMemo(() => [center.lat, center.lng] as [number, number], [center.lat, center.lng]);
   return (
@@ -70,11 +72,20 @@ export function OsmMap({
         ) : null}
         {trails.map((t, i) =>
           t.points.length > 1 ? (
-            <Polyline key={i} positions={t.points.map((p) => [p.lat, p.lng])} pathOptions={{ color: t.color || "#0284c7", weight: 3, opacity: 0.75 }} />
+            <Polyline
+              key={i}
+              positions={t.points.map((p) => [p.lat, p.lng])}
+              pathOptions={{ color: t.color || "#0284c7", weight: t.dashed ? 3 : 4, opacity: t.dashed ? 0.7 : 0.85, dashArray: t.dashed ? "8 8" : undefined }}
+            />
           ) : null,
         )}
         {markers.map((m) => (
-          <Marker key={m.id} position={[m.lat, m.lng]} icon={pinIcon(m.label, m.stale ? "#94a3b8" : m.color || "#0a1628")}>
+          <Marker
+            key={m.id}
+            position={[m.lat, m.lng]}
+            icon={pinIcon(m.label, m.stale ? "#94a3b8" : m.color || "#0a1628")}
+            eventHandlers={onSelect ? { click: () => onSelect(m.id) } : undefined}
+          >
             <Popup>
               <div className="text-sm" dangerouslySetInnerHTML={{ __html: m.popup || m.label }} />
             </Popup>

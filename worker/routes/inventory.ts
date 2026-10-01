@@ -7,6 +7,65 @@ import { postPurchaseJournal, tryLedger } from "../lib/ledger";
 
 export const inventoryRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
+inventoryRoutes.get("/daily-ops", requirePerm("inventory.view", "products.view"), async (c) => {
+  const p = listParams(new URL(c.req.url));
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(p.day || p.date || "") ? (p.day || p.date) : todayIso();
+  const extra: string[] = [];
+  const binds: (string | number)[] = [day];
+  if (p.category_id) {
+    extra.push("p.category_id = ?");
+    binds.push(Number(p.category_id));
+  }
+  if (p.product_id) {
+    extra.push("p.id = ?");
+    binds.push(Number(p.product_id));
+  }
+  const sx = extra.length ? ` AND ${extra.join(" AND ")}` : "";
+  let purchases: { results: unknown[] } = { results: [] };
+  let shipments: { results: unknown[] } = { results: [] };
+  try {
+    purchases = await c.env.DB
+      .prepare(
+        `SELECT pi.id as purchase_id, pi.number, pi.date, p.id as product_id, p.sku, p.name_ar, p.name_en,
+                pii.quantity, pii.unit_cost, pii.total, s.name as supplier_name
+         FROM purchase_invoice_items pii
+         JOIN purchase_invoices pi ON pi.id = pii.purchase_id
+         JOIN products p ON p.id = pii.product_id
+         LEFT JOIN suppliers s ON s.id = pi.supplier_id
+         WHERE pi.deleted_at IS NULL AND pi.status = 'approved' AND DATE(pi.date) = ?${sx}
+         ORDER BY pi.id DESC, pii.id DESC`,
+      )
+      .bind(...binds)
+      .all();
+  } catch {
+    purchases = { results: [] };
+  }
+  try {
+    shipments = await c.env.DB
+      .prepare(
+        `SELECT sm.id, sm.type, sm.qty, sm.unit_cost, sm.reference_type, sm.reference_id, sm.notes, sm.created_at,
+                p.id as product_id, p.sku, p.name_ar, p.name_en,
+                fl.name as from_location, tl.name as to_location, sl.warehouse as warehouse
+         FROM stock_movements sm
+         JOIN products p ON p.id = sm.product_id
+         LEFT JOIN storage_locations fl ON fl.id = sm.from_location_id
+         LEFT JOIN storage_locations tl ON tl.id = sm.to_location_id
+         LEFT JOIN inventory_batches ib ON ib.id = sm.batch_id
+         LEFT JOIN storage_locations sl ON sl.id = COALESCE(sm.to_location_id, sm.from_location_id, ib.location_id)
+         WHERE DATE(sm.created_at) = ?
+           AND (sm.type IN ('in','purchase_in','transfer_in','transfer_out','out','sale_out') OR sm.reference_type IN ('purchase','transfer','sale','opening'))
+           ${sx}
+         ORDER BY sm.id DESC
+         LIMIT 200`,
+      )
+      .bind(...binds)
+      .all();
+  } catch {
+    shipments = { results: [] };
+  }
+  return c.json({ date: day, purchases: purchases.results, shipments: shipments.results });
+});
+
 inventoryRoutes.get("/summary", requirePerm("inventory.view"), async (c) => {
   const [value, low, out, reserved, warehouses] = await c.env.DB.batch([
     c.env.DB.prepare(

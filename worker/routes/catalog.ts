@@ -77,6 +77,86 @@ async function attachUnits(db: AppDb, products: { id: number }[]) {
   }
 }
 
+async function attachStockReport(db: AppDb, products: { id: number }[]) {
+  if (!products.length) return products as (typeof products[number] & Record<string, unknown>)[];
+  try {
+  const ids = products.map((p) => p.id);
+  const ph = ids.map(() => "?").join(",");
+  const opening = await db
+    .prepare(
+      `SELECT product_id, COALESCE(SUM(original_qty),0) as opening_qty
+       FROM inventory_batches
+       WHERE product_id IN (${ph}) AND (notes = 'opening' OR notes LIKE 'كمية افتتاحية%')
+       GROUP BY product_id`,
+    )
+    .bind(...ids)
+    .all<{ product_id: number; opening_qty: number }>();
+  const openingMoves = await db
+    .prepare(
+      `SELECT product_id, COALESCE(SUM(ABS(qty)),0) as opening_qty
+       FROM stock_movements
+       WHERE product_id IN (${ph}) AND reference_type = 'opening'
+       GROUP BY product_id`,
+    )
+    .bind(...ids)
+    .all<{ product_id: number; opening_qty: number }>();
+  const warehouses = await db
+    .prepare(
+      `SELECT ib.product_id,
+              COALESCE(NULLIF(TRIM(sl.warehouse), ''), 'بدون مخزن') as warehouse,
+              COALESCE(SUM(ib.remaining_qty - ib.reserved_qty),0) as qty,
+              COALESCE(SUM((ib.remaining_qty - ib.reserved_qty) * ib.unit_cost),0) as value
+       FROM inventory_batches ib
+       LEFT JOIN storage_locations sl ON sl.id = ib.location_id
+       WHERE ib.product_id IN (${ph})
+       GROUP BY ib.product_id, COALESCE(NULLIF(TRIM(sl.warehouse), ''), 'بدون مخزن')`,
+    )
+    .bind(...ids)
+    .all<{ product_id: number; warehouse: string; qty: number; value: number }>();
+  const costs = await db
+    .prepare(
+      `SELECT product_id, COALESCE(SUM((remaining_qty - reserved_qty) * unit_cost),0) as cost_value
+       FROM inventory_batches
+       WHERE product_id IN (${ph})
+       GROUP BY product_id`,
+    )
+    .bind(...ids)
+    .all<{ product_id: number; cost_value: number }>();
+  const openMap = new Map<number, number>();
+  for (const r of opening.results) openMap.set(r.product_id, Number(r.opening_qty) || 0);
+  for (const r of openingMoves.results) {
+    const prev = openMap.get(r.product_id) || 0;
+    openMap.set(r.product_id, Math.max(prev, Number(r.opening_qty) || 0));
+  }
+  const whMap = new Map<number, { warehouse: string; qty: number; value: number }[]>();
+  for (const r of warehouses.results) {
+    const arr = whMap.get(r.product_id) || [];
+    arr.push({ warehouse: r.warehouse, qty: Number(r.qty) || 0, value: Number(r.value) || 0 });
+    whMap.set(r.product_id, arr);
+  }
+  const costMap = new Map(costs.results.map((r) => [r.product_id, Number(r.cost_value) || 0]));
+  return products.map((p) => {
+    const available = Number((p as { available?: number }).available) || 0;
+    const price = Number((p as { selling_price?: number }).selling_price) || 0;
+    return {
+      ...p,
+      opening_qty: openMap.get(p.id) || 0,
+      warehouses: whMap.get(p.id) || [],
+      stock_value: Math.round(available * price * 100) / 100,
+      cost_value: costMap.get(p.id) || 0,
+    };
+  });
+  } catch {
+    return products.map((p) => ({
+      ...p,
+      opening_qty: 0,
+      warehouses: [],
+      stock_value: Math.round((Number((p as { available?: number }).available) || 0) * (Number((p as { selling_price?: number }).selling_price) || 0) * 100) / 100,
+      cost_value: 0,
+    }));
+  }
+}
+
 async function saveProductExtras(db: AppDb, id: number, b: Record<string, unknown>) {
   await db
     .prepare(
@@ -201,16 +281,19 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
     .bind(...params, pageSize, offset)
     .all();
   const withModels = await attachModels(c.env.DB, results as { id: number }[]);
-  const data = withoutCost(c.get("user"), await attachUnits(c.env.DB, withModels) as Record<string, unknown>[]);
+  const withUnits = await attachUnits(c.env.DB, withModels);
+  const user = c.get("user");
+  const showCost = user.role_slug === "admin" || user.permissions.includes("costs.view") || user.permissions.includes("products.edit");
+  let priced = withUnits as Record<string, unknown>[];
   const listId = Number(url.searchParams.get("price_list_id") || 0);
-  if (listId && data.length) {
-    const ids = data.map((p) => Number(p.id));
+  if (listId && priced.length) {
+    const ids = priced.map((p) => Number(p.id));
     const { results: prices } = await c.env.DB
       .prepare(`SELECT product_id, price FROM price_list_items WHERE price_list_id = ? AND product_id IN (${ids.map(() => "?").join(",")})`)
       .bind(listId, ...ids)
       .all<{ product_id: number; price: number }>();
     const map = new Map(prices.map((r) => [r.product_id, r.price]));
-    for (const p of data as { id: number; selling_price: number; list_price?: number }[]) {
+    for (const p of priced as { id: number; selling_price: number; list_price?: number }[]) {
       const price = map.get(p.id);
       if (price != null) {
         p.list_price = p.selling_price;
@@ -218,12 +301,22 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
       }
     }
   }
+  const reported = await attachStockReport(c.env.DB, priced as { id: number }[]);
+  const data = withoutCost(user, reported as Record<string, unknown>[]);
+  if (!showCost) {
+    for (const row of data) delete row.cost_value;
+  }
   return c.json({
     data,
     total: count?.n || 0,
     page,
     pageSize,
-    totals: { count: count?.n || 0, qty: totals?.qty || 0, value: totals?.value || 0 },
+    totals: {
+      count: count?.n || 0,
+      qty: Number(totals?.qty) || 0,
+      value: Number(totals?.value) || 0,
+      cost_value: showCost ? data.reduce((s, p) => s + (Number(p.cost_value) || 0), 0) : undefined,
+    },
   });
 });
 

@@ -13,6 +13,7 @@ import {
   type AppDb,
 } from "../lib/helpers";
 import { applyInvoiceListFilters, INVOICE_SORT, listParams, sortSql } from "../lib/filters";
+import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
@@ -83,6 +84,11 @@ function creditError(customer: { credit_limit: number; current_balance: number }
   if (!(limit > 0) || balance + remaining > limit) return "credit_limit";
   return null;
 }
+
+salesRoutes.get("/pos/today", requirePerm("sales.create", "sales.view"), async (c) => {
+  const data = await loadPosToday(c.env.DB);
+  return c.json(data);
+});
 
 salesRoutes.get("/invoices/last-price", requirePerm("sales.create", "sales.view"), async (c) => {
   const url = new URL(c.req.url);
@@ -469,7 +475,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
           await maybeStockAlerts(tx, p.product.id);
         }
       }
-      if (!hold && paid > 0) {
+      const escrow = type === "delivery" && !hold;
+      if (!hold && paid > 0 && !escrow) {
         const rows = splitPays.length ? splitPays : [{ method: b.payment_method || "cash", amount: paid }];
         for (const pay of rows) {
           await tx
@@ -478,13 +485,13 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
             .run();
         }
       }
-      if (!hold && customer && remaining > 0) {
+      if (!hold && customer && remaining > 0 && !escrow) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance + ?, updated_at = datetime('now') WHERE id = ?").bind(remaining, customer.id).run();
       }
       if (salesAgentId) {
         await tx.prepare("UPDATE sales_invoices SET sales_agent_id = ? WHERE id = ?").bind(salesAgentId, id).run();
       }
-      if (!hold) {
+      if (!hold && !escrow) {
         await postSaleJournal(
           tx,
           { id, number: invNumber, date: todayIso(), total, paid, remaining, payment_method: b.payment_method, cost_total: costTotal, cash_account_id: b.cash_account_id || null },
@@ -590,7 +597,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
         .prepare("UPDATE sales_invoices SET status=?, delivery_status=?, paid=?, remaining=?, payment_method=?, cost_total=?, profit=?, held_at=NULL, completed_at=? WHERE id=?")
         .bind(status, row.type === "delivery" ? "pending_delivery" : null, paid, remaining, b.payment_method || row.payment_method, costTotal, round2(row.total - costTotal), row.type === "normal" && remaining <= 0 ? todayIso() : null, id)
         .run();
-      if (paid > 0) {
+      if (paid > 0 && row.type !== "delivery") {
         const pays = splitPays.length ? splitPays : [{ method: b.payment_method || row.payment_method || "cash", amount: paid }];
         let left = paid;
         for (const pay of pays) {
@@ -603,10 +610,10 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           left = round2(left - amt);
         }
       }
-      if (row.customer_id && remaining > 0) {
+      if (row.customer_id && remaining > 0 && row.type !== "delivery") {
         await tx.prepare("UPDATE customers SET current_balance = current_balance + ?, updated_at = datetime('now') WHERE id = ?").bind(remaining, row.customer_id).run();
       }
-      if (row.customer_id && surplus > 0) {
+      if (row.customer_id && surplus > 0 && row.type !== "delivery") {
         const extra = await tx
           .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .bind(null, row.customer_id, b.payment_method || row.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id)
@@ -622,11 +629,13 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           userId: user.id,
         });
       }
-      await postSaleJournal(
-        tx,
-        { id, number: row.number, date: todayIso(), total: row.total, paid, remaining, payment_method: b.payment_method || row.payment_method, cost_total: costTotal, cash_account_id: row.cash_account_id || null },
-        user.id,
-      );
+      if (row.type !== "delivery") {
+        await postSaleJournal(
+          tx,
+          { id, number: row.number, date: todayIso(), total: row.total, paid, remaining, payment_method: b.payment_method || row.payment_method, cost_total: costTotal, cash_account_id: row.cash_account_id || null },
+          user.id,
+        );
+      }
     });
   } catch (err) {
     if (isStockErr(err)) return c.json({ error: "insufficient_stock" }, 400);
@@ -652,7 +661,7 @@ salesRoutes.post("/invoices/:id/cancel", requirePerm("sales.cancel"), async (c) 
   const id = Number(c.req.param("id"));
   const inv = await loadInvoice(c.env.DB, id);
   if (!inv) return c.json({ error: "not_found" }, 404);
-  const row = inv as unknown as { id: number; number: string; status: string; type: string; remaining: number; customer_id: number | null; items: { id: number; product_id: number; quantity: number }[]; item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number; location_id?: number | null }[] };
+  const row = inv as unknown as { id: number; number: string; status: string; type: string; remaining: number; customer_id: number | null; finance_committed_at?: string | null; items: { id: number; product_id: number; quantity: number }[]; item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number; location_id?: number | null }[] };
   if (row.status === "cancelled") return c.json({ error: "already_cancelled" }, 400);
   const user = c.get("user");
   try {
@@ -674,40 +683,42 @@ salesRoutes.post("/invoices/:id/cancel", requirePerm("sales.cancel"), async (c) 
           .filter((b) => b.invoice_item_id === item.id && b.qty > 0)
           .map((b) => ({ batch_id: b.batch_id, batch_code: "", qty: b.qty, unit_cost: b.unit_cost }));
         if (!alloc.length) continue;
-        if (row.type === "delivery" && ["pending_delivery", "out_for_delivery", "rescheduled"].includes(row.status)) {
+        if (row.type === "delivery" && ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"].includes(row.status)) {
           await releaseReserve(tx, alloc, item.product_id);
         } else if (row.type === "normal" || ["delivered", "partially_delivered", "completed", "partial"].includes(row.status)) {
           for (const a of alloc) await restockToBatch(tx, a.batch_id, item.product_id, a.qty);
         }
       }
       await zeroItemBatches(tx, id);
-      if (row.customer_id && row.remaining > 0) {
+      if (row.finance_committed_at && row.customer_id && row.remaining > 0) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(row.remaining, row.customer_id).run();
       }
-      const pays = await tx.prepare("SELECT id FROM payments WHERE invoice_id = ? AND voided_at IS NULL").bind(id).all<{ id: number }>();
-      for (const pay of pays.results) {
-        await tx.prepare("UPDATE payments SET voided_at = datetime('now') WHERE id = ?").bind(pay.id).run();
-        await reverseJournal(tx, "payment", pay.id, user.id);
-      }
-      for (const item of row.items) {
-        const alloc = row.item_batches.filter((b) => b.invoice_item_id === item.id && b.qty > 0);
-        for (const a of alloc) {
-          await logMovement(tx, {
-            productId: item.product_id,
-            batchId: a.batch_id,
-            type: "in",
-            qty: a.qty,
-            unitCost: a.unit_cost,
-            referenceType: "sale_cancel",
-            referenceId: id,
-            notes: `Cancel ${row.number}`,
-            userId: user.id,
-            toLocationId: a.location_id ?? null,
-          });
+      if (row.finance_committed_at) {
+        const pays = await tx.prepare("SELECT id FROM payments WHERE invoice_id = ? AND voided_at IS NULL").bind(id).all<{ id: number }>();
+        for (const pay of pays.results) {
+          await tx.prepare("UPDATE payments SET voided_at = datetime('now') WHERE id = ?").bind(pay.id).run();
+          await reverseJournal(tx, "payment", pay.id, user.id);
         }
+        for (const item of row.items) {
+          const alloc = row.item_batches.filter((b) => b.invoice_item_id === item.id && b.qty > 0);
+          for (const a of alloc) {
+            await logMovement(tx, {
+              productId: item.product_id,
+              batchId: a.batch_id,
+              type: "in",
+              qty: a.qty,
+              unitCost: a.unit_cost,
+              referenceType: "sale_cancel",
+              referenceId: id,
+              notes: `Cancel ${row.number}`,
+              userId: user.id,
+              toLocationId: a.location_id ?? null,
+            });
+          }
+        }
+        await reverseJournal(tx, "sale", id, user.id);
       }
       await tx.prepare("UPDATE sales_invoices SET status = 'cancelled', delivery_status = 'cancelled', voided_at = datetime('now') WHERE id = ?").bind(id).run();
-      await reverseJournal(tx, "sale", id, user.id);
     });
   } catch (err) {
     if (isLedgerErr(err)) return ledgerFail(c);

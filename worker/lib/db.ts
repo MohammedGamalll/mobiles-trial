@@ -178,6 +178,14 @@ export async function ensureAppSchema(db: AppDb) {
     ["suppliers", "customer_id INTEGER"],
     ["sales_invoices", "extra_amount REAL NOT NULL DEFAULT 0"],
     ["sales_invoices", "cash_account_id INTEGER"],
+    ["sales_invoices", "stock_committed_at TEXT"],
+    ["sales_invoices", "finance_committed_at TEXT"],
+    ["sales_invoices", "assigned_at TEXT"],
+    ["sales_invoices", "settled_at TEXT"],
+    ["sales_invoices", "settlement_id INTEGER"],
+    ["delivery_results", "settlement_id INTEGER"],
+    ["delivery_results", "charge_to TEXT"],
+    ["delivery_results", "collected REAL NOT NULL DEFAULT 0"],
     ["sales_invoice_items", "unit_name TEXT"],
     ["sales_invoice_items", "unit_factor REAL NOT NULL DEFAULT 1"],
     ["work_shifts", "weekdays TEXT"],
@@ -200,7 +208,36 @@ export async function ensureAppSchema(db: AppDb) {
     row_id INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
-  await run("UPDATE customers SET phone = NULL WHERE phone = ''");
+  await run(`CREATE TABLE IF NOT EXISTS delivery_settlements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    delivery_agent_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'posted',
+    notes TEXT,
+    collected_total REAL NOT NULL DEFAULT 0,
+    delivered_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    damaged_count INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS delivery_settlement_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    settlement_id INTEGER NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    collected REAL NOT NULL DEFAULT 0,
+    charge_to TEXT,
+    notes TEXT
+  )`);
+  await run("CREATE UNIQUE INDEX idx_settlement_invoice ON delivery_settlement_lines(invoice_id)");
+  await run(`INSERT INTO storage_locations (name, warehouse, kind, code, path, notes, active, sort_order)
+    SELECT name, warehouse, kind, code, path, notes, active, sort_order FROM (
+      SELECT 'تالف / مفقود' AS name, 'تالف' AS warehouse, 'warehouse' AS kind, 'DAMAGED' AS code, 'DAMAGED' AS path, 'مخزن افتراضي للتالف والمفقود' AS notes, 1 AS active, 99 AS sort_order
+    ) AS seed
+    WHERE NOT EXISTS (SELECT 1 FROM storage_locations WHERE code = 'DAMAGED')`);
+  await run(`INSERT OR IGNORE INTO ledger_accounts (code, name_ar, name_en, type)
+    VALUES ('5300', 'تالف ومفقود', 'Damaged / lost inventory', 'expense')`);
   await run("CREATE UNIQUE INDEX idx_customers_phone_uq ON customers(phone)");
   try {
     const live = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NULL").first<{ n: number }>();

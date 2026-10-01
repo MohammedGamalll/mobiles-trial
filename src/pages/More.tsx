@@ -11,6 +11,7 @@ import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { authHeaders } from "../lib/session";
 import { ActionBtns, useConfirm } from "../components/Confirm";
+import { AssignCourierModal } from "../components/AssignCourierModal";
 import { matchScanned, playSound } from "../lib/sounds";
 import { MapPin } from "lucide-react";
 
@@ -20,6 +21,7 @@ export function SalesList() {
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
   const { confirmDelete, dialog } = useConfirm();
+  const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/invoices?${f.qs}&pageSize=50`);
     setRows(r.data);
@@ -74,16 +76,29 @@ export function SalesList() {
           money(r.total, lang),
           money(r.remaining, lang),
           <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
-          <ActionBtns
-            canEdit={can("sales.edit")}
-            onEdit={() => { window.location.href = `/sales/${r.id}`; }}
-            canDelete={can("sales.cancel") && r.status !== "cancelled"}
-            onDelete={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); load(); })}
-          />,
+          <div className="flex flex-wrap items-center gap-2">
+            {r.status === "pending_delivery" && can("delivery.update") ? (
+              <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setAssignInv({ id: r.id, number: r.number })}>
+                {tr("assignCourier")}
+              </button>
+            ) : null}
+            <ActionBtns
+              canEdit={can("sales.edit")}
+              onEdit={() => { window.location.href = `/sales/${r.id}`; }}
+              canDelete={can("sales.cancel") && r.status !== "cancelled"}
+              onDelete={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); load(); })}
+            />
+          </div>,
           ];
         })}
       />
       )}
+      <AssignCourierModal
+        open={Boolean(assignInv)}
+        invoice={assignInv}
+        onClose={() => setAssignInv(null)}
+        onDone={() => { load().catch(() => {}); }}
+      />
       {dialog}
     </Page>
   );

@@ -31,7 +31,8 @@ function ModernDashboard() {
   }
   const cards = [
     [tr("salesToday"), money(d.sales_today, lang), `${num(d.invoices_today, lang)} ${tr("invoicesCount")}`, "cyan"],
-    [tr("payments"), money(d.collections_today, lang), tr("salesToday"), "cyan"],
+    [tr("collected"), money(d.collections_today, lang), tr("salesToday"), "emerald"],
+    [tr("accountCredit"), money(d.credit_today, lang), tr("salesToday"), "rose"],
     [tr("expenses"), money(d.expenses_month, lang), "", "amber"],
     ...(showCost ? [[tr("totalProfit"), money(d.profit_month ?? d.profit, lang), vs(d.profit_month, d.prev_profit_month), "emerald"] as const] : []),
     [tr("cashBanks"), money(d.cash_balance, lang), "", "emerald"],
@@ -53,6 +54,8 @@ function ModernDashboard() {
   ];
   const links: Record<string, string> = {
     [tr("salesToday")]: "/sales",
+    [tr("collected")]: "/payments",
+    [tr("accountCredit")]: "/sales",
     [tr("salesMonth")]: "/reports",
     [tr("totalProfit")]: "/reports",
     [tr("totalPurchases")]: "/purchases",

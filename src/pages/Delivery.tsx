@@ -8,6 +8,7 @@ import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
+import { AssignCourierModal } from "../components/AssignCourierModal";
 
 export function DeliveryBoard() {
   const { tr, lang, lookups, can, user, settings } = useApp();
@@ -15,17 +16,20 @@ export function DeliveryBoard() {
   const f = useListQuery("delivery");
   const [rows, setRows] = useState<any[]>([]);
   const [live, setLive] = useState<{ agents: any[]; trail: any[] }>({ agents: [], trail: [] });
+  const [trailAgentId, setTrailAgentId] = useState<number | null>(null);
   const [agents, setAgents] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 });
   const { confirmDelete, dialog } = useConfirm();
+  const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
 
   async function loadOrders() {
     const r = await get<{ data: any[] }>(`/api/delivery/orders?${f.qs}`);
     setRows(r.data);
   }
-  async function loadLive() {
-    const r = await get<{ data: { agents: any[]; trail: any[] } }>("/api/delivery/live");
+  async function loadLive(agentId = trailAgentId) {
+    const q = agentId ? `?trail_agent_id=${agentId}` : "";
+    const r = await get<{ data: { agents: any[]; trail: any[] } }>(`/api/delivery/tracking/live${q}`);
     setLive(r.data);
   }
   async function loadAgents() {
@@ -39,9 +43,9 @@ export function DeliveryBoard() {
   useEffect(() => {
     if (tab !== "map") return;
     loadLive().catch(() => {});
-    const t = setInterval(() => loadLive().catch(() => {}), 5000);
+    const t = setInterval(() => loadLive().catch(() => {}), 20000);
     return () => clearInterval(t);
-  }, [tab]);
+  }, [tab, trailAgentId]);
   useEffect(() => {
     if (tab === "agents") loadAgents().catch(() => {});
   }, [tab]);
@@ -55,7 +59,7 @@ export function DeliveryBoard() {
     .filter((a) => a.lat && a.lng)
     .map((a, i) => {
       const age = a.last_seen_at ? Date.now() - Date.parse(String(a.last_seen_at).replace(" ", "T") + "Z") : 9999999;
-      const stale = age > 120000;
+      const stale = Boolean(a.stale) || age > 90000;
       return {
         id: a.id,
         lat: a.lat,
@@ -67,15 +71,11 @@ export function DeliveryBoard() {
       };
     });
   const trails = useMemo(() => {
-    const map = new Map<number, { lat: number; lng: number }[]>();
-    for (const p of live.trail || []) {
-      const arr = map.get(p.agent_id) || [];
-      arr.push({ lat: p.lat, lng: p.lng });
-      map.set(p.agent_id, arr);
-    }
-    return [...map.entries()].map(([id, points], i) => ({ color: colors[i % colors.length], points, id }));
-  }, [live.trail]);
-  const center = markers[0] || shop;
+    const points = (live.trail || []).map((p) => ({ lat: Number(p.lat), lng: Number(p.lng) })).filter((p) => p.lat && p.lng);
+    if (points.length < 2) return [];
+    const i = (live.agents || []).findIndex((a) => a.id === trailAgentId);
+    return [{ color: colors[i >= 0 ? i % colors.length : 0], points }];
+  }, [live.trail, trailAgentId]);
 
   return (
     <div>
@@ -83,6 +83,11 @@ export function DeliveryBoard() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{tr("delivery")}</h1>
         <div className="no-print flex gap-2">
+          {can("delivery.update") ? (
+            <Link className="rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-800" to="/delivery/settle">
+              {tr("settleCourier")}
+            </Link>
+          ) : null}
           {user?.delivery_agent_id ? (
             <Link className="rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-800" to="/delivery/track">
               {tr("liveTrack")}
@@ -102,7 +107,7 @@ export function DeliveryBoard() {
       {tab === "orders" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "delivered", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "delivered", "customer_refused", "damaged", "rescheduled", "customer_unavailable", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
             { key: "agent_id", label: "agent", type: "select", quick: true, lookup: "delivery_agents" },
             { key: "area", label: "area", type: "text" },
           ]} />
@@ -118,6 +123,7 @@ export function DeliveryBoard() {
                     <th>{tr("area")}</th>
                     <th>{tr("total")}</th>
                     <th>{tr("status")}</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -132,6 +138,13 @@ export function DeliveryBoard() {
                       <td>{r.area}</td>
                       <td>{money(r.total, lang)}</td>
                       <td><span className={statusClass(r.delivery_status)}>{statusLabel(r.delivery_status, lang)}</span></td>
+                      <td>
+                        {r.delivery_status === "pending_delivery" && can("delivery.update") ? (
+                          <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setAssignInv({ id: r.id, number: r.number })}>
+                            {tr("assignCourier")}
+                          </button>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -144,7 +157,15 @@ export function DeliveryBoard() {
 
       {tab === "map" ? (
         <div className="space-y-3">
-          <OsmMap center={center} shop={shop} geofence={Number(settings.geofence_meters || 100)} markers={markers} trails={trails} height={520} />
+          <OsmMap
+            center={markers.find((m) => m.id === trailAgentId) || markers[0] || shop}
+            shop={shop}
+            geofence={Number(settings.geofence_meters || 100)}
+            markers={markers}
+            trails={trails}
+            onSelect={(id) => setTrailAgentId(Number(id))}
+            height={520}
+          />
           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
             <div className="table-wrap">
               <table>
@@ -159,9 +180,13 @@ export function DeliveryBoard() {
                 <tbody>
                   {(live.agents || []).map((a) => {
                     const age = a.last_seen_at ? Date.now() - Date.parse(String(a.last_seen_at).replace(" ", "T") + "Z") : 9e12;
-                    const online = age < 120000;
+                    const online = !a.stale && age < 90000;
                     return (
-                      <tr key={a.id}>
+                      <tr
+                        key={a.id}
+                        className={`cursor-pointer ${trailAgentId === a.id ? "bg-teal-50" : ""}`}
+                        onClick={() => setTrailAgentId(a.id)}
+                      >
                         <td>{a.name} ({a.code})</td>
                         <td><span className={statusClass(online ? "in" : "out")}>{online ? tr("online") : tr("offline")}</span></td>
                         <td>{a.open_orders || 0}</td>
@@ -252,6 +277,12 @@ export function DeliveryBoard() {
           {dialog}
         </div>
       ) : null}
+      <AssignCourierModal
+        open={Boolean(assignInv)}
+        invoice={assignInv}
+        onClose={() => setAssignInv(null)}
+        onDone={() => { loadOrders().catch(() => {}); }}
+      />
     </div>
   );
 }

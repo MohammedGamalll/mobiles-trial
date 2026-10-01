@@ -138,6 +138,38 @@ export async function postSaleJournal(
   await postJournal(db, { date: invoice.date, description: `بيع ${invoice.number}`, source: "sale", sourceId: invoice.id, lines, userId });
 }
 
+export async function postDamageJournal(
+  db: AppDb,
+  opts: {
+    invoiceId: number;
+    number: string;
+    cost: number;
+    chargeTo: "courier" | "customer" | "company";
+    userId?: number | null;
+  },
+) {
+  const cost = round2(opts.cost);
+  if (cost <= 0) return;
+  if (await existingJournal(db, "damage", opts.invoiceId)) return;
+  const inv = await accountByCode(db, "1300");
+  const shrink = await accountByCode(db, "5300");
+  const ar = await accountByCode(db, "1200");
+  if (!inv) throw new Error("ledger");
+  const debitAcc = opts.chargeTo === "customer" ? ar : shrink;
+  if (!debitAcc) throw new Error("ledger");
+  await postJournal(db, {
+    date: todayIso(),
+    description: `تالف/مفقود ${opts.number}`,
+    source: "damage",
+    sourceId: opts.invoiceId,
+    userId: opts.userId,
+    lines: [
+      { account_id: debitAcc.id, debit: cost, notes: opts.chargeTo },
+      { account_id: inv.id, credit: cost },
+    ],
+  });
+}
+
 export async function postPurchaseJournal(
   db: AppDb,
   purchase: { id: number; number: string; date: string; total: number; paid: number; remaining: number; payment_method?: string | null },

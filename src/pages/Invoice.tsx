@@ -7,6 +7,7 @@ import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, inputCls } from "../components/ui";
 import { useConfirm } from "../components/Confirm";
 import { PaymentModal } from "../components/PaymentModal";
+import { AssignCourierModal } from "../components/AssignCourierModal";
 
 export default function Invoice() {
   const { id } = useParams();
@@ -17,13 +18,16 @@ export default function Invoice() {
   const [waOpen, setWaOpen] = useState(false);
   const [opened, setOpened] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [retOpen, setRetOpen] = useState(false);
-  const [resultType, setResultType] = useState("full_delivery");
+  const [resultType, setResultType] = useState("delivered");
+  const [chargeTo, setChargeTo] = useState("courier");
   const [lines, setLines] = useState<any[]>([]);
   const [collected, setCollected] = useState(0);
   const { confirmDelete, dialog } = useConfirm();
   const [notes, setNotes] = useState("");
   const [custNotes, setCustNotes] = useState("");
+  const [resultErr, setResultErr] = useState("");
   const [payAmt, setPayAmt] = useState(0);
   const [payOpen, setPayOpen] = useState(false);
 
@@ -39,6 +43,7 @@ export default function Invoice() {
 
   if (!inv) return <div>{tr("loading")}</div>;
   const waEnabled = settings.whatsapp_enabled !== "0";
+  const inCustody = ["out_for_delivery", "rescheduled", "customer_unavailable"].includes(inv.delivery_status);
 
   async function preview(type = "invoice_created") {
     const r = await get<any>(`/api/invoices/${id}/whatsapp?type=${type}&lang=${lang}`);
@@ -65,17 +70,21 @@ export default function Invoice() {
           ) : null}
           <PrintBtn />
           <PrintBtn thermal />
-          {inv.type === "delivery" && can("delivery.update") && !["completed", "cancelled"].includes(inv.status) ? (
+          {inv.type === "delivery" && can("delivery.update") && !["cancelled"].includes(inv.status) && !inv.settled_at ? (
             <>
               {inv.delivery_status === "pending_delivery" ? (
-                <Btn kind="ghost" onClick={async () => { await post(`/api/delivery/orders/${id}/status`, { status: "out_for_delivery" }); reload(); }}>
-                  {tr("outForDelivery")}
+                <Btn kind="ghost" onClick={() => setAssignOpen(true)}>
+                  {tr("assignCourier")}
                 </Btn>
               ) : null}
-              <Btn onClick={() => setResultOpen(true)}>{tr("deliveryResult")}</Btn>
-              <Btn kind="ghost" onClick={async () => { try { await post(`/api/delivery/orders/${id}/complete`, {}); reload(); } catch { alert(tr("resultRequired")); } }}>
-                {tr("completeDelivery")}
-              </Btn>
+              {inCustody ? (
+                <>
+                  <Link className="ui-btn inline-flex items-center justify-center gap-2 rounded-xl bg-teal-50 px-3.5 py-2 text-sm font-bold text-teal-800 hover:bg-teal-100" to={`/delivery/settle${inv.delivery_agent_id ? `?agent=${inv.delivery_agent_id}` : ""}`}>
+                    {tr("settleCourier")}
+                  </Link>
+                  <Btn onClick={() => { setResultErr(""); setResultOpen(true); }}>{tr("deliveryResult")}</Btn>
+                </>
+              ) : null}
             </>
           ) : null}
           {can("returns.create") && !["cancelled", "fully_returned", "held", "quote", "order"].includes(inv.status) ? (
@@ -231,66 +240,62 @@ export default function Invoice() {
         ) : null}
       </Modal>
 
-      <Modal open={resultOpen} title={tr("deliveryResult")} onClose={() => setResultOpen(false)} wide>
+      <Modal open={resultOpen} title={tr("deliveryResult")} onClose={() => setResultOpen(false)}>
         <Field label={tr("status")}>
           <select className={inputCls} value={resultType} onChange={(e) => setResultType(e.target.value)}>
-            <option value="full_delivery">{tr("fullDelivery")}</option>
-            <option value="partial_delivery">{tr("partialDelivery")}</option>
-            <option value="full_return">{tr("fullReturn")}</option>
-            <option value="partial_return">{tr("partialReturn")}</option>
-            <option value="refused">{tr("refused")}</option>
-            <option value="unavailable">{tr("unavailable")}</option>
-            <option value="rescheduled">{tr("rescheduled")}</option>
+            <option value="delivered">{tr("outcomeDelivered")}</option>
+            <option value="rejected">{tr("outcomeRejected")}</option>
+            <option value="damaged">{tr("outcomeDamaged")}</option>
           </select>
         </Field>
-        <div className="table-wrap mt-3">
-          <table>
-            <thead>
-              <tr>
-                <th>{tr("items")}</th>
-                <th>{tr("deliveredQty")}</th>
-                <th>{tr("returnedQty")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(inv.items || []).map((i: any) => {
-                const line = lines.find((x) => x.invoice_item_id === i.id) || { delivered_qty: i.quantity, returned_qty: 0 };
-                return (
-                  <tr key={i.id}>
-                    <td>{i.product_name} ({i.quantity})</td>
-                    <td>
-                      <input className={inputCls} type="number" value={line.delivered_qty} onChange={(e) => setLines((ls) => ls.map((x) => (x.invoice_item_id === i.id ? { ...x, delivered_qty: Number(e.target.value) } : x)))} />
-                    </td>
-                    <td>
-                      <input className={inputCls} type="number" value={line.returned_qty} onChange={(e) => setLines((ls) => ls.map((x) => (x.invoice_item_id === i.id ? { ...x, returned_qty: Number(e.target.value) } : x)))} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-3 grid gap-2">
+        {resultType === "delivered" ? (
           <Field label={tr("collect")}>
             <input className={inputCls} type="number" value={collected} onChange={(e) => setCollected(Number(e.target.value))} />
           </Field>
-          <Field label={tr("notes")}>
-            <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        ) : null}
+        {resultType === "damaged" ? (
+          <Field label={tr("chargeTo")}>
+            <select className={inputCls} value={chargeTo} onChange={(e) => setChargeTo(e.target.value)}>
+              <option value="courier">{tr("chargeCourier")}</option>
+              <option value="customer">{tr("chargeCustomer")}</option>
+              <option value="company">{tr("chargeCompany")}</option>
+            </select>
           </Field>
-          <Field label={lang === "ar" ? "ملاحظات العميل" : "Customer notes"}>
-            <input className={inputCls} value={custNotes} onChange={(e) => setCustNotes(e.target.value)} />
-          </Field>
+        ) : null}
+        <Field label={tr("notes")}>
+          <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </Field>
+        {resultErr ? <div className="mt-2 text-sm text-rose-600">{resultErr}</div> : null}
+        <div className="mt-3">
           <Btn
             onClick={async () => {
-              await post(`/api/delivery/orders/${id}/result`, { result_type: resultType, items: lines, collected, notes, customer_notes: custNotes });
-              setResultOpen(false);
-              reload();
+              try {
+                setResultErr("");
+                await post(`/api/delivery/orders/${id}/result`, {
+                  result_type: resultType,
+                  collected: resultType === "delivered" ? collected : undefined,
+                  charge_to: resultType === "damaged" ? chargeTo : undefined,
+                  notes,
+                  customer_notes: custNotes,
+                });
+                setResultOpen(false);
+                reload();
+              } catch (e) {
+                setResultErr(apiMessage(tr, e));
+              }
             }}
           >
             {tr("save")}
           </Btn>
         </div>
       </Modal>
+
+      <AssignCourierModal
+        open={assignOpen}
+        invoice={inv ? { id: Number(inv.id), number: inv.number } : null}
+        onClose={() => setAssignOpen(false)}
+        onDone={() => { reload().catch(() => {}); }}
+      />
 
       <Modal open={retOpen} title={tr("returnCreate")} onClose={() => setRetOpen(false)} wide>
         <ReturnForm inv={inv} onDone={() => { setRetOpen(false); reload(); }} onExchange={() => { window.location.href = "/pos"; }} />

@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppBindings, AppVars } from "./lib/helpers";
-import { like } from "./lib/helpers";
+import { like, todayIso } from "./lib/helpers";
 import { addDays, applyProductScope, applySearch, listParams, numVal, resolveDates } from "./lib/filters";
+import { numAgg, parkedInvoiceSql } from "./lib/pos-today";
 import { requireAuth, requirePerm } from "./lib/auth";
 import { authRoutes } from "./routes/auth";
 import { catalogRoutes } from "./routes/catalog";
@@ -57,7 +58,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   const p = listParams(new URL(c.req.url));
   if (!p.period && !p.from && !p.to && !p.day && !p.month && !p.year && !p.week) p.period = "this_month";
   const range = resolveDates(p);
@@ -81,16 +82,17 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
   await applyProductScope(c.env.DB, salesExtra, salesBinds, p, "id");
   const sx = salesExtra.length ? ` AND ${salesExtra.join(" AND ")}` : "";
   const db = c.env.DB;
-  const parked = "cancelled','draft','held','quote','order";
+  const live = parkedInvoiceSql();
   const q = {
-    salesToday: db.prepare(`SELECT COALESCE(SUM(total),0) as n, COUNT(*) as c FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('${parked}') AND date = ?${sx}`).bind(today, ...salesBinds),
-    salesMonth: db.prepare(`SELECT COALESCE(SUM(total),0) as n, COUNT(*) as c FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('${parked}') AND date BETWEEN ? AND ?${sx}`).bind(from, to, ...salesBinds),
-    salesPrev: db.prepare(`SELECT COALESCE(SUM(total),0) as n, COUNT(*) as c FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('${parked}') AND date BETWEEN ? AND ?${sx}`).bind(prevFrom, prevTo, ...salesBinds),
-    profit: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('${parked}')${sx}`).bind(...salesBinds),
-    profitMonth: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('${parked}') AND date BETWEEN ? AND ?${sx}`).bind(from, to, ...salesBinds),
-    profitPrev: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('${parked}') AND date BETWEEN ? AND ?${sx}`).bind(prevFrom, prevTo, ...salesBinds),
-    purchases: db.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND date BETWEEN ? AND ?`).bind(from, to),
-    purchasesPrev: db.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND date BETWEEN ? AND ?`).bind(prevFrom, prevTo),
+    salesToday: db.prepare(`SELECT COALESCE(SUM(total),0) as n, COUNT(*) as c FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) = ?${sx}`).bind(today, ...salesBinds),
+    creditToday: db.prepare(`SELECT COALESCE(SUM(remaining),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) = ?${sx}`).bind(today, ...salesBinds),
+    salesMonth: db.prepare(`SELECT COALESCE(SUM(total),0) as n, COUNT(*) as c FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) BETWEEN ? AND ?${sx}`).bind(from, to, ...salesBinds),
+    salesPrev: db.prepare(`SELECT COALESCE(SUM(total),0) as n, COUNT(*) as c FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) BETWEEN ? AND ?${sx}`).bind(prevFrom, prevTo, ...salesBinds),
+    profit: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND ${live}${sx}`).bind(...salesBinds),
+    profitMonth: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) BETWEEN ? AND ?${sx}`).bind(from, to, ...salesBinds),
+    profitPrev: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) BETWEEN ? AND ?${sx}`).bind(prevFrom, prevTo, ...salesBinds),
+    purchases: db.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND DATE(date) BETWEEN ? AND ?`).bind(from, to),
+    purchasesPrev: db.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND DATE(date) BETWEEN ? AND ?`).bind(prevFrom, prevTo),
     stockValue: db.prepare(`SELECT COALESCE(SUM(remaining_qty * unit_cost),0) as n FROM inventory_batches`),
     debtors: db.prepare(`SELECT COALESCE(SUM(current_balance),0) as n FROM customers WHERE current_balance > 0`),
     pending: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE type='delivery' AND delivery_status IN ('pending_delivery','out_for_delivery','rescheduled','customer_unavailable') AND deleted_at IS NULL`),
@@ -98,64 +100,69 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     returned: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE delivery_status IN ('fully_returned','partially_returned','customer_refused') AND deleted_at IS NULL`),
     low: db.prepare(`SELECT id, sku, name_ar, name_en, current_stock, reserved_stock, min_stock FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) > 0 AND (current_stock - reserved_stock) <= CASE WHEN COALESCE(reorder_point,0) > COALESCE(min_stock,0) THEN reorder_point ELSE min_stock END LIMIT 10`),
     out: db.prepare(`SELECT id, sku, name_ar, name_en, current_stock FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) <= 0 LIMIT 10`),
-    top: db.prepare(`SELECT sii.product_name, sii.sku, SUM(sii.quantity) as qty, SUM(sii.total) as total FROM sales_invoice_items sii JOIN sales_invoices si ON si.id = sii.invoice_id WHERE si.deleted_at IS NULL AND si.status NOT IN ('cancelled','draft','held','quote','order') AND si.date BETWEEN ? AND ?${sx.replaceAll("sales_agent_id", "si.sales_agent_id").replaceAll("delivery_agent_id", "si.delivery_agent_id").replaceAll("branch_id", "si.branch_id")} GROUP BY sii.product_id, sii.product_name, sii.sku ORDER BY qty DESC LIMIT 8`).bind(from, to, ...salesBinds),
-    chart: db.prepare(`SELECT date as d, COALESCE(SUM(total),0) as total, COALESCE(SUM(profit),0) as profit FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('cancelled','draft','held','quote','order') AND date BETWEEN ? AND ?${sx} GROUP BY date ORDER BY date`).bind(from, to, ...salesBinds),
+    top: db.prepare(`SELECT sii.product_name, sii.sku, SUM(sii.quantity) as qty, SUM(sii.total) as total FROM sales_invoice_items sii JOIN sales_invoices si ON si.id = sii.invoice_id WHERE si.deleted_at IS NULL AND ${parkedInvoiceSql("si.status")} AND DATE(si.date) BETWEEN ? AND ?${sx.replaceAll("sales_agent_id", "si.sales_agent_id").replaceAll("delivery_agent_id", "si.delivery_agent_id").replaceAll("branch_id", "si.branch_id")} GROUP BY sii.product_id, sii.product_name, sii.sku ORDER BY qty DESC LIMIT 8`).bind(from, to, ...salesBinds),
+    chart: db.prepare(`SELECT DATE(date) as d, COALESCE(SUM(total),0) as total, COALESCE(SUM(profit),0) as profit FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) BETWEEN ? AND ?${sx} GROUP BY DATE(date) ORDER BY DATE(date)`).bind(from, to, ...salesBinds),
     cash: db.prepare(`SELECT COALESCE(SUM(current_balance),0) as n FROM cash_accounts`),
-    collectToday: db.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM payments WHERE voided_at IS NULL AND date = ?`).bind(today),
-    expMonth: db.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM expenses WHERE voided_at IS NULL AND date BETWEEN ? AND ?`).bind(from, to),
-    present: db.prepare(`SELECT COUNT(*) as n FROM attendance_sessions WHERE work_date = ? AND status = 'open'`).bind(today),
+    collectToday: db.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM payments WHERE voided_at IS NULL AND DATE(date) = ?`).bind(today),
+    expMonth: db.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM expenses WHERE voided_at IS NULL AND DATE(date) BETWEEN ? AND ?`).bind(from, to),
+    present: db.prepare(`SELECT COUNT(*) as n FROM attendance_sessions WHERE DATE(work_date) = ? AND status = 'open'`).bind(today),
     staff: db.prepare(`SELECT COUNT(*) as n FROM employees WHERE deleted_at IS NULL AND status = 'active'`),
     approvals: db.prepare(`SELECT (
       (SELECT COUNT(*) FROM purchase_invoices WHERE deleted_at IS NULL AND status IN ('submitted','draft')) +
       (SELECT COUNT(*) FROM stocktakes WHERE status = 'submitted') +
       (SELECT COUNT(*) FROM leave_requests WHERE status = 'pending')
     ) as n`),
-    dead: db.prepare(`SELECT COUNT(*) as n FROM products p WHERE p.deleted_at IS NULL AND COALESCE(p.kind,'product') != 'service' AND (p.current_stock - p.reserved_stock) > 0 AND p.id NOT IN (SELECT sii.product_id FROM sales_invoice_items sii JOIN sales_invoices si ON si.id = sii.invoice_id WHERE si.deleted_at IS NULL AND si.status NOT IN ('cancelled','draft','held','quote','order') AND si.date >= date('now','-90 days'))`),
-    dueExp: db.prepare(`SELECT COUNT(*) as n FROM expenses WHERE voided_at IS NULL AND recurring = 1 AND next_due IS NOT NULL AND next_due <= ?`).bind(today),
+    dead: db.prepare(`SELECT COUNT(*) as n FROM products p WHERE p.deleted_at IS NULL AND COALESCE(p.kind,'product') != 'service' AND (p.current_stock - p.reserved_stock) > 0 AND p.id NOT IN (SELECT sii.product_id FROM sales_invoice_items sii JOIN sales_invoices si ON si.id = sii.invoice_id WHERE si.deleted_at IS NULL AND ${parkedInvoiceSql("si.status")} AND si.date >= date('now','-90 days'))`),
+    dueExp: db.prepare(`SELECT COUNT(*) as n FROM expenses WHERE voided_at IS NULL AND recurring = 1 AND next_due IS NOT NULL AND DATE(next_due) <= ?`).bind(today),
     creditors: db.prepare(`SELECT COALESCE(SUM(balance),0) as n FROM suppliers WHERE deleted_at IS NULL AND COALESCE(balance,0) > 0`),
     lowCount: db.prepare(`SELECT COUNT(*) as n FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) > 0 AND (current_stock - reserved_stock) <= CASE WHEN COALESCE(reorder_point,0) > COALESCE(min_stock,0) THEN reorder_point ELSE min_stock END`),
     reps: db.prepare(`SELECT COUNT(*) as n FROM delivery_agents WHERE deleted_at IS NULL AND status = 'active'`),
   };
   const keys = Object.keys(q) as (keyof typeof q)[];
-  const stmts = keys.map((k) => q[k]);
-  const results = await db.batch(stmts);
   const map: Record<string, unknown> = {};
-  keys.forEach((k, i) => {
-    map[k] = results[i].results;
-  });
-  const first = (k: string) => (map[k] as { n?: number; c?: number }[])[0];
+  await Promise.all(
+    keys.map(async (k) => {
+      try {
+        map[k] = (await q[k].all()).results;
+      } catch {
+        map[k] = [];
+      }
+    }),
+  );
+  const first = (k: string) => ((map[k] as { n?: unknown; c?: unknown }[]) || [])[0];
   return c.json({
-    sales_today: first("salesToday")?.n || 0,
-    invoices_today: first("salesToday")?.c || 0,
-    sales_month: first("salesMonth")?.n || 0,
-    invoices_month: first("salesMonth")?.c || 0,
-    prev_sales_month: first("salesPrev")?.n || 0,
-    prev_invoices_month: first("salesPrev")?.c || 0,
-    profit: first("profit")?.n || 0,
-    profit_month: first("profitMonth")?.n || 0,
-    prev_profit_month: first("profitPrev")?.n || 0,
-    purchases: first("purchases")?.n || 0,
-    prev_purchases: first("purchasesPrev")?.n || 0,
-    stock_value: first("stockValue")?.n || 0,
-    debtors: first("debtors")?.n || 0,
-    pending_delivery: first("pending")?.n || 0,
-    completed_delivery: first("completed")?.n || 0,
-    returned_orders: first("returned")?.n || 0,
+    sales_today: numAgg(first("salesToday")?.n),
+    invoices_today: numAgg(first("salesToday")?.c),
+    credit_today: numAgg(first("creditToday")?.n),
+    sales_month: numAgg(first("salesMonth")?.n),
+    invoices_month: numAgg(first("salesMonth")?.c),
+    prev_sales_month: numAgg(first("salesPrev")?.n),
+    prev_invoices_month: numAgg(first("salesPrev")?.c),
+    profit: numAgg(first("profit")?.n),
+    profit_month: numAgg(first("profitMonth")?.n),
+    prev_profit_month: numAgg(first("profitPrev")?.n),
+    purchases: numAgg(first("purchases")?.n),
+    prev_purchases: numAgg(first("purchasesPrev")?.n),
+    stock_value: numAgg(first("stockValue")?.n),
+    debtors: numAgg(first("debtors")?.n),
+    pending_delivery: numAgg(first("pending")?.n),
+    completed_delivery: numAgg(first("completed")?.n),
+    returned_orders: numAgg(first("returned")?.n),
     low_stock: map.low,
     out_of_stock: map.out,
     top_products: map.top,
     chart: map.chart,
-    cash_balance: first("cash")?.n || 0,
-    collections_today: first("collectToday")?.n || 0,
-    expenses_month: first("expMonth")?.n || 0,
-    present_now: first("present")?.n || 0,
-    staff_active: first("staff")?.n || 0,
-    pending_approvals: first("approvals")?.n || 0,
-    dead_stock: first("dead")?.n || 0,
-    due_expenses: first("dueExp")?.n || 0,
-    creditors: first("creditors")?.n || 0,
-    low_count: first("lowCount")?.n || 0,
-    reps_count: first("reps")?.n || 0,
+    cash_balance: numAgg(first("cash")?.n),
+    collections_today: numAgg(first("collectToday")?.n),
+    expenses_month: numAgg(first("expMonth")?.n),
+    present_now: numAgg(first("present")?.n),
+    staff_active: numAgg(first("staff")?.n),
+    pending_approvals: numAgg(first("approvals")?.n),
+    dead_stock: numAgg(first("dead")?.n),
+    due_expenses: numAgg(first("dueExp")?.n),
+    creditors: numAgg(first("creditors")?.n),
+    low_count: numAgg(first("lowCount")?.n),
+    reps_count: numAgg(first("reps")?.n),
     period: p.period || "this_month",
     period_from: from,
     period_to: to,

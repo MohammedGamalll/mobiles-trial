@@ -67,6 +67,7 @@ export default function Products() {
   const f = useListQuery("products", { q: sp.get("q") || "", status: sp.get("status") || "" });
   const [data, setData] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
+  const [daily, setDaily] = useState<{ purchases: any[]; shipments: any[]; date?: string }>({ purchases: [], shipments: [] });
   const [open, setOpen] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [priceOpen, setPriceOpen] = useState(false);
@@ -130,6 +131,11 @@ export default function Products() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/products?${p}`);
     setData(r.data);
     setTotals(r.totals || {});
+    const ops = new URLSearchParams();
+    if (f.values.category_id) ops.set("category_id", String(f.values.category_id));
+    get<{ purchases: any[]; shipments: any[]; date: string }>(`/api/inventory/daily-ops?${ops}`)
+      .then((d) => setDaily({ purchases: d.purchases || [], shipments: d.shipments || [], date: d.date }))
+      .catch(() => setDaily({ purchases: [], shipments: [] }));
     get<{ data: any[] }>("/api/offers").then((o) => setOffers(o.data || [])).catch(() => {});
   }
   useEffect(() => {
@@ -160,10 +166,11 @@ export default function Products() {
           <Btn kind="ghost" onClick={() => setView(view === "list" ? "board" : "list")}>{view === "list" ? tr("boardView") : tr("listView")}</Btn>
         </div>
       </div>
-      <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-3">
+      <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
         <Stat label={tr("products")} value={num(totals.count, lang)} />
         <Stat label={tr("qty")} value={num(totals.qty, lang)} />
         <Stat label={tr("stockValue")} value={money(totals.value, lang)} />
+        {can("costs.view") && totals.cost_value != null ? <Stat label={tr("lineValue")} value={money(totals.cost_value, lang)} accent="emerald" /> : null}
       </div>
       <SmartFilter
         f={f}
@@ -173,7 +180,7 @@ export default function Products() {
           { key: "brand_id", label: "brand", type: "select", quick: true, lookup: "brands" },
           { key: "model_id", label: "model", type: "select", quick: true, lookup: "models" },
           { key: "part_type_id", label: "partType", type: "select", lookup: "part_types" },
-          { key: "category_id", label: "categories", type: "select", lookup: "categories" },
+          { key: "category_id", label: "categories", type: "select", quick: true, lookup: "categories" },
           { key: "compatible_model_id", label: "compatibleModel", type: "select", lookup: "models" },
           { key: "quality", label: "quality", type: "select", options: qualities.map((q) => ({ value: q, label: q })) },
           { key: "color", label: "color", type: "text" },
@@ -201,6 +208,16 @@ export default function Products() {
           <div className="flex flex-wrap gap-1">
             {[["", tr("all")], ["in", tr("stockIn")], ["low", tr("stockLow")], ["out", tr("stockOut")], ["dead", tr("deadStock")]].map(([v, l]) => (
               <button key={v} type="button" className={`rounded-full px-2 py-1 text-xs font-bold ${ (f.values.status || "") === v ? "bg-ink text-white" : "bg-slate-100"}`} onClick={() => f.set("status", v)}>{l}</button>
+            ))}
+            {(lookups?.categories || []).slice(0, 12).map((c: any) => (
+              <button
+                key={`cat-${c.id}`}
+                type="button"
+                className={`rounded-full px-2 py-1 text-xs font-bold ${String(f.values.category_id || "") === String(c.id) ? "bg-ink text-white" : "bg-slate-100"}`}
+                onClick={() => f.set("category_id", String(f.values.category_id) === String(c.id) ? "" : String(c.id))}
+              >
+                {lang === "ar" ? c.name_ar : c.name_en}
+              </button>
             ))}
             <button type="button" className={`rounded-full px-2 py-1 text-xs font-bold ${f.values.sort === "moved" ? "bg-ink text-white" : "bg-slate-100"}`} onClick={() => f.set("sort", "moved")}>{tr("mostMoved")}</button>
           </div>
@@ -266,6 +283,9 @@ export default function Products() {
                 <th>{tr("brand")}</th>
                 <th>{tr("model")}</th>
                 <th>{tr("available")}</th>
+                <th>{tr("lineValue")}</th>
+                <th>{tr("openingQty")}</th>
+                <th>{tr("warehouseDist")}</th>
                 <th>{tr("sellingPrice")}</th>
                 <th>{tr("location")}</th>
                 <th></th>
@@ -286,6 +306,16 @@ export default function Products() {
                   <td className="max-w-40 truncate">{(p.models || []).map((m: any) => m.name).join(", ")}</td>
                   <td>
                     <span className={statusClass(p.stock_status)}>{num(p.available, lang)}</span>
+                  </td>
+                  <td>
+                    <div>{money(p.stock_value ?? (Number(p.available) || 0) * (Number(p.selling_price) || 0), lang)}</div>
+                    {can("costs.view") && p.cost_value != null ? <div className="text-xs text-slate-400">{money(p.cost_value, lang)}</div> : null}
+                  </td>
+                  <td>{num(p.opening_qty, lang)}</td>
+                  <td className="text-xs">
+                    {(p.warehouses || []).length
+                      ? (p.warehouses as { warehouse: string; qty: number }[]).map((w) => `${w.warehouse}: ${num(w.qty, lang)}`).join(" · ")
+                      : (p.warehouse ? `${p.warehouse}: ${num(p.available, lang)}` : p.location_name || "—")}
                   </td>
                   <td>{money(p.selling_price, lang)}</td>
                   <td className="text-xs">{p.location_name}</td>
@@ -326,6 +356,35 @@ export default function Products() {
         </div>
       </div>
       )}
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+          <div className="mb-2 font-bold">{tr("dailyPurchases")}{daily.date ? ` · ${daily.date}` : ""}</div>
+          {!daily.purchases.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : daily.purchases.slice(0, 20).map((r) => (
+            <div key={`${r.purchase_id}-${r.product_id}-${r.sku}`} className="flex items-center justify-between border-b border-slate-50 py-2 text-sm">
+              <div>
+                <Link className="font-bold text-cyan-800" to={`/purchases/${r.purchase_id}`}>{r.number}</Link>
+                <div className="text-xs text-slate-400">{lang === "ar" ? r.name_ar : r.name_en} · {r.sku}</div>
+              </div>
+              <div className="text-end">
+                <div>{num(r.quantity, lang)}</div>
+                <div className="text-xs text-slate-400">{money(r.total, lang)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+          <div className="mb-2 font-bold">{tr("dailyShipments")}</div>
+          {!daily.shipments.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : daily.shipments.slice(0, 20).map((r) => (
+            <div key={r.id} className="flex items-center justify-between border-b border-slate-50 py-2 text-sm">
+              <div>
+                <div className="font-bold">{lang === "ar" ? r.name_ar : r.name_en}</div>
+                <div className="text-xs text-slate-400">{r.sku} · {r.type} · {r.notes || r.reference_type}</div>
+              </div>
+              <div className="text-end font-bold">{num(r.qty, lang)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
       <Modal open={offerOpen} title={tr("qtyOffer")} onClose={() => setOfferOpen(false)}>
         <div className="mb-3 space-y-2 text-sm">
           {offers.map((o) => (

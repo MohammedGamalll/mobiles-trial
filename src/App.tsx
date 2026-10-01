@@ -7,6 +7,7 @@ import POS from "./pages/POS";
 import Products, { ProductDetail } from "./pages/Products";
 import Invoice from "./pages/Invoice";
 import { DeliveryBoard } from "./pages/Delivery";
+import DeliverySettle from "./pages/DeliverySettle";
 import CourierTrack from "./pages/CourierTrack";
 import { AttendancePage, EmployeesPage, PayrollPage, ShiftsPage, LeavesPage, AdvancesPage } from "./pages/HR";
 import {
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="sales" element={<PermGuard perm="sales.view"><SalesList /></PermGuard>} />
         <Route path="sales/:id" element={<PermGuard perm={["sales.view", "delivery.view"]}><Invoice /></PermGuard>} />
         <Route path="delivery" element={<DeliveryBoard />} />
+        <Route path="delivery/settle" element={<PermGuard perm="delivery.update"><DeliverySettle /></PermGuard>} />
         <Route path="delivery/track" element={<CourierTrack />} />
         <Route path="reps" element={<RepsPage />} />
         <Route path="reps/visits" element={<VisitsPage />} />
