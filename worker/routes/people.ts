@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { audit, hashPassword, like, paginate, randomToken, type AppBindings, type AppVars } from "../lib/helpers";
+import { audit, hashPassword, isDupEntry, like, paginate, randomToken, type AppBindings, type AppDb, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql } from "../lib/filters";
 
@@ -72,36 +72,62 @@ peopleRoutes.get("/customers/:id", requirePerm("customers.view", "sales.create")
   return c.json({ data: { ...row, invoices: invoices.results, payments: payments.results, returns: returns.results, statement_items: itemRows.results, overdue: overdue.results } });
 });
 
+function normPhone(v: unknown) {
+  const s = String(v ?? "").trim();
+  return s || null;
+}
+
+async function phoneTaken(db: AppDb, phone: string | null, exceptId = 0) {
+  if (!phone) return false;
+  const row = await db.prepare("SELECT id FROM customers WHERE phone = ? AND deleted_at IS NULL AND id != ? LIMIT 1").bind(phone, exceptId).first();
+  return !!row;
+}
+
 peopleRoutes.post("/customers", requirePerm("customers.create"), async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
-  if (!b.name) return c.json({ error: "missing_name" }, 400);
-  const r = await c.env.DB
-    .prepare(
+  if (!String(b.name ?? "").trim()) return c.json({ error: "missing_name" }, 400);
+  const phone = normPhone(b.phone);
+  if (await phoneTaken(c.env.DB, phone)) return c.json({ error: "duplicate_phone" }, 400);
+  try {
+    const r = await c.env.DB
+      .prepare(
       `INSERT INTO customers (name, phone, whatsapp, address, area, notes, customer_type, payment_terms, credit_limit, current_balance, email, national_id, company, tax_id, city, price_list_id, account_kind, discount_pct, sell_price)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(b.name, b.phone || null, b.whatsapp || b.phone || null, b.address || null, b.area || null, b.notes || null, b.customer_type || "retail", b.payment_terms || "cash", Number(b.credit_limit || 0), Number(b.current_balance || 0), b.email || null, b.national_id || null, b.company || null, b.tax_id || null, b.city || null, b.price_list_id || null, b.account_kind === "credit" ? "credit" : "debit", Number(b.discount_pct || 0), Number(b.sell_price || 0))
-    .run();
-  await audit(c.env.DB, c.get("user"), "create_customer", "customer", r.meta.last_row_id, String(b.name));
-  return c.json({ id: r.meta.last_row_id }, 201);
+      )
+      .bind(String(b.name).trim(), phone, b.whatsapp || phone, b.address || null, b.area || null, b.notes || null, b.customer_type || "retail", b.payment_terms || "cash", Number(b.credit_limit || 0), Number(b.current_balance || 0), b.email || null, b.national_id || null, b.company || null, b.tax_id || null, b.city || null, b.price_list_id || null, b.account_kind === "credit" ? "credit" : "debit", Number(b.discount_pct || 0), Number(b.sell_price || 0))
+      .run();
+    await audit(c.env.DB, c.get("user"), "create_customer", "customer", r.meta.last_row_id, String(b.name));
+    return c.json({ id: r.meta.last_row_id }, 201);
+  } catch (err) {
+    if (isDupEntry(err)) return c.json({ error: "duplicate_phone" }, 400);
+    throw err;
+  }
 });
 
 peopleRoutes.put("/customers/:id", requirePerm("customers.edit"), async (c) => {
   const id = Number(c.req.param("id"));
   const prev = await c.env.DB.prepare("SELECT name, phone, credit_limit, customer_type, payment_terms, city FROM customers WHERE id = ?").bind(id).first<Record<string, unknown>>();
   const b = await c.req.json<Record<string, unknown>>();
+  if (!String(b.name ?? "").trim()) return c.json({ error: "missing_name" }, 400);
+  const phone = normPhone(b.phone);
+  if (await phoneTaken(c.env.DB, phone, id)) return c.json({ error: "duplicate_phone" }, 400);
   const user = c.get("user");
   const canCredit = user.role_slug === "admin" || user.permissions.includes("customers.credit");
   const credit = canCredit ? Number(b.credit_limit || 0) : Number(prev?.credit_limit || 0);
-  await c.env.DB
-    .prepare(
-      `UPDATE customers SET name=?, phone=?, whatsapp=?, address=?, area=?, notes=?, customer_type=?, payment_terms=?, credit_limit=?, email=?, national_id=?, company=?, tax_id=?, city=?, price_list_id=?, account_kind=?, discount_pct=?, sell_price=?, updated_at=datetime('now') WHERE id=?`,
-    )
-    .bind(b.name, b.phone || null, b.whatsapp || null, b.address || null, b.area || null, b.notes || null, b.customer_type || "retail", b.payment_terms || "cash", credit, b.email || null, b.national_id || null, b.company || null, b.tax_id || null, b.city || null, b.price_list_id || null, b.account_kind === "credit" ? "credit" : "debit", Number(b.discount_pct || 0), Number(b.sell_price || 0), id)
-    .run();
+  try {
+    await c.env.DB
+      .prepare(
+        `UPDATE customers SET name=?, phone=?, whatsapp=?, address=?, area=?, notes=?, customer_type=?, payment_terms=?, credit_limit=?, email=?, national_id=?, company=?, tax_id=?, city=?, price_list_id=?, account_kind=?, discount_pct=?, sell_price=?, updated_at=datetime('now') WHERE id=?`,
+      )
+      .bind(String(b.name).trim(), phone, b.whatsapp || null, b.address || null, b.area || null, b.notes || null, b.customer_type || "retail", b.payment_terms || "cash", credit, b.email || null, b.national_id || null, b.company || null, b.tax_id || null, b.city || null, b.price_list_id || null, b.account_kind === "credit" ? "credit" : "debit", Number(b.discount_pct || 0), Number(b.sell_price || 0), id)
+      .run();
+  } catch (err) {
+    if (isDupEntry(err)) return c.json({ error: "duplicate_phone" }, 400);
+    throw err;
+  }
   await audit(c.env.DB, user, "edit_customer", "customer", id, String(b.name || id), {
     old_value: prev,
-    new_value: { name: b.name, phone: b.phone, credit_limit: credit, customer_type: b.customer_type, payment_terms: b.payment_terms, city: b.city },
+    new_value: { name: b.name, phone, credit_limit: credit, customer_type: b.customer_type, payment_terms: b.payment_terms, city: b.city },
   });
   return c.json({ ok: true });
 });

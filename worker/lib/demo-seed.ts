@@ -1,6 +1,6 @@
 import type { AppDb } from "./db";
 import { nextNumber, todayIso, type AuthUser } from "./helpers";
-import { applyIssue, availableBatches, logMovement, planAllocation } from "./stock";
+import { applyIssue, availableBatches, logMovement, planAllocation, type Allocation } from "./stock";
 
 export const DEMO_TAG = "__DEMO__";
 
@@ -160,11 +160,11 @@ export async function seedDemo(db: AppDb, user: AuthUser) {
   }
 
   async function makeSale(customerId: number, lines: { productId: number; qty: number; price: number }[], method: string, paidRatio: number) {
-    const planned: { productId: number; qty: number; price: number; name: string; sku: string; cost: number; alloc: { batch_id: number; qty: number; unit_cost: number }[] }[] = [];
+    const planned: { productId: number; qty: number; price: number; name: string; sku: string; cost: number; alloc: Allocation[] }[] = [];
     for (const line of lines) {
       const prod = await db.prepare("SELECT name_ar, sku, kind FROM products WHERE id = ?").bind(line.productId).first<{ name_ar: string; sku: string; kind: string }>();
       if (!prod) continue;
-      let alloc: { batch_id: number; qty: number; unit_cost: number }[] = [];
+      let alloc: Allocation[] = [];
       let cost = 0;
       if (prod.kind !== "service") {
         const batches = await availableBatches(db, line.productId);
@@ -230,7 +230,7 @@ export async function seedDemo(db: AppDb, user: AuthUser) {
           await logMovement(db, {
             productId: p.productId,
             batchId: a.batch_id,
-            type: "out",
+            type: "sale_out",
             qty: a.qty,
             unitCost: a.unit_cost,
             referenceType: "sale",

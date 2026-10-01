@@ -55,6 +55,7 @@ sahlRoutes.post("/serials", requirePerm("serials.manage", "purchases.create"), a
       /* duplicate */
     }
   }
+  if (!added.length) return c.json({ error: "duplicate_serial" }, 400);
   await c.env.DB.prepare("UPDATE products SET track_serial = 1 WHERE id = ?").bind(b.product_id).run();
   await audit(c.env.DB, c.get("user"), "serials", "product", b.product_id, `Add ${added.length} serials`);
   return c.json({ ok: true, added: added.length }, 201);

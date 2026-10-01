@@ -14,6 +14,18 @@ export async function cashByKind(db: AppDb, kind: "cash" | "bank") {
     .first<{ id: number; account_id: number; current_balance: number }>();
 }
 
+export async function cashAccountFor(db: AppDb, method?: string | null, cashAccountId?: number | null) {
+  const id = Number(cashAccountId || 0);
+  if (id) {
+    const row = await db
+      .prepare("SELECT * FROM cash_accounts WHERE id = ? AND active = 1")
+      .bind(id)
+      .first<{ id: number; account_id: number; current_balance: number }>();
+    if (row) return row;
+  }
+  return cashByKind(db, methodKind(method));
+}
+
 export function methodKind(method?: string | null): "cash" | "bank" {
   const m = String(method || "cash").toLowerCase();
   if (["card", "visa", "bank", "transfer", "instapay", "wallet"].includes(m)) return "bank";
@@ -93,7 +105,7 @@ export async function tryLedger(fn: () => Promise<unknown>) {
 
 export async function postSaleJournal(
   db: AppDb,
-  invoice: { id: number; number: string; date: string; total: number; paid: number; remaining: number; payment_method?: string | null; cost_total?: number | null },
+  invoice: { id: number; number: string; date: string; total: number; paid: number; remaining: number; payment_method?: string | null; cost_total?: number | null; cash_account_id?: number | null },
   userId?: number | null,
 ) {
   if (await existingJournal(db, "sale", invoice.id)) return;
@@ -101,22 +113,25 @@ export async function postSaleJournal(
   const ar = await accountByCode(db, "1200");
   const cogs = await accountByCode(db, "5100");
   const inv = await accountByCode(db, "1300");
-  if (!sales || !ar) return;
+  if (!sales || !ar) throw new Error("ledger");
   const lines: JournalLine[] = [];
   const { results: pays } = await db.prepare("SELECT method, amount FROM payments WHERE invoice_id = ? AND voided_at IS NULL").bind(invoice.id).all<{ method: string; amount: number }>();
   if (pays.length) {
     for (const p of pays) {
-      const cash = await cashByKind(db, methodKind(p.method));
-      if (cash) lines.push({ account_id: cash.account_id, debit: p.amount, notes: p.method });
+      const cash = await cashAccountFor(db, p.method, invoice.cash_account_id);
+      if (!cash) throw new Error("ledger");
+      lines.push({ account_id: cash.account_id, debit: p.amount, notes: p.method });
     }
   } else if (invoice.paid > 0) {
-    const cash = await cashByKind(db, methodKind(invoice.payment_method));
-    if (cash) lines.push({ account_id: cash.account_id, debit: invoice.paid });
+    const cash = await cashAccountFor(db, invoice.payment_method, invoice.cash_account_id);
+    if (!cash) throw new Error("ledger");
+    lines.push({ account_id: cash.account_id, debit: invoice.paid });
   }
   if (invoice.remaining > 0) lines.push({ account_id: ar.id, debit: invoice.remaining });
   lines.push({ account_id: sales.id, credit: invoice.total });
   const cost = Number(invoice.cost_total || 0);
-  if (cost > 0 && cogs && inv) {
+  if (cost > 0) {
+    if (!cogs || !inv) throw new Error("ledger");
     lines.push({ account_id: cogs.id, debit: cost });
     lines.push({ account_id: inv.id, credit: cost });
   }
@@ -144,21 +159,26 @@ export async function postPurchaseJournal(
 
 export async function postReturnJournal(
   db: AppDb,
-  opts: { returnId: number; number: string; date: string; retTotal: number; cogs: number; arDrop: number; refund: number; method?: string | null; userId?: number | null },
+  opts: { returnId: number; number: string; date: string; retTotal: number; cogs: number; arDrop: number; refund: number; method?: string | null; cashAccountId?: number | null; userId?: number | null },
 ) {
   if (await existingJournal(db, "return", opts.returnId)) return;
   const sales = await accountByCode(db, "4100");
   const ar = await accountByCode(db, "1200");
   const cogs = await accountByCode(db, "5100");
   const inv = await accountByCode(db, "1300");
-  if (!sales) return;
+  if (!sales) throw new Error("ledger");
   const lines: JournalLine[] = [{ account_id: sales.id, debit: opts.retTotal }];
-  if (opts.arDrop > 0 && ar) lines.push({ account_id: ar.id, credit: opts.arDrop });
-  if (opts.refund > 0) {
-    const cash = await cashByKind(db, methodKind(opts.method));
-    if (cash) lines.push({ account_id: cash.account_id, credit: opts.refund });
+  if (opts.arDrop > 0) {
+    if (!ar) throw new Error("ledger");
+    lines.push({ account_id: ar.id, credit: opts.arDrop });
   }
-  if (opts.cogs > 0 && cogs && inv) {
+  if (opts.refund > 0) {
+    const cash = await cashAccountFor(db, opts.method, opts.cashAccountId);
+    if (!cash) throw new Error("ledger");
+    lines.push({ account_id: cash.account_id, credit: opts.refund });
+  }
+  if (opts.cogs > 0) {
+    if (!cogs || !inv) throw new Error("ledger");
     lines.push({ account_id: inv.id, debit: opts.cogs });
     lines.push({ account_id: cogs.id, credit: opts.cogs });
   }
@@ -167,12 +187,12 @@ export async function postReturnJournal(
 
 export async function postCollectionJournal(
   db: AppDb,
-  opts: { paymentId: number; invoiceNumber: string; amount: number; method?: string; date: string; userId?: number | null },
+  opts: { paymentId: number; invoiceNumber: string; amount: number; method?: string; date: string; cashAccountId?: number | null; userId?: number | null },
 ) {
   if (await existingJournal(db, "payment", opts.paymentId)) return;
   const ar = await accountByCode(db, "1200");
-  const cash = await cashByKind(db, methodKind(opts.method));
-  if (!ar || !cash) return;
+  const cash = await cashAccountFor(db, opts.method, opts.cashAccountId);
+  if (!ar || !cash) throw new Error("ledger");
   await postJournal(db, {
     date: opts.date,
     description: `تحصيل ${opts.invoiceNumber}`,

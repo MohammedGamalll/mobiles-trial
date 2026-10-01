@@ -85,7 +85,10 @@ inventoryRoutes.get("/movements", requirePerm("inventory.view"), async (c) => {
   applyEq(where, params, "p.brand_id", p.brand_id, true);
   applyEq(where, params, "p.category_id", p.category_id, true);
   applyEq(where, params, "p.part_type_id", p.part_type_id, true);
-  applyEq(where, params, "sm.type", p.type || p.movement_type);
+  const moveType = p.type || p.movement_type;
+  if (moveType === "sale_out") where.push("sm.type IN ('sale_out','out')");
+  else if (moveType === "return_in") where.push("sm.type IN ('return_in','return')");
+  else applyEq(where, params, "sm.type", moveType);
   applyEq(where, params, "sm.reference_type", p.reference_type);
   applyEq(where, params, "sm.created_by", p.created_by, true);
   applyDate(where, params, "sm.created_at", p);

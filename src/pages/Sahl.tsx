@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { useActionError } from "../lib/errors";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { useConfirm } from "../components/Confirm";
@@ -29,12 +30,13 @@ export function SerialsPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ product_id: "", serials: "" });
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/serials?${f.qs}&pageSize=80`)).data || []);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("serials")} action={can("serials.manage") ? <Btn onClick={() => setOpen(true)}>{tr("add")}</Btn> : null}>
+    <Page title={tr("serials")} action={can("serials.manage") ? <Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("add")}</Btn> : null}>
       <SmartFilter f={f} date={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: ["in_stock", "reserved", "sold", "returned"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
         { key: "product_id", label: "products", type: "async", asyncPath: "/api/products", asyncLabel: (r) => `${r.sku} — ${r.name_ar}` },
@@ -53,16 +55,27 @@ export function SerialsPage() {
           ))}
         </tbody>
       </table>
-      <Modal open={open} title={tr("serials")} onClose={() => setOpen(false)}>
+      <Modal open={open} title={tr("serials")} onClose={() => { setOpen(false); act.clear(); }}>
         <SerialProductSelect value={form.product_id} onChange={(v) => setForm({ ...form, product_id: v })} />
         <Field label={tr("serials")}><textarea className={inputCls} rows={5} value={form.serials} onChange={(e) => setForm({ ...form, serials: e.target.value })} placeholder="IMEI / serial لكل سطر" /></Field>
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
+          if (!form.product_id) {
+            act.fail(undefined, "errProductRequired");
+            return;
+          }
+          const list = form.serials.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+          if (!list.length) {
+            act.fail(undefined, "errSerialsRequired");
+            return;
+          }
           try {
-            await post("/api/serials", { product_id: Number(form.product_id), serials: form.serials.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean) });
+            await post("/api/serials", { product_id: Number(form.product_id), serials: list });
             playSound("done");
+            act.clear();
             setOpen(false); load();
-          } catch {
-            playSound("err");
+          } catch (e) {
+            act.fail(e);
           }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -75,6 +88,7 @@ function SerialProductSelect({ value, onChange }: { value: string; onChange: (v:
   const { tr } = useApp();
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<any[]>([]);
+  const [miss, setMiss] = useState("");
   useEffect(() => {
     if (!q.trim()) { setRows([]); return; }
     const t = setTimeout(() => get<{ data: any[] }>(`/api/products?q=${encodeURIComponent(q)}&pageSize=8`).then((r) => setRows(r.data || [])).catch(() => {}), 150);
@@ -82,6 +96,7 @@ function SerialProductSelect({ value, onChange }: { value: string; onChange: (v:
   }, [q]);
   function pick(p: any) {
     playSound("ok");
+    setMiss("");
     onChange(String(p.id));
     setQ(p.sku);
   }
@@ -90,7 +105,7 @@ function SerialProductSelect({ value, onChange }: { value: string; onChange: (v:
       <input
         className={inputCls}
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => { setQ(e.target.value); setMiss(""); }}
         placeholder={tr("searchProduct")}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
@@ -98,11 +113,13 @@ function SerialProductSelect({ value, onChange }: { value: string; onChange: (v:
           const exact = matchScanned(rows, q) || (rows.length === 1 ? rows[0] : undefined);
           if (!exact) {
             playSound("err");
+            setMiss(tr("errProductNotFound"));
             return;
           }
           pick(exact);
         }}
       />
+      <ErrorNote message={miss} />
       {rows.map((p) => (
         <button key={p.id} className={`mt-1 block w-full rounded-xl border px-2 py-1 text-start text-sm ${value === String(p.id) ? "bg-ink text-white" : ""}`} onClick={() => pick(p)}>
           {p.sku} · {p.name_ar}

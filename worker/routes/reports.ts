@@ -298,12 +298,12 @@ reportRoutes.get("/stock-asof", requirePerm("reports.view", "inventory.view"), a
     .prepare(
       `SELECT p.id, p.sku, p.name_ar, p.name_en,
               COALESCE(SUM(CASE
-                WHEN sm.type IN ('purchase_in','in','return','transfer_in') THEN sm.qty
-                WHEN sm.type IN ('out','reserve','transfer_out') THEN -sm.qty
+                WHEN sm.type IN ('purchase_in','in','return','return_in','transfer_in') THEN sm.qty
+                WHEN sm.type IN ('out','sale_out','reserve','transfer_out') THEN -sm.qty
                 ELSE sm.qty END), 0) as qty,
               COALESCE(SUM(CASE
-                WHEN sm.type IN ('purchase_in','in','return','transfer_in') THEN sm.qty * COALESCE(sm.unit_cost,0)
-                WHEN sm.type IN ('out','reserve','transfer_out') THEN -sm.qty * COALESCE(sm.unit_cost,0)
+                WHEN sm.type IN ('purchase_in','in','return','return_in','transfer_in') THEN sm.qty * COALESCE(sm.unit_cost,0)
+                WHEN sm.type IN ('out','sale_out','reserve','transfer_out') THEN -sm.qty * COALESCE(sm.unit_cost,0)
                 ELSE sm.qty * COALESCE(sm.unit_cost,0) END), 0) as value
        FROM products p
        LEFT JOIN stock_movements sm ON sm.product_id = p.id AND date(sm.created_at) <= ?

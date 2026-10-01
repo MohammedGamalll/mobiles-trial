@@ -4,11 +4,13 @@ import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { authHeaders } from "../lib/session";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, ExportBtn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, ExportBtn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { useActionError } from "../lib/errors";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { Barcode } from "../components/Barcode";
 import { useConfirm } from "../components/Confirm";
+import { playSound } from "../lib/sounds";
 
 export default function Products() {
   const { tr, lang, lookups, can, refreshLookups } = useApp();
@@ -25,6 +27,7 @@ export default function Products() {
   const [form, setForm] = useState<any>(empty());
   const [view, setView] = useState<"list" | "board">("list");
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
 
   function empty() {
     return {
@@ -102,7 +105,7 @@ export default function Products() {
             <Btn kind="soft" onClick={() => setPriceOpen(true)}>{tr("bulkPrices")}</Btn>
           ) : null}
           {can("products.create") ? (
-            <Btn onClick={() => { setForm(empty()); setOpen(true); }}>{tr("addProduct")}</Btn>
+            <Btn onClick={() => { act.clear(); setForm(empty()); setOpen(true); }}>{tr("addProduct")}</Btn>
           ) : null}
           <Btn kind="ghost" onClick={() => setView(view === "list" ? "board" : "list")}>{view === "list" ? tr("boardView") : tr("listView")}</Btn>
         </div>
@@ -188,6 +191,7 @@ export default function Products() {
                         units: p.units?.length ? p.units : empty().units,
                         opening_qty: 0,
                       });
+                      act.clear();
                       setOpen(true);
                     }}>{tr("edit")}</button>
                   ) : null}
@@ -252,6 +256,7 @@ export default function Products() {
                             units: p.units?.length ? p.units : empty().units,
                             opening_qty: 0,
                           });
+                          act.clear();
                           setOpen(true);
                         }}>{tr("edit")}</button>
                       ) : null}
@@ -311,7 +316,7 @@ export default function Products() {
           setPriceOpen(false); load();
         }}>{tr("save")}</Btn>
       </Modal>
-      <Modal open={open} title={form.id ? tr("edit") : tr("addProduct")} onClose={() => setOpen(false)} wide>
+      <Modal open={open} title={form.id ? tr("edit") : tr("addProduct")} onClose={() => { setOpen(false); act.clear(); }} wide>
         <div className="grid gap-3 md:grid-cols-2">
           <Field label={tr("productKind")}>
             <select className={inputCls} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
@@ -433,11 +438,22 @@ export default function Products() {
           ))}
           <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setForm({ ...form, units: [...(form.units || []), { name: "", factor: 1, barcode: "", selling_price: 0, is_base: 0 }] })}>{tr("addUnit")}</button>
         </div>
+        <ErrorNote message={act.message} />
         <Btn className="mt-4" onClick={async () => {
-          const payload = { ...form, parent_id: form.parent_id || null };
-          if (form.id) await put(`/api/products/${form.id}`, payload);
-          else await post("/api/products", payload);
-          setOpen(false); load(); refreshLookups();
+          if (!String(form.sku || "").trim() || !String(form.name_ar || "").trim()) {
+            act.fail(undefined, "errMissing");
+            return;
+          }
+          try {
+            const payload = { ...form, parent_id: form.parent_id || null };
+            if (form.id) await put(`/api/products/${form.id}`, payload);
+            else await post("/api/products", payload);
+            playSound("done");
+            act.clear();
+            setOpen(false); load(); refreshLookups();
+          } catch (e) {
+            act.fail(e);
+          }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -565,7 +581,7 @@ export function ProductDetail() {
               {moves.map((m) => (
                 <tr key={m.id}>
                   <td>{m.created_at || m.date}</td>
-                  <td>{statusLabel(m.type, lang)}</td>
+                  <td>{statusLabel(m.type === "in" ? "purchase_in" : m.type === "out" ? "sale_out" : m.type === "return" ? "return_in" : m.type, lang)}</td>
                   <td>{m.qty}</td>
                   <td>{m.from_location || "-"}</td>
                   <td>{m.to_location || "-"}</td>

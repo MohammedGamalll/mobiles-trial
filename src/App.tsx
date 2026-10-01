@@ -62,9 +62,9 @@ function AppRoutes() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="pos" element={<POS />} />
-        <Route path="sales" element={<SalesList />} />
-        <Route path="sales/:id" element={<Invoice />} />
+        <Route path="pos" element={<PermGuard perm="sales.create"><POS /></PermGuard>} />
+        <Route path="sales" element={<PermGuard perm="sales.view"><SalesList /></PermGuard>} />
+        <Route path="sales/:id" element={<PermGuard perm={["sales.view", "delivery.view"]}><Invoice /></PermGuard>} />
         <Route path="delivery" element={<DeliveryBoard />} />
         <Route path="delivery/track" element={<CourierTrack />} />
         <Route path="reps" element={<RepsPage />} />
@@ -84,12 +84,12 @@ function AppRoutes() {
         <Route path="batches" element={<PermGuard perm="inventory.view"><BatchesPage /></PermGuard>} />
         <Route path="purchases" element={<PermGuard perm="purchases.view"><PurchasesPage /></PermGuard>} />
         <Route path="purchases/:id" element={<PermGuard perm="purchases.view"><PurchaseDetail /></PermGuard>} />
-        <Route path="customers" element={<CustomersPage />} />
-        <Route path="customers/:id" element={<CustomerDetail />} />
+        <Route path="customers" element={<PermGuard perm="customers.view"><CustomersPage /></PermGuard>} />
+        <Route path="customers/:id" element={<PermGuard perm="customers.view"><CustomerDetail /></PermGuard>} />
         <Route path="suppliers" element={<SuppliersPage />} />
         <Route path="suppliers/:id" element={<SupplierDetail />} />
-        <Route path="price-lists" element={<PriceListsPage />} />
-        <Route path="price-lists/:id" element={<PriceListDetail />} />
+        <Route path="price-lists" element={<PermGuard perm={["prices.view", "sales.create", "prices.manage"]}><PriceListsPage /></PermGuard>} />
+        <Route path="price-lists/:id" element={<PermGuard perm={["prices.view", "sales.create", "prices.manage"]}><PriceListDetail /></PermGuard>} />
         <Route path="brands" element={<CatalogCrud table="brands" title={tr("brands")} />} />
         <Route path="part-types" element={<CatalogCrud table="part_types" title={tr("partTypes")} />} />
         <Route path="categories" element={<CatalogCrud table="categories" title={tr("categories")} />} />

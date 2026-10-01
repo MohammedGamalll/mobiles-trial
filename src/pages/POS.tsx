@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Check, Search, ShoppingBag } from "lucide-react";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
-import { money, num, statusLabel } from "../lib/format";
+import { apiMessage } from "../lib/errors";
+import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PixelMark, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
@@ -66,7 +67,7 @@ type Line = Product & {
 };
 
 export default function POS() {
-  const { tr, lang, lookups, can, settings, branchId } = useApp();
+  const { tr, lang, lookups, can, settings, branchId, warehouseId } = useApp();
   const showCost = can("costs.view");
   const nav = useNavigate();
   const [params] = useSearchParams();
@@ -333,6 +334,7 @@ export default function POS() {
   const remaining = method === "credit" || type === "delivery" || pays.length
     ? Math.max(0, total - (splitPaid || paid))
     : Math.max(0, total - (paid || total));
+  const creditNeedCustomer = method === "credit" && !customer && !quoteMode;
   const printRows = printSnap?.items || cart;
   const printTotal = printSnap?.total ?? total;
   const printExtra = printSnap?.extra ?? Number(extraAmount || 0);
@@ -374,9 +376,14 @@ export default function POS() {
   }
 
   async function submit(opts?: { paid?: number; method?: string; hold?: boolean; quote?: boolean; order?: boolean; print?: boolean }) {
+    const payMethod = opts?.method ?? method;
+    if (payMethod === "credit" && !customer && !opts?.hold && !opts?.quote && !opts?.order) {
+      playSound("err");
+      setErr(tr("errCustomerRequired"));
+      return;
+    }
     setBusy(true);
     setErr("");
-    const payMethod = opts?.method ?? method;
     const paidAmt = opts?.paid ?? paid;
     const asQuote = !!(opts?.quote || quoteMode);
     try {
@@ -398,6 +405,7 @@ export default function POS() {
         expected_delivery_time: time || null,
         payment_method: payMethod,
         cash_account_id: cashAccountId || null,
+        location_id: warehouseId || null,
         extra_amount: extraAmount || 0,
         paid: payMethod === "credit" || type === "delivery" ? (splitPaid || paidAmt) : splitPaid || paidAmt || total,
         payments: pays.filter((p) => p.amount > 0),
@@ -417,12 +425,20 @@ export default function POS() {
       playSound("done");
       setPrintSnap({ items: cart, total, extra: Number(extraAmount || 0) });
       setDoneInv(res.data);
+      if (customer?.id) {
+        try {
+          const fresh = await get<{ data: any }>(`/api/customers/${customer.id}`);
+          if (fresh.data) setCustomer({ ...customer, current_balance: fresh.data.current_balance });
+        } catch {
+          /* keep prior snapshot */
+        }
+      }
       clearCart();
       setDoneOpen(true);
       if (opts?.print) setTimeout(() => window.print(), 350);
     } catch (e: any) {
       playSound("err");
-      setErr(e.message === "insufficient_stock" ? tr("insufficient") : e.message || tr("error"));
+      setErr(apiMessage(tr, e));
     } finally {
       setBusy(false);
     }
@@ -559,7 +575,7 @@ export default function POS() {
             F12
             <small>{tr("posSavePrintNew")}</small>
           </button>
-          <button type="button" className="sahl-pos-rail-btn" disabled={busy || !cart.length || !can("sales.create")} onClick={() => submit({ print: true })} title={`${tr("posPaySettle")} F11`}>
+          <button type="button" className="sahl-pos-rail-btn" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit({ print: true })} title={`${tr("posPaySettle")} F11`}>
             F11
             <small>{tr("posPaySettle")}</small>
           </button>
@@ -600,7 +616,7 @@ export default function POS() {
             <input
               ref={customerRef}
               className={inputCls}
-              value={customer ? `${customer.name} — ${customer.phone || ""}` : customerQ}
+              value={customer ? `${customer.name} — ${customer.phone || ""} — ${money(customer.current_balance, lang)}` : customerQ}
               onChange={(e) => { setCustomer(null); setCustomerQ(e.target.value); setWalkIn(e.target.value); }}
               placeholder={`${tr("walkIn")} / ${tr("posUnregistered")}`}
             />
@@ -660,7 +676,12 @@ export default function POS() {
                         ) : null}
                       </td>
                       <td>
-                        <input className={`${inputCls} w-16`} type="number" min={1} max={l.kind === "service" || l.non_stock ? 9999 : l.available} value={l.qty} onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Number(e.target.value), discount: offerDisc(x.id, Number(e.target.value), x.unit_price) } : x)))} />
+                        <input className={`${inputCls} w-16`} type="number" min={1} max={l.kind === "service" || l.non_stock ? 9999 : l.available} value={l.qty} onChange={(e) => setCart((c) => c.map((x, j) => {
+                          if (j !== i) return x;
+                          const cap = x.kind === "service" || x.non_stock ? 9999 : Math.max(1, Number(x.available) || 1);
+                          const qty = Math.min(Math.max(1, Number(e.target.value) || 1), cap);
+                          return { ...x, qty, discount: offerDisc(x.id, qty, x.unit_price) };
+                        }))} />
                       </td>
                       <td>
                         <input className={`${inputCls} w-20`} type="number" value={l.unit_price} onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, unit_price: Number(e.target.value) } : x)))} />
@@ -708,7 +729,7 @@ export default function POS() {
             <span>{tr("notes")}</span>
             <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </label>
-          {method === "treasury" ? (
+          {method === "cash" || method === "treasury" ? (
             <label className="sahl-pos-mini">
               <span>{tr("cashAccount")}</span>
               <select className={inputCls} value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value ? Number(e.target.value) : "")}>
@@ -737,8 +758,8 @@ export default function POS() {
           </div>
           {err ? <div className="w-full text-sm text-rose-600">{err}</div> : null}
           <div className="sahl-pos-actions">
-            <Btn className="gx-confirm" disabled={busy || !cart.length || !can("sales.create")} onClick={() => submit({ print: true })}>{quoteMode ? tr("quoteMode") : tr("confirmSale")} F10</Btn>
-            <Btn className="gx-quiet" disabled={busy || !cart.length || !can("sales.create")} onClick={() => submit()}>{tr("saleWithoutPrint")} F9</Btn>
+            <Btn className="gx-confirm" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit({ print: true })}>{quoteMode ? tr("quoteMode") : tr("confirmSale")} F10</Btn>
+            <Btn className="gx-quiet" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit()}>{tr("saleWithoutPrint")} F9</Btn>
             <Btn kind="soft" disabled={busy || !cart.length || !can("sales.create")} onClick={() => submit({ paid: total, method: "cash" })}>{tr("payNow")}</Btn>
             <PrintBtn />
             <Btn kind="ghost" disabled={busy || !cart.length} onClick={holdInvoice}>{tr("posHold")}</Btn>
@@ -900,6 +921,11 @@ export default function POS() {
           <div className="space-y-3">
             <div className="text-lg font-black">{doneInv.number}</div>
             <div className="text-sm text-slate-500">{doneInv.customer_name || tr("walkIn")} · {money(doneInv.total, lang)}</div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className={statusClass(Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0 ? "unpaid_sale" : doneInv.status)}>{statusLabel(Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0 ? "unpaid_sale" : doneInv.status, lang)}</span>
+              <span>{tr("paid")}: {money(doneInv.paid, lang)}</span>
+              <span>{tr("remaining")}: {money(doneInv.remaining, lang)}</span>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Btn onClick={() => { nav(`/sales/${doneInv.id}`); setTimeout(() => window.print(), 400); }}>{tr("print")}</Btn>
               {waEnabled && can("whatsapp.send") ? <Btn kind="soft" onClick={() => void previewWa(doneInv.id)}>{tr("sendWhatsapp")}</Btn> : null}
@@ -932,11 +958,18 @@ export default function POS() {
           <input className={inputCls} placeholder={tr("phone")} value={newCust.phone} onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })} />
           <input className={inputCls} placeholder={tr("address")} value={newCust.address} onChange={(e) => setNewCust({ ...newCust, address: e.target.value })} />
           <input className={inputCls} placeholder={tr("area")} value={newCust.area} onChange={(e) => setNewCust({ ...newCust, area: e.target.value })} />
+          {err ? <div className="text-sm text-rose-600">{err}</div> : null}
           <Btn
             onClick={async () => {
-              const r = await post<{ id: number }>("/api/customers", newCust);
-              setCustomer({ id: r.id, ...newCust, whatsapp: newCust.phone });
-              setCustOpen(false);
+              if (!newCust.name.trim()) { setErr(tr("errNameRequired")); return; }
+              try {
+                const r = await post<{ id: number }>("/api/customers", newCust);
+                setCustomer({ id: r.id, ...newCust, whatsapp: newCust.phone });
+                setCustOpen(false);
+                setErr("");
+              } catch (e) {
+                setErr(apiMessage(tr, e));
+              }
             }}
           >
             {tr("save")}
@@ -956,6 +989,13 @@ export default function POS() {
               }
               playSound("ok");
               const full = await get<{ data: any }>(`/api/invoices/${hit.id}`);
+              if (["cancelled", "fully_returned", "held", "quote", "order"].includes(full.data.status)) {
+                playSound("err");
+                setErr(tr("errCannotReturn"));
+                setRetInv(null);
+                return;
+              }
+              setErr("");
               setRetInv(full.data);
               setRetItems((full.data.items || []).map((i: any) => ({ invoice_item_id: i.id, qty: 0, max: i.quantity - (i.returned_qty || 0), name: i.product_name })));
             }} />
@@ -966,7 +1006,10 @@ export default function POS() {
               {retItems.map((i) => (
                 <div key={i.invoice_item_id} className="flex items-center justify-between gap-2">
                   <span>{i.name}</span>
-                  <input className={`${inputCls} w-24`} type="number" max={i.max} value={i.qty} onChange={(e) => setRetItems(retItems.map((x) => x.invoice_item_id === i.invoice_item_id ? { ...x, qty: Number(e.target.value) } : x))} />
+                  <input className={`${inputCls} w-24`} type="number" min={0} max={i.max} value={i.qty} onChange={(e) => {
+                    const qty = Math.max(0, Math.min(i.max, Number(e.target.value) || 0));
+                    setRetItems(retItems.map((x) => x.invoice_item_id === i.invoice_item_id ? { ...x, qty } : x));
+                  }} />
                 </div>
               ))}
               <Btn onClick={async () => {
@@ -975,12 +1018,15 @@ export default function POS() {
                   playSound("done");
                   setRetOpen(false);
                   setRetInv(null);
-                } catch {
+                  setErr("");
+                } catch (e) {
                   playSound("err");
+                  setErr(apiMessage(tr, e));
                 }
               }}>{tr("save")}</Btn>
             </>
           ) : <div className="text-xs text-slate-400">{tr("invoiceNo")}</div>}
+          {err ? <div className="text-sm text-rose-600">{err}</div> : null}
         </div>
       </Modal>
     </div>

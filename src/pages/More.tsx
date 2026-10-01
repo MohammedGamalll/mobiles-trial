@@ -3,7 +3,8 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls } from "../components/ui";
+import { useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
@@ -38,7 +39,7 @@ export function SalesList() {
       <SmartFilter
         f={f}
         fields={[
-          { key: "status", label: "status", type: "select", quick: true, options: ["completed", "held", "quote", "order", "pending_delivery", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+          { key: "status", label: "status", type: "select", quick: true, options: ["completed", "partial", "partially_returned", "fully_returned", "held", "quote", "order", "pending_delivery", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
           { key: "customer_id", label: "customers", type: "async", quick: true, asyncPath: "/api/customers" },
           { key: "sales_agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
           { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
@@ -61,20 +62,24 @@ export function SalesList() {
       />
       {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
       <Table
-        cols={[tr("invoiceNo"), tr("customer"), tr("date"), tr("total"), tr("status"), ""]}
-        rows={rows.map((r) => [
+        cols={[tr("invoiceNo"), tr("customer"), tr("date"), tr("total"), tr("remaining"), tr("status"), ""]}
+        rows={rows.map((r) => {
+          const payStatus = Number(r.remaining) > 0 && Number(r.paid) <= 0 && r.status === "partial" ? "unpaid_sale" : r.status;
+          return [
           <Link className="font-bold text-cyan-800" to={`/sales/${r.id}`}>{r.number}</Link>,
           r.customer_name,
           r.date,
           money(r.total, lang),
-          <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
+          money(r.remaining, lang),
+          <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
           <ActionBtns
             canEdit={can("sales.edit")}
             onEdit={() => { window.location.href = `/sales/${r.id}`; }}
             canDelete={can("sales.cancel") && r.status !== "cancelled"}
             onDelete={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); load(); })}
           />,
-        ])}
+          ];
+        })}
       />
       )}
       {dialog}
@@ -92,6 +97,7 @@ export function InventoryPage() {
   const [adjOpen, setAdjOpen] = useState(false);
   const [adj, setAdj] = useState<any>({ product_id: "", qty: 1, reason: "" });
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   function reload() {
     get("/api/inventory/summary").then(setSum).catch(() => {});
     get<{ data: any[] }>(`/api/products?${f.qs}&pageSize=80`).then((r) => setRows(r.data)).catch(() => {});
@@ -101,7 +107,7 @@ export function InventoryPage() {
   return (
     <Page title={tr("inventory")} action={
       <>
-        {can("inventory.adjust") ? <Btn onClick={() => { setAdj({ product_id: "", qty: 1, reason: "" }); setAdjOpen(true); }}>{tr("easyAdjust")}</Btn> : null}
+        {can("inventory.adjust") ? <Btn onClick={() => { setAdj({ product_id: "", qty: 1, reason: "" }); act.clear(); setAdjOpen(true); }}>{tr("easyAdjust")}</Btn> : null}
         <ExportBtn kind="inventory" query={f.qs} />
       </>
     }>
@@ -171,7 +177,7 @@ export function InventoryPage() {
         cols={[tr("date"), tr("movementType"), tr("sku"), "Batch", tr("qty"), tr("fromLocation"), tr("toLocation")]}
         rows={moves.map((mv) => [
           mv.created_at,
-          statusLabel(mv.type === "in" ? "purchase_in" : mv.type, lang),
+          statusLabel(mv.type === "in" ? "purchase_in" : mv.type === "out" ? "sale_out" : mv.type === "return" ? "return_in" : mv.type, lang),
           mv.sku,
           mv.batch_code,
           mv.qty,
@@ -180,7 +186,7 @@ export function InventoryPage() {
         ])}
       />
       {dialog}
-      <Modal open={adjOpen} title={tr("easyAdjust")} onClose={() => setAdjOpen(false)}>
+      <Modal open={adjOpen} title={tr("easyAdjust")} onClose={() => { setAdjOpen(false); act.clear(); }}>
         <Field label={tr("products")}>
           <ProductPick value={adj.product_id} onChange={(id) => setAdj({ ...adj, product_id: id })} />
         </Field>
@@ -190,18 +196,24 @@ export function InventoryPage() {
         <Field label={tr("reason")}>
           <input className={inputCls} value={adj.reason} onChange={(e) => setAdj({ ...adj, reason: e.target.value })} />
         </Field>
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          if (!adj.product_id || !adj.qty) {
-            playSound("err");
+          if (!adj.product_id) {
+            act.fail(undefined, "errProductRequired");
+            return;
+          }
+          if (!adj.qty) {
+            act.fail(undefined, "errQtyRequired");
             return;
           }
           try {
             await post("/api/inventory/adjust", { product_id: Number(adj.product_id), qty: Number(adj.qty), reason: adj.reason });
             playSound("done");
+            act.clear();
             setAdjOpen(false);
             reload();
-          } catch {
-            playSound("err");
+          } catch (e) {
+            act.fail(e);
           }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -250,6 +262,7 @@ export function PurchasesPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({ supplier_id: "", items: [{ product_id: "", quantity: 1, unit_cost: 0 }] });
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/inventory/purchases?${f.qs}`);
     setRows(r.data);
@@ -257,7 +270,8 @@ export function PurchasesPage() {
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} /><Btn onClick={() => setOpen(true)}>{tr("newPurchase")}</Btn></>}>
+    <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} /><Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("newPurchase")}</Btn></>}>
+      <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
         <Stat label={tr("purchases")} value={String(totals.count || rows.length)} />
         <Stat label={tr("total")} value={money(totals.total, lang)} />
@@ -283,14 +297,14 @@ export function PurchasesPage() {
           <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
           <span className="flex flex-wrap gap-2">
             <Link className="font-bold text-cyan-700" to={`/purchases/${r.id}`}>{tr("view")}</Link>
-            {r.status === "draft" ? <button className="font-bold text-cyan-700" onClick={async () => { await post(`/api/inventory/purchases/${r.id}/submit`, {}); load(); }}>{tr("submitPurchase")}</button> : null}
-            {r.status === "draft" || r.status === "submitted" ? <button className="font-bold text-cyan-700" onClick={async () => { await post(`/api/inventory/purchases/${r.id}/approve`, {}); load(); }}>{tr("approve")}</button> : null}
+            {r.status === "draft" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/submit`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("submitPurchase")}</button> : null}
+            {r.status === "draft" || r.status === "submitted" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/approve`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("approve")}</button> : null}
             {r.status === "submitted" || r.status === "draft" ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/purchases/${r.id}/void`, {}); load(); })}>{tr("delete")}</button> : null}
           </span>,
         ])}
       />
       )}
-      <Modal open={open} title={tr("newPurchase")} onClose={() => setOpen(false)} wide>
+      <Modal open={open} title={tr("newPurchase")} onClose={() => { setOpen(false); act.clear(); }} wide>
         <Field label={tr("supplier")}>
           <select className={inputCls} value={form.supplier_id} onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}>
             <option value="">-</option>
@@ -309,22 +323,24 @@ export function PurchasesPage() {
           </div>
         ))}
         <button className="mt-2 text-sm font-bold text-cyan-700" onClick={() => setForm({ ...form, items: [...form.items, { product_id: "", quantity: 1, unit_cost: 0 }] })}>+ {tr("add")}</button>
+        <ErrorNote message={act.message} />
         <Btn className="mt-4" onClick={async () => {
           if (!form.supplier_id) {
-            playSound("err");
+            act.fail(undefined, "errSupplierRequired");
             return;
           }
           if (!form.items?.length || form.items.some((it: any) => !it.product_id || Number(it.quantity) <= 0)) {
-            playSound("err");
+            act.fail(undefined, form.items.some((it: any) => Number(it.quantity) <= 0) ? "errInvalidQty" : "errNoItems");
             return;
           }
           try {
             await post("/api/inventory/purchases", form);
             playSound("done");
+            act.clear();
             setOpen(false);
             load();
-          } catch {
-            playSound("err");
+          } catch (e) {
+            act.fail(e);
           }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -337,6 +353,7 @@ function ProductPick({ value, onChange }: { value: any; onChange: (id: number, c
   const { tr } = useApp();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<any[]>([]);
+  const [miss, setMiss] = useState("");
   useEffect(() => {
     if (!q.trim()) {
       setHits([]);
@@ -347,6 +364,7 @@ function ProductPick({ value, onChange }: { value: any; onChange: (id: number, c
   }, [q]);
   function pick(p: any) {
     playSound("ok");
+    setMiss("");
     onChange(p.id, p.purchase_price);
     setQ(p.sku);
     setHits([]);
@@ -357,18 +375,20 @@ function ProductPick({ value, onChange }: { value: any; onChange: (id: number, c
         className={inputCls}
         placeholder={tr("searchProduct")}
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => { setQ(e.target.value); setMiss(""); }}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
           const exact = matchScanned(hits, q) || (hits.length === 1 ? hits[0] : undefined);
           if (!exact) {
             playSound("err");
+            setMiss(tr("errProductNotFound"));
             return;
           }
           pick(exact);
         }}
       />
+      <ErrorNote message={miss} />
       {hits.map((p) => (
         <button key={p.id} className="block w-full px-2 py-1 text-start text-sm hover:bg-slate-50" onClick={() => pick(p)}>
           {p.sku} — {p.name_en}
@@ -384,6 +404,7 @@ export function PurchaseDetail() {
   const [d, setD] = useState<any>(null);
   const [serials, setSerials] = useState("");
   const [pid, setPid] = useState("");
+  const act = useActionError();
   useEffect(() => { get<{ data: any }>(`/api/inventory/purchases/${id}`).then((r) => setD(r.data)); }, [id]);
   if (!d) return <div>{tr("loading")}</div>;
   return (
@@ -404,13 +425,24 @@ export function PurchaseDetail() {
             </select>
           </Field>
           <Field label={tr("serials")}><textarea className={inputCls} value={serials} onChange={(e) => setSerials(e.target.value)} /></Field>
+          <ErrorNote message={act.message} />
           <Btn onClick={async () => {
+            if (!pid) {
+              act.fail(undefined, "errProductRequired");
+              return;
+            }
+            const list = serials.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+            if (!list.length) {
+              act.fail(undefined, "errSerialsRequired");
+              return;
+            }
             try {
-              await post("/api/serials", { product_id: Number(pid), purchase_id: d.id, serials: serials.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean) });
+              await post("/api/serials", { product_id: Number(pid), purchase_id: d.id, serials: list });
               playSound("done");
+              act.clear();
               setSerials("");
-            } catch {
-              playSound("err");
+            } catch (e) {
+              act.fail(e);
             }
           }}>{tr("save")}</Btn>
         </div>
@@ -420,7 +452,7 @@ export function PurchaseDetail() {
 }
 
 export function CustomersPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
   const f = useListQuery("customers");
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
@@ -429,6 +461,7 @@ export function CustomersPage() {
   const [payOpen, setPayOpen] = useState<any>(null);
   const [payAmt, setPayAmt] = useState(0);
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/customers?${f.qs}`);
     setRows(r.data);
@@ -436,7 +469,8 @@ export function CustomersPage() {
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} /><Btn onClick={() => { setForm({ id: 0, name: "", phone: "", address: "", area: "", email: "", company: "", city: "", tax_id: "", national_id: "", customer_type: "retail", payment_terms: "cash", credit_limit: 0, current_balance: 0, price_list_id: "", account_kind: "debit", discount_pct: 0, sell_price: 0 }); setOpen(true); }}>{tr("addCustomer")}</Btn></>}>
+    <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm({ id: 0, name: "", phone: "", address: "", area: "", email: "", company: "", city: "", tax_id: "", national_id: "", customer_type: "retail", payment_terms: "cash", credit_limit: 0, current_balance: 0, price_list_id: "", account_kind: "debit", discount_pct: 0, sell_price: 0 }); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
+      <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 md:grid-cols-2">
         <Stat label={tr("customers")} value={String(totals.count || rows.length)} />
         <Stat label={tr("balance")} value={money(totals.balance, lang)} />
@@ -469,7 +503,7 @@ export function CustomersPage() {
             <ActionBtns
               canEdit={can("customers.edit")}
               canDelete={can("customers.edit")}
-              onEdit={() => { setForm({ ...form, ...c, id: c.id, price_list_id: c.price_list_id || "", account_kind: c.account_kind || "debit" }); setOpen(true); }}
+              onEdit={() => { act.clear(); setForm({ ...form, ...c, id: c.id, price_list_id: c.price_list_id || "", account_kind: c.account_kind || "debit" }); setOpen(true); }}
               onDelete={() => confirmDelete(c.name, async () => { await del(`/api/customers/${c.id}`); load(); })}
             />
           </span>,
@@ -485,13 +519,23 @@ export function CustomersPage() {
             <option value="credit">{tr("creditAccount")}</option>
           </select>
         </Field>
+        <Field label={tr("priceLists")}>
+          <select className={inputCls} value={form.price_list_id || ""} onChange={(e) => setForm({ ...form, price_list_id: e.target.value ? Number(e.target.value) : "" })}>
+            <option value="">-</option>
+            {(lookups?.price_lists || []).map((l) => <option key={l.id} value={l.id}>{lang === "ar" ? l.name : (l.name_en || l.name)}</option>)}
+          </select>
+        </Field>
         <Field label={tr("discountPct")}><input className={inputCls} type="number" value={form.discount_pct} onChange={(e) => setForm({ ...form, discount_pct: Number(e.target.value) })} /></Field>
         <Field label={tr("specialPrice")}><input className={inputCls} type="number" value={form.sell_price} onChange={(e) => setForm({ ...form, sell_price: Number(e.target.value) })} /></Field>
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          const payload = { ...form, price_list_id: form.price_list_id || null };
-          if (form.id) await put(`/api/customers/${form.id}`, payload);
-          else await post("/api/customers", payload);
-          setOpen(false); load();
+          if (!form.name.trim()) { act.fail(undefined, "errNameRequired"); return; }
+          try {
+            const payload = { ...form, price_list_id: form.price_list_id || null };
+            if (form.id) await put(`/api/customers/${form.id}`, payload);
+            else await post("/api/customers", payload);
+            setOpen(false); act.clear(); load();
+          } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
       <Modal open={!!payOpen} title={tr("makeReceipt")} onClose={() => setPayOpen(null)}>
@@ -557,13 +601,15 @@ export function CustomerDetail() {
           <Stat label={tr("nationalId")} value={d.national_id || "-"} />
         </div>
       ) : null}
-      {tab === "invoices" ? <Table cols={[tr("invoiceNo"), tr("date"), tr("total"), tr("status")]} rows={(d.invoices||[]).map((i: any) => [<Link to={`/sales/${i.id}`}>{i.number}</Link>, i.date, money(i.total, lang), statusLabel(i.status, lang)])} /> : null}
+      {tab === "invoices" ? <Table cols={[tr("invoiceNo"), tr("date"), tr("total"), tr("remaining"), tr("status")]} rows={(d.invoices||[]).map((i: any) => {
+        const payStatus = Number(i.remaining) > 0 && Number(i.paid) <= 0 && i.status === "partial" ? "unpaid_sale" : i.status;
+        return [<Link to={`/sales/${i.id}`}>{i.number}</Link>, i.date, money(i.total, lang), money(i.remaining, lang), statusLabel(payStatus, lang)];
+      })} /> : null}
       {tab === "payments" ? <Table cols={[tr("date"), tr("amount"), tr("payMethod")]} rows={(d.payments||[]).map((p: any) => [p.date, money(p.amount, lang), p.method || p.payment_method])} /> : null}
       {tab === "returns" ? <Table cols={[tr("invoiceNo"), tr("date"), tr("total")]} rows={(d.returns||[]).map((r: any) => [r.number, r.date, money(r.total, lang)])} /> : null}
       {tab === "statement" ? <Table cols={[tr("date"), tr("kind"), tr("invoiceNo"), tr("total")]} rows={[
         ...(d.invoices || []).map((i: any) => [i.date, tr("sales"), i.number, money(i.total, lang)]),
         ...(d.payments || []).map((p: any) => [p.date, tr("payments"), p.invoice_id || "-", money(p.amount, lang)]),
-        ...(d.returns || []).map((r: any) => [r.date, tr("returns"), r.number, money(r.total, lang)]),
       ].sort((a, b) => String(b[0]).localeCompare(String(a[0])))} /> : null}
       {tab === "items" ? <Table cols={[tr("date"), tr("invoiceNo"), tr("items"), tr("qty"), tr("price"), tr("total")]} rows={(d.statement_items || []).map((r: any) => [r.date, r.number, r.product_name, num(r.quantity, lang), money(r.unit_price, lang), money(r.total, lang)])} /> : null}
       {tab === "overdue" ? <Table cols={[tr("invoiceNo"), tr("date"), tr("total"), tr("remaining")]} rows={(d.overdue || []).map((i: any) => [<Link to={`/sales/${i.id}`}>{i.number}</Link>, i.date, money(i.total, lang), money(i.remaining, lang)])} /> : null}
@@ -666,6 +712,7 @@ export function PriceListsPage() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     const all = (await get<{ data: any[] }>("/api/price-lists")).data || [];
     const q = (f.values.q || "").toLowerCase();
@@ -673,7 +720,8 @@ export function PriceListsPage() {
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("priceLists")} action={<Btn onClick={() => setOpen(true)}>{tr("add")}</Btn>}>
+    <Page title={tr("priceLists")} action={can("prices.manage") ? <Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("add")}</Btn> : null}>
+      <ErrorNote message={act.message} />
       <SmartFilter f={f} date={false} fields={[]} />
       <Table cols={[tr("name"), tr("status"), ""]} rows={lists.map((l) => [
         lang==="ar"?l.name:(l.name_en||l.name),
@@ -685,7 +733,14 @@ export function PriceListsPage() {
       ])} />
       <Modal open={open} title={tr("priceLists")} onClose={() => setOpen(false)}>
         <Field label={tr("name")}><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-        <Btn className="mt-3" onClick={async () => { await post("/api/price-lists", { name, name_en: name }); setOpen(false); setName(""); load(); }}>{tr("save")}</Btn>
+        <ErrorNote message={act.message} />
+        <Btn className="mt-3" onClick={async () => {
+          if (!name.trim()) { act.fail(undefined, "errNameRequired"); return; }
+          try {
+            await post("/api/price-lists", { name, name_en: name });
+            setOpen(false); setName(""); act.clear(); load();
+          } catch (e) { act.fail(e); }
+        }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
     </Page>
@@ -694,21 +749,23 @@ export function PriceListsPage() {
 
 export function PriceListDetail() {
   const { id } = useParams();
-  const { tr, lang } = useApp();
+  const { tr, lang, can } = useApp();
   const f = useListQuery(`price-list-${id || "x"}`);
   const [d, setD] = useState<any>(null);
   const [edits, setEdits] = useState<Record<number, string>>({});
+  const act = useActionError();
   async function load() { const r = await get<{ data: any }>(`/api/price-lists/${id}`); setD(r.data); }
   useEffect(() => { load().catch(() => {}); }, [id]);
   if (!d) return <div>{tr("loading")}</div>;
   const q = (f.values.q || "").toLowerCase();
   const items = (d.items || []).filter((i: any) => !q || `${i.sku} ${i.name_ar} ${i.name_en}`.toLowerCase().includes(q));
   return (
-    <Page title={d.name} action={<Btn onClick={async () => {
+    <Page title={d.name} action={can("prices.manage") ? <Btn onClick={async () => {
       const payload = Object.entries(edits).map(([pid, price]) => ({ product_id: Number(pid), price: Number(price) }));
-      if (payload.length) await put("/api/price-lists/" + id + "/items", { items: payload });
-      load();
-    }}>{tr("save")}</Btn>}>
+      if (!payload.length) return;
+      try { await put("/api/price-lists/" + id + "/items", { items: payload }); act.clear(); load(); } catch (e) { act.fail(e); }
+    }}>{tr("save")}</Btn> : null}>
+      <ErrorNote message={act.message} />
       <SmartFilter f={f} date={false} fields={[]} />
       <Table
         cols={[tr("sku"), tr("name"), tr("sellingPrice"), tr("price")]}
@@ -730,12 +787,13 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({ name_ar: "", name_en: "", name: "", code: "", warehouse: "", rack: "", shelf: "", drawer: "", box: "", brand_id: "", year: "" });
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   const path = table === "models" ? "/api/models" : `/api/${table}`;
   const apiTable = table === "models" ? "device_models" : table;
   async function load() { setRows((await get<{ data: any[] }>(`${path}?${f.qs}`)).data); }
   useEffect(() => { load().catch(() => {}); }, [table, f.qs]);
   return (
-    <Page title={title} action={<Btn onClick={() => { setForm({ name_ar: "", name_en: "", name: "", code: "", warehouse: "", rack: "", shelf: "", drawer: "", box: "", brand_id: "", year: "", id: 0 }); setOpen(true); }}>{tr("add")}</Btn>}>
+    <Page title={title} action={<Btn onClick={() => { act.clear(); setForm({ name_ar: "", name_en: "", name: "", code: "", warehouse: "", rack: "", shelf: "", drawer: "", box: "", brand_id: "", year: "", id: 0 }); setOpen(true); }}>{tr("add")}</Btn>}>
       <SmartFilter f={f} date={false} fields={table === "models" ? [{ key: "brand_id", label: "brand", type: "select", quick: true, lookup: "brands" }] : []} />
       {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
       <Table
@@ -747,13 +805,13 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
           <ActionBtns
             canEdit
             canDelete
-            onEdit={() => { setForm({ ...r, year: r.year || "", brand_id: r.brand_id || "" }); setOpen(true); }}
+            onEdit={() => { act.clear(); setForm({ ...r, year: r.year || "", brand_id: r.brand_id || "" }); setOpen(true); }}
             onDelete={() => confirmDelete(r.name || r.name_ar || r.code, async () => { await del(`/api/${apiTable}/${r.id}`); load(); refreshLookups(); })}
           />,
         ])}
       />
       )}
-      <Modal open={open} title={form.id ? tr("edit") : title} onClose={() => setOpen(false)}>
+      <Modal open={open} title={form.id ? tr("edit") : title} onClose={() => { setOpen(false); act.clear(); }}>
         {table === "storage_locations" ? (
           ["name","warehouse","section","rack","shelf","drawer","box"].map((k) => <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)
         ) : table === "device_models" || table === "models" ? (
@@ -764,10 +822,16 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
         ) : (
           ["name_ar","name_en","code"].map((k) => <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)
         )}
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          if (form.id) await put(`/api/${apiTable}/${form.id}`, form);
-          else await post(`/api/${apiTable}`, form);
-          setOpen(false); load(); refreshLookups();
+          try {
+            if (form.id) await put(`/api/${apiTable}/${form.id}`, form);
+            else await post(`/api/${apiTable}`, form);
+            act.clear();
+            setOpen(false); load(); refreshLookups();
+          } catch (e) {
+            act.fail(e);
+          }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}

@@ -8,24 +8,37 @@ export type BatchRow = {
   reserved_qty: number;
   unit_cost: number;
   purchase_date: string | null;
+  location_id?: number | null;
 };
 
-export type Allocation = { batch_id: number; batch_code: string; qty: number; unit_cost: number };
+export type Allocation = { batch_id: number; batch_code: string; qty: number; unit_cost: number; location_id?: number | null };
 
-export async function availableBatches(db: AppDb, productId: number) {
-  const { results } = await db
-    .prepare(
-      `SELECT id, batch_code, product_id, remaining_qty, reserved_qty, unit_cost, purchase_date
-       FROM inventory_batches
-       WHERE product_id = ? AND (remaining_qty - reserved_qty) > 0
-       ORDER BY datetime(purchase_date) ASC, id ASC`,
-    )
-    .bind(productId)
-    .all<BatchRow>();
+export async function availableBatches(db: AppDb, productId: number, locationId?: number | null) {
+  const loc = Number(locationId || 0);
+  const { results } = loc
+    ? await db
+        .prepare(
+          `SELECT id, batch_code, product_id, remaining_qty, reserved_qty, unit_cost, purchase_date, location_id
+           FROM inventory_batches
+           WHERE product_id = ? AND (remaining_qty - reserved_qty) > 0 AND location_id = ?
+           ORDER BY datetime(purchase_date) ASC, id ASC`,
+        )
+        .bind(productId, loc)
+        .all<BatchRow>()
+    : await db
+        .prepare(
+          `SELECT id, batch_code, product_id, remaining_qty, reserved_qty, unit_cost, purchase_date, location_id
+           FROM inventory_batches
+           WHERE product_id = ? AND (remaining_qty - reserved_qty) > 0
+           ORDER BY datetime(purchase_date) ASC, id ASC`,
+        )
+        .bind(productId)
+        .all<BatchRow>();
   return results;
 }
 
 export function planAllocation(batches: BatchRow[], qty: number, preferredBatchId?: number | null): Allocation[] {
+  if (!(qty > 0)) throw new Error("INVALID_QTY");
   const need = qty;
   const out: Allocation[] = [];
   let left = need;
@@ -41,7 +54,7 @@ export function planAllocation(batches: BatchRow[], qty: number, preferredBatchI
     const avail = b.remaining_qty - b.reserved_qty;
     if (avail <= 0) continue;
     const take = Math.min(avail, left);
-    out.push({ batch_id: b.id, batch_code: b.batch_code, qty: take, unit_cost: b.unit_cost });
+    out.push({ batch_id: b.id, batch_code: b.batch_code, qty: take, unit_cost: b.unit_cost, location_id: b.location_id ?? null });
     left -= take;
     if (left <= 0) break;
   }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
+import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, inputCls } from "../components/ui";
 import { useConfirm } from "../components/Confirm";
@@ -87,7 +88,7 @@ export default function Invoice() {
           {can("installments.manage") && inv.remaining > 0 && !["held", "quote", "order", "cancelled"].includes(inv.status) ? (
             <Btn kind="soft" onClick={() => { window.location.href = `/installments`; }}>{tr("installments")}</Btn>
           ) : null}
-          {can("sales.cancel") && !["cancelled", "completed"].includes(inv.status) ? (
+          {can("sales.cancel") && !["cancelled", "fully_returned"].includes(inv.status) ? (
             <Btn kind="danger" onClick={() => confirmDelete(inv.number, async () => { await post(`/api/invoices/${id}/cancel`, {}); reload(); })}>
               {tr("void")}
             </Btn>
@@ -297,21 +298,31 @@ export default function Invoice() {
 function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () => void; onExchange?: () => void }) {
   const { tr } = useApp();
   const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
   const [items, setItems] = useState(inv.items.map((i: any) => ({ invoice_item_id: i.id, qty: 0, max: i.quantity - i.returned_qty, name: i.product_name })));
   async function send(exchange = false) {
-    await post(`/api/invoices/${inv.id}/returns`, { reason: reason || (exchange ? "exchange" : ""), items: items.filter((x: any) => x.qty > 0) });
-    if (exchange && onExchange) onExchange();
-    else onDone();
+    try {
+      setErr("");
+      await post(`/api/invoices/${inv.id}/returns`, { reason: reason || (exchange ? "exchange" : ""), items: items.filter((x: any) => x.qty > 0) });
+      if (exchange && onExchange) onExchange();
+      else onDone();
+    } catch (e) {
+      setErr(apiMessage(tr, e));
+    }
   }
   return (
     <div className="space-y-3">
       {items.map((i: any) => (
         <div key={i.invoice_item_id} className="flex items-center justify-between gap-2">
           <span>{i.name}</span>
-          <input className={`${inputCls} w-24`} type="number" max={i.max} value={i.qty} onChange={(e) => setItems(items.map((x: any) => (x.invoice_item_id === i.invoice_item_id ? { ...x, qty: Number(e.target.value) } : x)))} />
+          <input className={`${inputCls} w-24`} type="number" min={0} max={i.max} value={i.qty} onChange={(e) => {
+            const qty = Math.max(0, Math.min(i.max, Number(e.target.value) || 0));
+            setItems(items.map((x: any) => (x.invoice_item_id === i.invoice_item_id ? { ...x, qty } : x)));
+          }} />
         </div>
       ))}
       <input className={inputCls} placeholder={tr("reason")} value={reason} onChange={(e) => setReason(e.target.value)} />
+      {err ? <div className="text-sm text-rose-600">{err}</div> : null}
       <div className="flex gap-2">
         <Btn onClick={() => send(false)}>{tr("save")}</Btn>
         <Btn kind="soft" onClick={() => send(true)}>{tr("exchange")}</Btn>

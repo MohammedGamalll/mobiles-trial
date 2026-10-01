@@ -14,7 +14,7 @@ export function num(n: number | string | null | undefined, lang: "ar" | "en" = "
 export function statusClass(status?: string | null) {
   const s = (status || "").toLowerCase();
   if (["completed", "delivered", "approved", "active", "in", "done", "commission_paid", "deducted", "posted", "collected", "in_stock", "paid"].includes(s)) return "badge bg-emerald-100 text-emerald-800";
-  if (["pending_delivery", "out_for_delivery", "rescheduled", "draft", "open", "submitted", "held", "quote", "order", "planned", "accrued", "pending"].includes(s)) return "badge bg-amber-100 text-amber-800";
+  if (["pending_delivery", "out_for_delivery", "rescheduled", "draft", "open", "submitted", "held", "quote", "order", "planned", "accrued", "pending", "partial", "unpaid_sale"].includes(s)) return "badge bg-amber-100 text-amber-800";
   if (["rejected"].includes(s)) return "badge bg-rose-100 text-rose-800";
   if (["low"].includes(s)) return "badge bg-orange-100 text-orange-800";
   if (["cancelled", "fully_returned", "customer_refused", "out", "void", "bounced"].includes(s)) return "badge bg-rose-100 text-rose-800";
@@ -81,6 +81,7 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     bounced: { ar: "مرتد", en: "Bounced" },
     due: { ar: "مستحق", en: "Due" },
     partial: { ar: "جزئي", en: "Partial" },
+    unpaid_sale: { ar: "غير مدفوع", en: "Unpaid" },
     asset: { ar: "أصل", en: "Asset" },
     liability: { ar: "التزام", en: "Liability" },
     equity: { ar: "حقوق ملكية", en: "Equity" },

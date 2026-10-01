@@ -44,6 +44,15 @@ export function Modal(props: {
   return <Drawer {...props} />;
 }
 
+export function ErrorNote({ message }: { message?: string }) {
+  if (!message) return null;
+  return (
+    <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold leading-6 text-rose-700">
+      {message}
+    </div>
+  );
+}
+
 export function FilterBar({ children }: { children: ReactNode }) {
   return <div className="filter-bar no-print mb-3 flex flex-wrap items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-sm">{children}</div>;
 }

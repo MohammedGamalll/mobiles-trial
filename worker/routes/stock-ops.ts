@@ -251,8 +251,11 @@ stockOpsRoutes.post("/transfers", requirePerm("transfers.create"), async (c) => 
     notes?: string;
     items: { product_id: number; batch_id: number; qty: number }[];
   }>();
-  if (!b.from_location_id || !b.to_location_id || b.from_location_id === b.to_location_id) {
+  if (!b.from_location_id || !b.to_location_id) {
     return c.json({ error: "locations_required" }, 400);
+  }
+  if (b.from_location_id === b.to_location_id) {
+    return c.json({ error: "same_location" }, 400);
   }
   if (!b.items?.length) return c.json({ error: "no_items" }, 400);
   const from = await locationById(c.env.DB, b.from_location_id);

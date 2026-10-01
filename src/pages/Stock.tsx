@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { useActionError } from "../lib/errors";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { Barcode } from "../components/Barcode";
@@ -117,6 +118,7 @@ export function LocationsPage() {
   const [contents, setContents] = useState<any[]>([]);
   const [form, setForm] = useState<any>({ name: "", kind: "bin", code: "", parent_id: "", notes: "" });
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     const r = await get<{ data: any[] }>("/api/inventory/locations/tree");
     setRows(r.data);
@@ -133,7 +135,8 @@ export function LocationsPage() {
     return treeRows(filtered.length ? filtered : rows);
   }, [rows, f.values]);
   return (
-    <Page title={tr("warehouses")} action={<Btn onClick={() => setOpen(true)}>{tr("add")}</Btn>}>
+    <Page title={tr("warehouses")} action={<Btn onClick={() => { act.clear(); setForm({ name: "", kind: "bin", code: "", parent_id: "", notes: "" }); setOpen(true); }}>{tr("add")}</Btn>}>
+      <ErrorNote message={act.message} />
       <SmartFilter f={f} date={false} fields={[
         { key: "kind", label: "kind", type: "select", quick: true, options: KINDS.map((k) => ({ value: k, label: k })) },
         { key: "locations", label: "warehouse", type: "locations" },
@@ -190,12 +193,12 @@ export function LocationsPage() {
           <ActionBtns
             canEdit
             canDelete
-            onEdit={() => { setForm({ ...row, parent_id: row.parent_id || "" }); setOpen(true); }}
+            onEdit={() => { act.clear(); setForm({ ...row, parent_id: row.parent_id || "" }); setOpen(true); }}
             onDelete={() => confirmDelete(row.name, async () => { await del(`/api/inventory/locations/${row.id}`); load(); refreshLookups(); })}
           />,
         ])}
       />
-      <Modal open={open} title={tr("warehouses")} onClose={() => setOpen(false)}>
+      <Modal open={open} title={tr("warehouses")} onClose={() => { setOpen(false); act.clear(); }}>
         <Field label={tr("name")}><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
         <Field label={tr("locationKind")}>
           <select className={inputCls} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
@@ -210,14 +213,24 @@ export function LocationsPage() {
         </Field>
         <Field label={tr("locationCode")}><input className={inputCls} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
         <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          const payload = { ...form, parent_id: form.parent_id ? Number(form.parent_id) : null };
-          if (form.id) await put(`/api/inventory/locations/${form.id}`, payload);
-          else await post("/api/inventory/locations", payload);
-          setOpen(false);
-          setForm({ name: "", kind: "bin", code: "", parent_id: "", notes: "" });
-          load();
-          refreshLookups();
+          if (!String(form.name || "").trim()) {
+            act.fail(undefined, "errNameRequired");
+            return;
+          }
+          try {
+            const payload = { ...form, parent_id: form.parent_id ? Number(form.parent_id) : null };
+            if (form.id) await put(`/api/inventory/locations/${form.id}`, payload);
+            else await post("/api/inventory/locations", payload);
+            act.clear();
+            setOpen(false);
+            setForm({ name: "", kind: "bin", code: "", parent_id: "", notes: "" });
+            load();
+            refreshLookups();
+          } catch (e) {
+            act.fail(e);
+          }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -234,6 +247,7 @@ export function TransfersPage() {
   const [form, setForm] = useState<any>({ from_location_id: "", to_location_id: "", notes: "", items: [] as any[] });
   const [batchHits, setBatchHits] = useState<any[]>([]);
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     const r = await get<{ data: any[] }>(`/api/inventory/transfers?${f.qs}`);
     setRows(r.data);
@@ -247,7 +261,8 @@ export function TransfersPage() {
     setBatchHits(r.data);
   }
   return (
-    <Page title={tr("transfers")} action={<Btn onClick={() => setOpen(true)}>{tr("newTransfer")}</Btn>}>
+    <Page title={tr("transfers")} action={<Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("newTransfer")}</Btn>}>
+      <ErrorNote message={act.message} />
       <SmartFilter f={f} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: ["draft", "completed", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
         { key: "from_location_id", label: "sourceWarehouse", type: "select", lookup: "locations" },
@@ -265,14 +280,14 @@ export function TransfersPage() {
           <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
           r.status === "draft" ? (
             <span className="flex flex-wrap gap-2">
-              <button className="font-bold text-cyan-700" onClick={async () => { await post(`/api/inventory/transfers/${r.id}/complete`, {}); load(); }}>{tr("completeTransfer")}</button>
+              <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/transfers/${r.id}/complete`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("completeTransfer")}</button>
               <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/transfers/${r.id}/cancel`, {}); load(); })}>{tr("delete")}</button>
             </span>
           ) : null,
         ])}
       />
       )}
-      <Modal open={open} title={tr("newTransfer")} onClose={() => setOpen(false)} wide>
+      <Modal open={open} title={tr("newTransfer")} onClose={() => { setOpen(false); act.clear(); }} wide>
         <div className="grid gap-2 md:grid-cols-2">
           <Field label={tr("fromLocation")}>
             <select className={inputCls} value={form.from_location_id} onChange={(e) => { setForm({ ...form, from_location_id: e.target.value, items: [] }); loadBatches(e.target.value); }}>
@@ -300,11 +315,30 @@ export function TransfersPage() {
             </label>
           ))}
         </div>
+        <ErrorNote message={act.message} />
         <Btn className="mt-4" onClick={async () => {
-          await post("/api/inventory/transfers", { ...form, from_location_id: Number(form.from_location_id), to_location_id: Number(form.to_location_id) });
-          setOpen(false);
-          setForm({ from_location_id: "", to_location_id: "", notes: "", items: [] });
-          load();
+          if (!form.from_location_id || !form.to_location_id) {
+            act.fail(undefined, "errLocationsRequired");
+            return;
+          }
+          if (String(form.from_location_id) === String(form.to_location_id)) {
+            act.fail(undefined, "errSameLocation");
+            return;
+          }
+          if (!form.items?.length) {
+            act.fail(undefined, "errNoItems");
+            return;
+          }
+          try {
+            await post("/api/inventory/transfers", { ...form, from_location_id: Number(form.from_location_id), to_location_id: Number(form.to_location_id) });
+            playSound("done");
+            act.clear();
+            setOpen(false);
+            setForm({ from_location_id: "", to_location_id: "", notes: "", items: [] });
+            load();
+          } catch (e) {
+            act.fail(e);
+          }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -316,11 +350,13 @@ export function TransferDetail() {
   const { id } = useParams();
   const { tr, lang } = useApp();
   const [d, setD] = useState<any>(null);
+  const act = useActionError();
   async function load() { setD((await get<{ data: any }>(`/api/inventory/transfers/${id}`)).data); }
   useEffect(() => { load().catch(() => {}); }, [id]);
   if (!d) return <div>{tr("loading")}</div>;
   return (
-    <Page title={d.number} action={d.status === "draft" ? <Btn onClick={async () => { await post(`/api/inventory/transfers/${id}/complete`, {}); load(); }}>{tr("completeTransfer")}</Btn> : null}>
+    <Page title={d.number} action={d.status === "draft" ? <Btn onClick={async () => { try { act.clear(); await post(`/api/inventory/transfers/${id}/complete`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("completeTransfer")}</Btn> : null}>
+      <ErrorNote message={act.message} />
       <div className="mb-3 text-sm text-slate-500">{d.from_name} → {d.to_name} · {d.date} · {statusLabel(d.status, lang)}</div>
       <Table cols={[tr("sku"), "Batch", tr("qty"), tr("cost")]} rows={(d.items || []).map((i: any) => [i.sku, i.batch_code, i.qty, money(i.unit_cost, lang)])} />
     </Page>
@@ -336,13 +372,15 @@ export function StocktakesPage() {
   const [open, setOpen] = useState(false);
   const [locationId, setLocationId] = useState("");
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/inventory/stocktakes?${f.qs}`)).data);
     setLocs((await get<{ data: any[] }>("/api/inventory/locations/tree")).data);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("stocktake")} action={<Btn onClick={() => setOpen(true)}>{tr("newStocktake")}</Btn>}>
+    <Page title={tr("stocktake")} action={<Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("newStocktake")}</Btn>}>
+      <ErrorNote message={act.message} />
       <SmartFilter f={f} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: ["draft", "submitted", "approved"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
         { key: "locations", label: "warehouse", type: "locations" },
@@ -365,17 +403,23 @@ export function StocktakesPage() {
           </span>,
         ])}
       />
-      <Modal open={open} title={tr("newStocktake")} onClose={() => setOpen(false)}>
+      <Modal open={open} title={tr("newStocktake")} onClose={() => { setOpen(false); act.clear(); }}>
         <Field label={tr("location")}>
           <select className={inputCls} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
             <option value="">{tr("all")}</option>
             {locs.map((l) => <option key={l.id} value={l.id}>{l.path || l.name}</option>)}
           </select>
         </Field>
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          const r = await post<{ id: number }>("/api/inventory/stocktakes", { location_id: locationId ? Number(locationId) : null });
-          setOpen(false);
-          nav(`/stocktake/${r.id}`);
+          try {
+            const r = await post<{ id: number }>("/api/inventory/stocktakes", { location_id: locationId ? Number(locationId) : null });
+            act.clear();
+            setOpen(false);
+            nav(`/stocktake/${r.id}`);
+          } catch (e) {
+            act.fail(e);
+          }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -388,6 +432,7 @@ export function StocktakeDetail() {
   const { tr, lang, can } = useApp();
   const [d, setD] = useState<any>(null);
   const [counts, setCounts] = useState<Record<number, string>>({});
+  const act = useActionError();
   async function load() {
     const r = await get<{ data: any }>(`/api/inventory/stocktakes/${id}`);
     setD(r.data);
@@ -403,11 +448,12 @@ export function StocktakeDetail() {
       title={d.number}
       action={
         <>
-          {d.status === "draft" ? <Btn kind="ghost" onClick={async () => { try { await post(`/api/inventory/stocktakes/${id}/submit`, {}); playSound("done"); load(); } catch { playSound("err"); } }}>{tr("submitStocktake")}</Btn> : null}
-          {d.status === "submitted" && can("stocktake.approve") ? <Btn onClick={async () => { try { await post(`/api/inventory/stocktakes/${id}/approve`, {}); playSound("done"); load(); } catch { playSound("err"); } }}>{tr("approveStocktake")}</Btn> : null}
+          {d.status === "draft" ? <Btn kind="ghost" onClick={async () => { try { act.clear(); await post(`/api/inventory/stocktakes/${id}/submit`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("submitStocktake")}</Btn> : null}
+          {d.status === "submitted" && can("stocktake.approve") ? <Btn onClick={async () => { try { act.clear(); await post(`/api/inventory/stocktakes/${id}/approve`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("approveStocktake")}</Btn> : null}
         </>
       }
     >
+      <ErrorNote message={act.message} />
       <div className="mb-3 text-sm text-slate-500">{d.location_name || tr("all")} · {d.date} · {statusLabel(d.status, lang)}</div>
       <Table
         cols={[tr("sku"), tr("name"), "Batch", tr("location"), tr("systemQty"), tr("counted"), tr("variance")]}
@@ -423,9 +469,10 @@ export function StocktakeDetail() {
               try {
                 await put(`/api/inventory/stocktakes/${id}/counts`, { items: [{ id: i.id, counted_qty: Number(counts[i.id]) }] });
                 playSound("ok");
+                act.clear();
                 load();
-              } catch {
-                playSound("err");
+              } catch (e) {
+                act.fail(e);
               }
             }} />
           ),

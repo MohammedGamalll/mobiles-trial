@@ -24,15 +24,32 @@ function mysqlConfig() {
   };
 }
 
+type Queryable = Pool | PoolConnection;
+
+async function execStmt(client: Queryable, s: AppStatement): Promise<AppResult> {
+  const adapted = adaptSql(s.sql);
+  const isSelect = /^\s*SELECT/i.test(s.sql);
+  const [res] = s.params.length ? await client.execute(adapted, s.params as never[]) : await client.query(adapted);
+  if (isSelect) {
+    return { results: res as RowDataPacket[], success: true, meta: { changes: 0, last_row_id: 0 } };
+  }
+  const header = res as ResultSetHeader;
+  return {
+    results: [],
+    success: true,
+    meta: { changes: Number(header.affectedRows || 0), last_row_id: Number(header.insertId || 0) },
+  };
+}
+
 export class AppStatement {
   constructor(
-    private pool: Pool,
+    private client: Queryable,
     public sql: string,
     public params: unknown[] = [],
   ) {}
 
   bind(...params: unknown[]) {
-    return new AppStatement(this.pool, this.sql, params);
+    return new AppStatement(this.client, this.sql, params);
   }
 
   private adapted() {
@@ -41,8 +58,8 @@ export class AppStatement {
 
   async all<T = Record<string, unknown>>(): Promise<AppResult<T>> {
     const [rows] = this.params.length
-      ? await this.pool.execute(this.adapted(), this.params as never[])
-      : await this.pool.query(this.adapted());
+      ? await this.client.execute(this.adapted(), this.params as never[])
+      : await this.client.query(this.adapted());
     return { results: rows as T[], success: true, meta: { changes: 0, last_row_id: 0 } };
   }
 
@@ -52,51 +69,61 @@ export class AppStatement {
   }
 
   async run(): Promise<AppResult> {
-    const [info] = this.params.length
-      ? await this.pool.execute(this.adapted(), this.params as never[])
-      : await this.pool.query(this.adapted());
-    const header = info as ResultSetHeader;
-    return {
-      results: [],
-      success: true,
-      meta: { changes: Number(header.affectedRows || 0), last_row_id: Number(header.insertId || 0) },
-    };
+    return execStmt(this.client, this);
   }
 }
 
 export class AppDb {
-  constructor(public pool: Pool) {}
+  constructor(
+    public pool: Pool,
+    private conn?: PoolConnection,
+  ) {}
+
+  private client(): Queryable {
+    return this.conn ?? this.pool;
+  }
 
   prepare(sql: string) {
-    return new AppStatement(this.pool, sql);
+    return new AppStatement(this.client(), sql);
   }
 
   async exec(sql: string) {
-    await this.pool.query(adaptSql(sql));
+    await this.client().query(adaptSql(sql));
   }
 
   async batch(stmts: AppStatement[]): Promise<AppResult[]> {
+    if (this.conn) {
+      const out: AppResult[] = [];
+      for (const s of stmts) out.push(await execStmt(this.conn, s));
+      return out;
+    }
     const conn: PoolConnection = await this.pool.getConnection();
     try {
       await conn.beginTransaction();
       const out: AppResult[] = [];
-      for (const s of stmts) {
-        const adapted = adaptSql(s.sql);
-        const isSelect = /^\s*SELECT/i.test(s.sql);
-        const [res] = s.params.length ? await conn.execute(adapted, s.params as never[]) : await conn.query(adapted);
-        if (isSelect) {
-          out.push({ results: res as RowDataPacket[], success: true, meta: { changes: 0, last_row_id: 0 } });
-        } else {
-          const header = res as ResultSetHeader;
-          out.push({
-            results: [],
-            success: true,
-            meta: { changes: Number(header.affectedRows || 0), last_row_id: Number(header.insertId || 0) },
-          });
-        }
-      }
+      for (const s of stmts) out.push(await execStmt(conn, s));
       await conn.commit();
       return out;
+    } catch (err) {
+      try {
+        await conn.rollback();
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      conn.release();
+    }
+  }
+
+  async transaction<T>(fn: (tx: AppDb) => Promise<T>): Promise<T> {
+    if (this.conn) return fn(this);
+    const conn = await this.pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const result = await fn(new AppDb(this.pool, conn));
+      await conn.commit();
+      return result;
     } catch (err) {
       try {
         await conn.rollback();
@@ -167,6 +194,8 @@ export async function ensureAppSchema(db: AppDb) {
     row_id INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await run("UPDATE customers SET phone = NULL WHERE phone = ''");
+  await run("CREATE UNIQUE INDEX idx_customers_phone_uq ON customers(phone)");
   try {
     const live = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NULL").first<{ n: number }>();
     const dead = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NOT NULL").first<{ n: number }>();
