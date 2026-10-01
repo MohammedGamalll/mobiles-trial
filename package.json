@@ -3,14 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "main": "app.js",
+  "main": "app.cjs",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"cross-env SERVE_STATIC=0 tsx server/index.ts\" \"vite\"",
     "build": "vite build && node scripts/bundle-server.mjs",
-    "start": "node dist/index.js",
+    "start": "node app.cjs",
     "preview": "npm run build && npm start",
     "db:import": "node scripts/import-d1.mjs",
     "db:migrate": "node scripts/migrate.mjs",

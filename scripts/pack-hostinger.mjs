@@ -42,11 +42,11 @@ const pkg = {
   private: true,
   version: rootPkg.version,
   type: "module",
-  main: "dist/index.js",
+  main: "app.cjs",
   engines: { node: ">=22" },
   scripts: {
     build: "node scripts/verify-dist.mjs && node scripts/migrate.mjs",
-    start: "node dist/index.js",
+    start: "node app.cjs",
     "db:migrate": "node scripts/migrate.mjs",
   },
   dependencies: {
@@ -57,6 +57,8 @@ const pkg = {
 };
 fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
 
+const boot = `"use strict";\nimport("./dist/index.js").catch((err) => {\n  console.error(err);\n  process.exit(1);\n});\n`;
+fs.writeFileSync(path.join(dest, "app.cjs"), boot);
 fs.writeFileSync(path.join(dest, "index.js"), `import "./dist/index.js";\n`);
 fs.writeFileSync(path.join(dest, "app.js"), `import "./dist/index.js";\n`);
 fs.writeFileSync(path.join(dest, "server.js"), `import "./dist/index.js";\n`);
@@ -69,7 +71,7 @@ fs.writeFileSync(
 
 في إعدادات النشر على Hostinger:
 - نوع التطبيق / Framework: hono (مش React/Vite)
-- ملف التشغيل / Entry file: dist/index.js
+- ملف التشغيل / Entry file: app.cjs
 - مجلد الإخراج / Output directory: فاضي
 - أمر البناء / Build: npm run build:live
 - أمر التشغيل / Start: npm start

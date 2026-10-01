@@ -18,34 +18,41 @@ const backupDir = process.env.BACKUP_DIR || path.join(projectRoot, "data", "back
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(backupDir, { recursive: true });
 
-const db = await openMysql();
-const app = createApiApp();
-const env = {
-  DB: db,
-  APP_NAME: "المتميز",
-  BACKUP_DIR: backupDir,
-  UPLOAD_DIR: uploadDir,
-};
-
-if (process.env.SERVE_STATIC !== "0") {
-  const staticOpts = {
-    root: staticDir,
-    rewriteRequestPath: (requestPath: string) => requestPath.replace(/^\/+/, ""),
+async function main() {
+  const db = await openMysql();
+  const app = createApiApp();
+  const env = {
+    DB: db,
+    APP_NAME: "المتميز",
+    BACKUP_DIR: backupDir,
+    UPLOAD_DIR: uploadDir,
   };
-  app.use("/assets/*", serveStatic(staticOpts));
-  app.use("/favicon.svg", serveStatic(staticOpts));
-  app.get("*", (c) => {
-    if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/uploads/")) return c.json({ error: "not_found" }, 404);
-    const index = path.join(staticDir, "index.html");
-    if (!fs.existsSync(index)) return c.text("UI not built. Run npm run build.", 503);
-    return c.html(fs.readFileSync(index, "utf8"), 200, {
-      "Cache-Control": "no-store, no-cache, must-revalidate",
+
+  if (process.env.SERVE_STATIC !== "0") {
+    const staticOpts = {
+      root: staticDir,
+      rewriteRequestPath: (requestPath: string) => requestPath.replace(/^\/+/, ""),
+    };
+    app.use("/assets/*", serveStatic(staticOpts));
+    app.use("/favicon.svg", serveStatic(staticOpts));
+    app.get("*", (c) => {
+      if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/uploads/")) return c.json({ error: "not_found" }, 404);
+      const index = path.join(staticDir, "index.html");
+      if (!fs.existsSync(index)) return c.text("UI not built. Run npm run build.", 503);
+      return c.html(fs.readFileSync(index, "utf8"), 200, {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+      });
     });
+  }
+
+  const port = Number(process.env.PORT || 8787);
+  const hostname = process.env.HOST || "0.0.0.0";
+  serve({ fetch: (req) => app.fetch(req, env), port, hostname }, (info) => {
+    console.log(`المتميز listening on http://${hostname}:${info.port}`);
   });
 }
 
-const port = Number(process.env.PORT || 8787);
-const hostname = process.env.HOST || "0.0.0.0";
-serve({ fetch: (req) => app.fetch(req, env), port, hostname }, (info) => {
-  console.log(`المتميز listening on http://${hostname}:${info.port}`);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });
