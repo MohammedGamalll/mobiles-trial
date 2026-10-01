@@ -1,0 +1,210 @@
+{
+  "results": [
+    {
+      "name": "login",
+      "ok": true,
+      "detail": "200"
+    },
+    {
+      "name": "create product",
+      "ok": true,
+      "detail": "{\"id\":37}"
+    },
+    {
+      "name": "create cash purchase",
+      "ok": true,
+      "detail": "{\"id\":6,\"number\":\"PUR-1141\"}"
+    },
+    {
+      "name": "approve purchase",
+      "ok": true,
+      "detail": "{\"ok\":true}"
+    },
+    {
+      "name": "stock +100",
+      "ok": true,
+      "detail": "stock=100 batches=100"
+    },
+    {
+      "name": "cash purchase treasury -10000",
+      "ok": true,
+      "detail": "15120 -> 5120"
+    },
+    {
+      "name": "cash purchase supplier unchanged",
+      "ok": true,
+      "detail": "0 -> 0"
+    },
+    {
+      "name": "purchase journal",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "create customer",
+      "ok": true,
+      "detail": "{\"id\":9}"
+    },
+    {
+      "name": "cash sale 1500",
+      "ok": true,
+      "detail": "{\"status\":201,\"total\":1500,\"profit\":500,\"cost\":1000}"
+    },
+    {
+      "name": "stock 90",
+      "ok": true,
+      "detail": "90"
+    },
+    {
+      "name": "sale movement -10",
+      "ok": true,
+      "detail": "{\"qty\":10,\"type\":\"out\"}"
+    },
+    {
+      "name": "treasury +1500",
+      "ok": true,
+      "detail": "5120 -> 6620"
+    },
+    {
+      "name": "cash sale no new debt",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "name": "idempotent resend",
+      "ok": true,
+      "detail": "{\"duplicate\":true,\"id\":18}"
+    },
+    {
+      "name": "resend did not sell twice",
+      "ok": true,
+      "detail": "90"
+    },
+    {
+      "name": "credit sale 10000",
+      "ok": true,
+      "detail": "{\"total\":10000,\"remaining\":10000}"
+    },
+    {
+      "name": "receivable +10000",
+      "ok": true,
+      "detail": "10000"
+    },
+    {
+      "name": "credit sale treasury unchanged",
+      "ok": true,
+      "detail": "6620 -> 6620"
+    },
+    {
+      "name": "partial pay",
+      "ok": true,
+      "detail": "{\"ok\":true,\"paid\":4000,\"remaining\":6000}"
+    },
+    {
+      "name": "status partial",
+      "ok": true,
+      "detail": "{\"status\":\"partial\",\"paid\":4000,\"remaining\":6000,\"total\":10000}"
+    },
+    {
+      "name": "receivable 6000",
+      "ok": true,
+      "detail": "6000"
+    },
+    {
+      "name": "treasury +4000",
+      "ok": true,
+      "detail": "6620 -> 10620"
+    },
+    {
+      "name": "later collection 2000",
+      "ok": true,
+      "detail": "{\"ok\":true,\"paid\":6000,\"remaining\":4000}"
+    },
+    {
+      "name": "receivable 4000",
+      "ok": true,
+      "detail": "4000"
+    },
+    {
+      "name": "paid in full",
+      "ok": true,
+      "detail": "{\"ok\":true,\"paid\":10000,\"remaining\":0}"
+    },
+    {
+      "name": "status completed and debt cleared",
+      "ok": true,
+      "detail": "completed bal=0"
+    },
+    {
+      "name": "partial return",
+      "ok": true,
+      "detail": "{\"id\":1,\"number\":\"RET-1003\",\"total\":450}"
+    },
+    {
+      "name": "return restock +3",
+      "ok": true,
+      "detail": "was 90 now 83"
+    },
+    {
+      "name": "profit drops by margin 150",
+      "ok": true,
+      "detail": "500 -> 350"
+    },
+    {
+      "name": "cash refund 450",
+      "ok": true,
+      "detail": "16620 -> 16170"
+    },
+    {
+      "name": "invoice discount 1000-100=900",
+      "ok": true,
+      "detail": "{\"total\":900}"
+    },
+    {
+      "name": "credit purchase supplier +2000",
+      "ok": true,
+      "detail": "0 -> 2000"
+    },
+    {
+      "name": "oldest open batch still FIFO 100 not average 150",
+      "ok": true,
+      "detail": "100"
+    },
+    {
+      "name": "expense treasury -1000",
+      "ok": true,
+      "detail": "17070 -> 16070"
+    },
+    {
+      "name": "posted debits equal credits",
+      "ok": true,
+      "detail": "D=93605 C=93605"
+    },
+    {
+      "name": "dashboard sales today matches invoices",
+      "ok": true,
+      "detail": "dash=11950 sql=11950"
+    },
+    {
+      "name": "customer reconciliation",
+      "ok": true,
+      "detail": "{\"module\":\"Customer receivables vs open invoices\",\"expected\":9480,\"actual\":9480,\"difference\":0,\"status\":\"PASS\",\"note\":\"SUM(invoice.remaining) for named customers\"}"
+    },
+    {
+      "name": "stock reconciliation",
+      "ok": true,
+      "detail": "{\"module\":\"Stock on hand vs batches\",\"expected\":517,\"actual\":517,\"difference\":0,\"status\":\"PASS\",\"note\":\"products.current_stock vs SUM(batch.remaining_qty)\"}"
+    },
+    {
+      "name": "journal reconciliation",
+      "ok": true,
+      "detail": "{\"module\":\"Journal debits\",\"expected\":93605,\"actual\":93605,\"difference\":0,\"status\":\"PASS\",\"note\":\"posted journal debits must equal credits\"}"
+    },
+    {
+      "name": "sales role cannot post expense",
+      "ok": true,
+      "detail": "403"
+    }
+  ],
+  "failed": 0
+}

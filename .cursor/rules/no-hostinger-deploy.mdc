@@ -1,0 +1,12 @@
+---
+description: Never deploy via Hostinger API; user uploads hostinger-dist manually
+alwaysApply: true
+---
+
+# No Hostinger deploy
+
+Do not call Hostinger MCP tools (`user-hostinger`, `hosting_deploy-js-application`, TUS upload, `hosting_nodejs_start-build`, or any live deploy/upload).
+
+After a build, run `npm run build` then `npm run pack:hostinger` so `dist/` and `hostinger-dist/` are ready. The user uploads that folder (or a zip of it) by hand.
+
+Do not pack sqlite, credentials, or `.env` into the archive.

@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN ui_layout TEXT NOT NULL DEFAULT 'modern';

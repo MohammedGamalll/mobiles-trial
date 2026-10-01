@@ -1,0 +1,174 @@
+import type { AppDb } from "./db";
+
+export type BatchRow = {
+  id: number;
+  batch_code: string;
+  product_id: number;
+  remaining_qty: number;
+  reserved_qty: number;
+  unit_cost: number;
+  purchase_date: string | null;
+};
+
+export type Allocation = { batch_id: number; batch_code: string; qty: number; unit_cost: number };
+
+export async function availableBatches(db: AppDb, productId: number) {
+  const { results } = await db
+    .prepare(
+      `SELECT id, batch_code, product_id, remaining_qty, reserved_qty, unit_cost, purchase_date
+       FROM inventory_batches
+       WHERE product_id = ? AND (remaining_qty - reserved_qty) > 0
+       ORDER BY datetime(purchase_date) ASC, id ASC`,
+    )
+    .bind(productId)
+    .all<BatchRow>();
+  return results;
+}
+
+export function planAllocation(batches: BatchRow[], qty: number, preferredBatchId?: number | null): Allocation[] {
+  const need = qty;
+  const out: Allocation[] = [];
+  let left = need;
+  const ordered = [...batches];
+  if (preferredBatchId) {
+    const idx = ordered.findIndex((b) => b.id === preferredBatchId);
+    if (idx > 0) {
+      const [pref] = ordered.splice(idx, 1);
+      ordered.unshift(pref);
+    }
+  }
+  for (const b of ordered) {
+    const avail = b.remaining_qty - b.reserved_qty;
+    if (avail <= 0) continue;
+    const take = Math.min(avail, left);
+    out.push({ batch_id: b.id, batch_code: b.batch_code, qty: take, unit_cost: b.unit_cost });
+    left -= take;
+    if (left <= 0) break;
+  }
+  if (left > 0) throw new Error("INSUFFICIENT_STOCK");
+  return out;
+}
+
+export function weightedCost(alloc: Allocation[]) {
+  const qty = alloc.reduce((s, a) => s + a.qty, 0);
+  const cost = alloc.reduce((s, a) => s + a.qty * a.unit_cost, 0);
+  return qty ? cost / qty : 0;
+}
+
+export async function applyReserve(db: AppDb, alloc: Allocation[], productId: number) {
+  const stmts = alloc.map((a) =>
+    db.prepare("UPDATE inventory_batches SET reserved_qty = reserved_qty + ? WHERE id = ?").bind(a.qty, a.batch_id),
+  );
+  const total = alloc.reduce((s, a) => s + a.qty, 0);
+  stmts.push(
+    db.prepare("UPDATE products SET reserved_stock = reserved_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(total, productId),
+  );
+  await db.batch(stmts);
+}
+
+export async function applyIssue(db: AppDb, alloc: Allocation[], productId: number, fromReserved: boolean) {
+  for (const a of alloc) {
+    const upd = fromReserved
+      ? await db
+          .prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty - ?, reserved_qty = reserved_qty - ? WHERE id = ? AND remaining_qty >= ? AND reserved_qty >= ?")
+          .bind(a.qty, a.qty, a.batch_id, a.qty, a.qty)
+          .run()
+      : await db
+          .prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty - ? WHERE id = ? AND remaining_qty >= ?")
+          .bind(a.qty, a.batch_id, a.qty)
+          .run();
+    if (!upd.meta.changes) throw new Error("INSUFFICIENT_STOCK");
+  }
+  const stmts: ReturnType<AppDb["prepare"]>[] = [];
+  const total = alloc.reduce((s, a) => s + a.qty, 0);
+  if (fromReserved) {
+    stmts.push(
+      db
+        .prepare("UPDATE products SET current_stock = current_stock - ?, reserved_stock = reserved_stock - ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(total, total, productId),
+    );
+  } else {
+    stmts.push(
+      db.prepare("UPDATE products SET current_stock = current_stock - ?, updated_at = datetime('now') WHERE id = ? AND current_stock >= ?").bind(total, productId, total),
+    );
+  }
+  await db.batch(stmts);
+}
+
+export async function releaseReserve(db: AppDb, alloc: Allocation[], productId: number) {
+  const stmts = alloc.map((a) =>
+    db.prepare("UPDATE inventory_batches SET reserved_qty = MAX(reserved_qty - ?, 0) WHERE id = ?").bind(a.qty, a.batch_id),
+  );
+  const total = alloc.reduce((s, a) => s + a.qty, 0);
+  stmts.push(
+    db.prepare("UPDATE products SET reserved_stock = MAX(reserved_stock - ?, 0), updated_at = datetime('now') WHERE id = ?").bind(total, productId),
+  );
+  await db.batch(stmts);
+}
+
+export async function restockToBatch(db: AppDb, batchId: number, productId: number, qty: number) {
+  await db.batch([
+    db.prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty + ? WHERE id = ?").bind(qty, batchId),
+    db.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(qty, productId),
+  ]);
+}
+
+export async function logMovement(
+  db: AppDb,
+  opts: {
+    productId: number;
+    batchId: number | null;
+    type: string;
+    qty: number;
+    unitCost: number | null;
+    referenceType: string;
+    referenceId: number;
+    notes: string;
+    userId: number | null;
+    fromLocationId?: number | null;
+    toLocationId?: number | null;
+  },
+) {
+  await db
+    .prepare(
+      "INSERT INTO stock_movements (product_id, batch_id, type, qty, unit_cost, reference_type, reference_id, notes, created_by, from_location_id, to_location_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(
+      opts.productId,
+      opts.batchId,
+      opts.type,
+      opts.qty,
+      opts.unitCost,
+      opts.referenceType,
+      opts.referenceId,
+      opts.notes,
+      opts.userId,
+      opts.fromLocationId ?? null,
+      opts.toLocationId ?? null,
+    )
+    .run();
+}
+
+export async function maybeStockAlerts(db: AppDb, productId: number) {
+  const p = await db
+    .prepare("SELECT id, name_ar, name_en, current_stock, reserved_stock, min_stock FROM products WHERE id = ?")
+    .bind(productId)
+    .first<{ id: number; name_ar: string; name_en: string; current_stock: number; reserved_stock: number; min_stock: number }>();
+  if (!p) return;
+  const avail = p.current_stock - p.reserved_stock;
+  if (avail <= 0) {
+    await db
+      .prepare(
+        "INSERT INTO notifications (type, title_ar, title_en, body_ar, body_en, entity_type, entity_id) VALUES ('out_of_stock', 'صنف نافد', 'Out of stock', ?, ?, 'product', ?)",
+      )
+      .bind(`${p.name_ar} نافد من المخزن`, `${p.name_en} is out of stock`, p.id)
+      .run();
+  } else if (avail <= p.min_stock) {
+    await db
+      .prepare(
+        "INSERT INTO notifications (type, title_ar, title_en, body_ar, body_en, entity_type, entity_id) VALUES ('low_stock', 'مخزون منخفض', 'Low stock', ?, ?, 'product', ?)",
+      )
+      .bind(`${p.name_ar} وصل للحد الأدنى`, `${p.name_en} reached minimum stock`, p.id)
+      .run();
+  }
+}
