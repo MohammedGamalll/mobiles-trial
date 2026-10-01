@@ -171,6 +171,11 @@ export async function ensureAppSchema(db: AppDb) {
     ["customers", "account_kind TEXT NOT NULL DEFAULT 'debit'"],
     ["customers", "discount_pct REAL NOT NULL DEFAULT 0"],
     ["customers", "sell_price REAL NOT NULL DEFAULT 0"],
+    ["customers", "lat REAL"],
+    ["customers", "lng REAL"],
+    ["customers", "supplier_id INTEGER"],
+    ["suppliers", "currency TEXT NOT NULL DEFAULT 'EGP'"],
+    ["suppliers", "customer_id INTEGER"],
     ["sales_invoices", "extra_amount REAL NOT NULL DEFAULT 0"],
     ["sales_invoices", "cash_account_id INTEGER"],
     ["sales_invoice_items", "unit_name TEXT"],
@@ -187,7 +192,8 @@ export async function ensureAppSchema(db: AppDb) {
     ('price_2_name', 'سعر الجملة'),
     ('price_3_name', 'سعر 3'),
     ('price_4_name', 'سعر 4'),
-    ('auto_backup_on_login', '1')`);
+    ('auto_backup_on_login', '1'),
+    ('usd_egp_rate', '50')`);
   await run(`CREATE TABLE IF NOT EXISTS demo_seed_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name TEXT NOT NULL,

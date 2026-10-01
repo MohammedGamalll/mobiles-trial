@@ -17,6 +17,7 @@ import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
 import { invoiceTotals, settleReturn } from "../lib/invoice-math";
+import { splitInvoiceCash } from "../lib/party-money";
 import {
   applyIssue,
   applyReserve,
@@ -533,13 +534,20 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number }[];
   };
   if (row.status !== "held" && row.status !== "quote" && row.status !== "order") return c.json({ error: "not_held" }, 400);
-  const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string }));
+  const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string }));
   const user = c.get("user");
   const wasReserved = row.status === "quote" || row.status === "order";
   let costTotal = 0;
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
-  const paid = splitPays.length ? round2(splitPays.reduce((s, p) => s + p.amount, 0)) : round2(b.paid ?? (row.type === "normal" ? row.total : 0));
-  const remaining = round2(row.total - paid);
+  const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
+  const defaultPaid = row.status === "quote" ? 0 : row.type === "normal" ? row.total : 0;
+  const requested = splitPays.length
+    ? round2(splitPays.reduce((s, p) => s + p.amount, 0))
+    : round2(b.unpaid || b.payment_method === "credit" ? Number(b.paid ?? 0) : (b.paid ?? defaultPaid));
+  const split = splitInvoiceCash(requested, row.total, surplusMode);
+  const paid = split.invoicePaid;
+  const remaining = split.remaining;
+  const surplus = split.surplus;
   const status = row.type === "delivery" ? "pending_delivery" : remaining <= 0 ? "completed" : "partial";
   let customer = null as { credit_limit: number; current_balance: number } | null;
   if (row.customer_id) {
@@ -547,6 +555,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
   }
   const cred = creditError(customer, remaining);
   if (cred) return c.json({ error: cred }, 400);
+  if (surplus > 0 && !row.customer_id) return c.json({ error: "customer_required" }, 400);
   try {
     await c.env.DB.transaction(async (tx) => {
       costTotal = 0;
@@ -583,15 +592,35 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
         .run();
       if (paid > 0) {
         const pays = splitPays.length ? splitPays : [{ method: b.payment_method || row.payment_method || "cash", amount: paid }];
+        let left = paid;
         for (const pay of pays) {
+          if (left <= 0) break;
+          const amt = round2(Math.min(pay.amount, left));
           await tx
             .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, created_by) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(id, row.customer_id, pay.method, pay.amount, todayIso(), user.id)
+            .bind(id, row.customer_id, pay.method, amt, todayIso(), user.id)
             .run();
+          left = round2(left - amt);
         }
       }
       if (row.customer_id && remaining > 0) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance + ?, updated_at = datetime('now') WHERE id = ?").bind(remaining, row.customer_id).run();
+      }
+      if (row.customer_id && surplus > 0) {
+        const extra = await tx
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(null, row.customer_id, b.payment_method || row.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id)
+          .run();
+        await tx.prepare("UPDATE customers SET current_balance = current_balance - ?, updated_at = datetime('now') WHERE id = ?").bind(surplus, row.customer_id).run();
+        await postCollectionJournal(tx, {
+          paymentId: extra.meta.last_row_id,
+          invoiceNumber: row.number,
+          amount: surplus,
+          method: b.payment_method || row.payment_method || "cash",
+          date: todayIso(),
+          cashAccountId: row.cash_account_id || null,
+          userId: user.id,
+        });
       }
       await postSaleJournal(
         tx,
@@ -694,7 +723,7 @@ salesRoutes.delete("/invoices/:id", requirePerm("sales.cancel"), async (c) => {
 
 salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) => {
   const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ amount: number; method?: string; notes?: string }>();
+  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string }>();
   const inv = await c.env.DB.prepare("SELECT * FROM sales_invoices WHERE id = ?").bind(id).first<{
     remaining: number;
     paid: number;
@@ -703,23 +732,37 @@ salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) 
     cash_account_id?: number | null;
   }>();
   if (!inv) return c.json({ error: "not_found" }, 404);
-  const amount = round2(b.amount);
+  let amount = round2(b.amount);
   if (amount <= 0) return c.json({ error: "invalid_amount" }, 400);
-  if (amount > round2(inv.remaining) + 0.001) return c.json({ error: "overpay" }, 400);
-  const paid = round2(inv.paid + amount);
-  const remaining = round2(Math.max(0, inv.remaining - amount));
+  const due = round2(inv.remaining);
+  let surplus = 0;
+  if (amount > due + 0.001) {
+    if (b.surplus_mode === "ignore") amount = due;
+    else if (b.surplus_mode === "wallet") surplus = round2(amount - due);
+    else return c.json({ error: "overpay" }, 400);
+  }
+  if (surplus > 0 && !inv.customer_id) return c.json({ error: "customer_required" }, 400);
+  const invoiceTake = round2(Math.min(amount, due));
+  const paid = round2(inv.paid + invoiceTake);
+  const remaining = round2(Math.max(0, inv.remaining - invoiceTake));
   const user = c.get("user");
   let payId = 0;
   try {
     await c.env.DB.transaction(async (tx) => {
       const payIns = await tx
         .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(id, inv.customer_id, b.method || "cash", amount, todayIso(), b.notes || null, user.id)
+        .bind(id, inv.customer_id, b.method || "cash", invoiceTake, todayIso(), b.notes || null, user.id)
         .run();
       payId = payIns.meta.last_row_id;
       await tx.prepare("UPDATE sales_invoices SET paid = ?, remaining = ? WHERE id = ?").bind(paid, remaining, id).run();
       if (inv.customer_id) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(amount, inv.customer_id).run();
+      }
+      if (surplus > 0 && inv.customer_id) {
+        await tx
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(null, inv.customer_id, b.method || "cash", surplus, todayIso(), "surplus wallet", user.id)
+          .run();
       }
       const nextStatus = remaining <= 0 ? "completed" : "partial";
       await tx
@@ -734,7 +777,7 @@ salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) 
   }
   if (remaining <= 0) await accrueCommission(c.env.DB, id);
   await audit(c.env.DB, user, "payment", "invoice", id, `Pay ${amount} on ${inv.number}`);
-  return c.json({ ok: true, paid, remaining });
+  return c.json({ ok: true, paid, remaining, surplus });
 });
 
 salesRoutes.post("/invoices/:id/returns", requirePerm("returns.create"), async (c) => {

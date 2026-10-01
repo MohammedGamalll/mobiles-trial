@@ -15,7 +15,7 @@
     "db:import": "node scripts/import-d1.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "build:live": "npm run build && npm run db:migrate",
-    "test": "tsx --test tests/calc.test.ts",
+    "test": "tsx --test tests/calc.test.ts tests/party-money.test.ts",
     "pack:hostinger": "node scripts/pack-hostinger.mjs"
   },
   "dependencies": {

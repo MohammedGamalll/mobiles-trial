@@ -6,6 +6,7 @@ import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, inputCls } from "../components/ui";
 import { useConfirm } from "../components/Confirm";
+import { PaymentModal } from "../components/PaymentModal";
 
 export default function Invoice() {
   const { id } = useParams();
@@ -24,6 +25,7 @@ export default function Invoice() {
   const [notes, setNotes] = useState("");
   const [custNotes, setCustNotes] = useState("");
   const [payAmt, setPayAmt] = useState(0);
+  const [payOpen, setPayOpen] = useState(false);
 
   async function reload() {
     const r = await get<{ data: any }>(`/api/invoices/${id}`);
@@ -83,7 +85,10 @@ export default function Invoice() {
             <Btn onClick={() => { window.location.href = `/pos?held=${inv.id}`; }}>{tr("resumeHeld")}</Btn>
           ) : null}
           {["held", "quote", "order"].includes(inv.status) && can("sales.create") ? (
-            <Btn kind="soft" onClick={async () => { await post(`/api/invoices/${id}/finalize`, {}); reload(); }}>{tr("finalizeHeld")}</Btn>
+            <Btn kind="soft" onClick={() => {
+              if (inv.status === "quote") setPayOpen(true);
+              else post(`/api/invoices/${id}/finalize`, {}).then(() => reload()).catch((e) => setMsg(apiMessage(tr, e)));
+            }}>{tr("finalizeHeld")}</Btn>
           ) : null}
           {can("installments.manage") && inv.remaining > 0 && !["held", "quote", "order", "cancelled"].includes(inv.status) ? (
             <Btn kind="soft" onClick={() => { window.location.href = `/installments`; }}>{tr("installments")}</Btn>
@@ -290,6 +295,26 @@ export default function Invoice() {
       <Modal open={retOpen} title={tr("returnCreate")} onClose={() => setRetOpen(false)} wide>
         <ReturnForm inv={inv} onDone={() => { setRetOpen(false); reload(); }} onExchange={() => { window.location.href = "/pos"; }} />
       </Modal>
+      <PaymentModal
+        open={payOpen}
+        title={tr("paymentModal")}
+        due={Number(inv.total) || 0}
+        onClose={() => setPayOpen(false)}
+        onSubmit={async (r) => {
+          try {
+            await post(`/api/invoices/${id}/finalize`, {
+              paid: r.paid,
+              unpaid: r.unpaid,
+              payment_method: r.unpaid ? "credit" : "cash",
+              surplus_mode: r.surplus_mode,
+            });
+            setPayOpen(false);
+            reload();
+          } catch (e) {
+            setMsg(apiMessage(tr, e));
+          }
+        }}
+      />
       {dialog}
     </div>
   );

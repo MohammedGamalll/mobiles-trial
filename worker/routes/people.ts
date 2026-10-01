@@ -1,7 +1,9 @@
 import { Hono } from "hono";
-import { audit, hashPassword, isDupEntry, like, paginate, randomToken, type AppBindings, type AppDb, type AppVars } from "../lib/helpers";
+import { audit, getSettings, hashPassword, isDupEntry, like, paginate, randomToken, round2, todayIso, type AppBindings, type AppDb, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql } from "../lib/filters";
+import { postCollectionJournal, postOpeningPartyJournal } from "../lib/ledger";
+import { applyStandaloneReceipt, customerOpeningSigned, fxCurrency, fxRate, openingCreditAbs, supplierPayableEgp } from "../lib/party-money";
 
 export const peopleRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -88,16 +90,59 @@ peopleRoutes.post("/customers", requirePerm("customers.create"), async (c) => {
   if (!String(b.name ?? "").trim()) return c.json({ error: "missing_name" }, 400);
   const phone = normPhone(b.phone);
   if (await phoneTaken(c.env.DB, phone)) return c.json({ error: "duplicate_phone" }, 400);
+  const name = String(b.name).trim();
+  const kind = b.customer_type === "both" || b.customer_type === "wholesale" || b.customer_type === "retail" ? String(b.customer_type) : "retail";
+  const openingAbs = openingCreditAbs(b.current_balance ?? b.opening_balance);
+  const signed = customerOpeningSigned(openingAbs);
+  const accountKind = openingAbs > 0 ? "credit" : b.account_kind === "credit" ? "credit" : "debit";
+  const user = c.get("user");
   try {
-    const r = await c.env.DB
-      .prepare(
-      `INSERT INTO customers (name, phone, whatsapp, address, area, notes, customer_type, payment_terms, credit_limit, current_balance, email, national_id, company, tax_id, city, price_list_id, account_kind, discount_pct, sell_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(String(b.name).trim(), phone, b.whatsapp || phone, b.address || null, b.area || null, b.notes || null, b.customer_type || "retail", b.payment_terms || "cash", Number(b.credit_limit || 0), Number(b.current_balance || 0), b.email || null, b.national_id || null, b.company || null, b.tax_id || null, b.city || null, b.price_list_id || null, b.account_kind === "credit" ? "credit" : "debit", Number(b.discount_pct || 0), Number(b.sell_price || 0))
-      .run();
-    await audit(c.env.DB, c.get("user"), "create_customer", "customer", r.meta.last_row_id, String(b.name));
-    return c.json({ id: r.meta.last_row_id }, 201);
+    let customerId = 0;
+    let supplierId: number | null = null;
+    await c.env.DB.transaction(async (tx) => {
+      const r = await tx
+        .prepare(
+          `INSERT INTO customers (name, phone, whatsapp, address, area, notes, customer_type, payment_terms, credit_limit, current_balance, email, national_id, company, tax_id, city, price_list_id, account_kind, discount_pct, sell_price, lat, lng)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          name,
+          phone,
+          b.whatsapp || phone,
+          b.address || null,
+          b.area || null,
+          b.notes || null,
+          kind,
+          b.payment_terms || "cash",
+          Number(b.credit_limit || 0),
+          signed,
+          b.email || null,
+          b.national_id || null,
+          b.company || null,
+          b.tax_id || null,
+          b.city || null,
+          b.price_list_id || null,
+          accountKind,
+          Number(b.discount_pct || 0),
+          Number(b.sell_price || 0),
+          b.lat != null && b.lat !== "" ? Number(b.lat) : null,
+          b.lng != null && b.lng !== "" ? Number(b.lng) : null,
+        )
+        .run();
+      customerId = r.meta.last_row_id;
+      await postOpeningPartyJournal(tx, { kind: "customer", partyId: customerId, amount: openingAbs, name, userId: user.id });
+      if (kind === "both") {
+        const s = await tx
+          .prepare("INSERT INTO suppliers (name, phone, address, notes, email, tax_id, city, contact_name, balance, currency, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(name, phone, b.address || null, b.notes || null, b.email || null, b.tax_id || null, b.city || null, name, openingAbs, "EGP", customerId)
+          .run();
+        supplierId = s.meta.last_row_id;
+        await tx.prepare("UPDATE customers SET supplier_id = ? WHERE id = ?").bind(supplierId, customerId).run();
+        await postOpeningPartyJournal(tx, { kind: "supplier", partyId: supplierId, amount: openingAbs, name, userId: user.id });
+      }
+    });
+    await audit(c.env.DB, user, "create_customer", "customer", customerId, name);
+    return c.json({ id: customerId, current_balance: signed, supplier_id: supplierId, account_kind: accountKind }, 201);
   } catch (err) {
     if (isDupEntry(err)) return c.json({ error: "duplicate_phone" }, 400);
     throw err;
@@ -117,9 +162,31 @@ peopleRoutes.put("/customers/:id", requirePerm("customers.edit"), async (c) => {
   try {
     await c.env.DB
       .prepare(
-        `UPDATE customers SET name=?, phone=?, whatsapp=?, address=?, area=?, notes=?, customer_type=?, payment_terms=?, credit_limit=?, email=?, national_id=?, company=?, tax_id=?, city=?, price_list_id=?, account_kind=?, discount_pct=?, sell_price=?, updated_at=datetime('now') WHERE id=?`,
+        `UPDATE customers SET name=?, phone=?, whatsapp=?, address=?, area=?, notes=?, customer_type=?, payment_terms=?, credit_limit=?, email=?, national_id=?, company=?, tax_id=?, city=?, price_list_id=?, account_kind=?, discount_pct=?, sell_price=?, lat=?, lng=?, updated_at=datetime('now') WHERE id=?`,
       )
-      .bind(String(b.name).trim(), phone, b.whatsapp || null, b.address || null, b.area || null, b.notes || null, b.customer_type || "retail", b.payment_terms || "cash", credit, b.email || null, b.national_id || null, b.company || null, b.tax_id || null, b.city || null, b.price_list_id || null, b.account_kind === "credit" ? "credit" : "debit", Number(b.discount_pct || 0), Number(b.sell_price || 0), id)
+      .bind(
+        String(b.name).trim(),
+        phone,
+        b.whatsapp || null,
+        b.address || null,
+        b.area || null,
+        b.notes || null,
+        b.customer_type || "retail",
+        b.payment_terms || "cash",
+        credit,
+        b.email || null,
+        b.national_id || null,
+        b.company || null,
+        b.tax_id || null,
+        b.city || null,
+        b.price_list_id || null,
+        b.account_kind === "credit" ? "credit" : "debit",
+        Number(b.discount_pct || 0),
+        Number(b.sell_price || 0),
+        b.lat != null && b.lat !== "" ? Number(b.lat) : null,
+        b.lng != null && b.lng !== "" ? Number(b.lng) : null,
+        id,
+      )
       .run();
   } catch (err) {
     if (isDupEntry(err)) return c.json({ error: "duplicate_phone" }, 400);
@@ -132,11 +199,126 @@ peopleRoutes.put("/customers/:id", requirePerm("customers.edit"), async (c) => {
   return c.json({ ok: true });
 });
 
+peopleRoutes.post("/customers/:id/payments", requirePerm("payments.create", "vouchers.create"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string; cash_account_id?: number }>();
+  const cust = await c.env.DB.prepare("SELECT id, name, current_balance FROM customers WHERE id = ? AND deleted_at IS NULL").bind(id).first<{
+    id: number;
+    name: string;
+    current_balance: number;
+  }>();
+  if (!cust) return c.json({ error: "not_found" }, 404);
+  const requested = round2(Number(b.amount || 0));
+  if (requested <= 0) return c.json({ error: "invalid_amount" }, 400);
+  const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
+  const unpaid = await c.env.DB
+    .prepare(
+      `SELECT id, remaining FROM sales_invoices WHERE customer_id = ? AND deleted_at IS NULL AND remaining > 0
+       AND status NOT IN ('cancelled','draft','held','quote','order') ORDER BY date, id`,
+    )
+    .bind(id)
+    .all<{ id: number; remaining: number }>();
+  const plan = applyStandaloneReceipt({
+    requested,
+    arBalance: Number(cust.current_balance || 0),
+    invoiceRemainings: unpaid.results || [],
+    surplusMode,
+  });
+  if (plan.take <= 0) return c.json({ error: "invalid_amount" }, 400);
+  const user = c.get("user");
+  let paymentId = 0;
+  await c.env.DB.transaction(async (tx) => {
+    const payIns = await tx
+      .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(null, id, b.method || "cash", plan.take, todayIso(), b.notes || "دفعة حساب", user.id)
+      .run();
+    paymentId = payIns.meta.last_row_id;
+    for (const line of plan.applied) {
+      await tx.prepare("UPDATE sales_invoices SET paid = paid + ?, remaining = remaining - ? WHERE id = ?").bind(line.amount, line.amount, line.id).run();
+      await tx
+        .prepare("UPDATE sales_invoices SET status = CASE WHEN remaining <= 0.001 THEN 'completed' ELSE 'partial' END WHERE id = ? AND type = 'normal' AND status NOT IN ('cancelled','fully_returned')")
+        .bind(line.id)
+        .run();
+    }
+    await tx.prepare("UPDATE customers SET current_balance = ?, updated_at = datetime('now') WHERE id = ?").bind(plan.nextBalance, id).run();
+    await postCollectionJournal(tx, {
+      paymentId,
+      invoiceNumber: cust.name,
+      amount: plan.take,
+      method: b.method || "cash",
+      date: todayIso(),
+      cashAccountId: b.cash_account_id || null,
+      userId: user.id,
+    });
+  });
+  const row = await c.env.DB.prepare("SELECT current_balance FROM customers WHERE id = ?").bind(id).first<{ current_balance: number }>();
+  await audit(c.env.DB, user, "customer_payment", "customer", id, `${plan.take}`);
+  return c.json({ id: paymentId, current_balance: row?.current_balance ?? plan.nextBalance, applied: plan.applied, surplus: plan.surplus, take: plan.take }, 201);
+});
+
 peopleRoutes.delete("/customers/:id", requirePerm("customers.edit"), async (c) => {
   const id = Number(c.req.param("id"));
   await c.env.DB.prepare("UPDATE customers SET deleted_at = datetime('now'), active = 0 WHERE id = ?").bind(id).run();
   await audit(c.env.DB, c.get("user"), "delete_customer", "customer", id, "Soft delete customer");
   return c.json({ ok: true });
+});
+
+peopleRoutes.post("/customers/:id/payments", requirePerm("payments.create", "vouchers.create"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string }>();
+  const cust = await c.env.DB.prepare("SELECT id, name, current_balance FROM customers WHERE id = ? AND deleted_at IS NULL").bind(id).first<{
+    id: number;
+    name: string;
+    current_balance: number;
+  }>();
+  if (!cust) return c.json({ error: "not_found" }, 404);
+  const requested = round2(Number(b.amount || 0));
+  if (requested <= 0) return c.json({ error: "invalid_amount" }, 400);
+  const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
+  const dues = await c.env.DB
+    .prepare(
+      `SELECT id, remaining, paid FROM sales_invoices
+       WHERE customer_id = ? AND deleted_at IS NULL AND remaining > 0
+         AND status NOT IN ('cancelled','draft','held','quote','order')
+       ORDER BY date, id`,
+    )
+    .bind(id)
+    .all<{ id: number; remaining: number; paid: number }>();
+  const plan = applyStandaloneReceipt({
+    requested,
+    arBalance: Number(cust.current_balance || 0),
+    invoiceRemainings: (dues.results || []).map((r) => ({ id: r.id, remaining: Number(r.remaining || 0) })),
+    surplusMode,
+  });
+  if (plan.take <= 0) return c.json({ error: "invalid_amount" }, 400);
+  const user = c.get("user");
+  let paymentId = 0;
+  await c.env.DB.transaction(async (tx) => {
+    const payIns = await tx
+      .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(null, id, b.method || "cash", plan.take, todayIso(), b.notes || "account receipt", user.id)
+      .run();
+    paymentId = payIns.meta.last_row_id;
+    for (const line of plan.applied) {
+      const inv = (dues.results || []).find((r) => r.id === line.id);
+      if (!inv) continue;
+      const paid = round2(Number(inv.paid || 0) + line.amount);
+      const remaining = round2(Math.max(0, Number(inv.remaining || 0) - line.amount));
+      await tx.prepare("UPDATE sales_invoices SET paid = ?, remaining = ?, status = CASE WHEN ? <= 0 THEN 'completed' ELSE status END WHERE id = ?").bind(paid, remaining, remaining, line.id).run();
+    }
+    await tx.prepare("UPDATE customers SET current_balance = ?, updated_at = datetime('now') WHERE id = ?").bind(plan.nextBalance, id).run();
+    await postCollectionJournal(tx, {
+      paymentId,
+      invoiceNumber: cust.name,
+      amount: plan.take,
+      method: b.method || "cash",
+      date: todayIso(),
+      userId: user.id,
+    });
+  });
+  await audit(c.env.DB, user, "customer_receipt", "customer", id, `${plan.take}`);
+  const row = await c.env.DB.prepare("SELECT current_balance FROM customers WHERE id = ?").bind(id).first<{ current_balance: number }>();
+  return c.json({ payment_id: paymentId, current_balance: row?.current_balance ?? plan.nextBalance, applied: plan.applied, surplus: plan.surplus, take: plan.take }, 201);
 });
 
 peopleRoutes.get("/suppliers", requirePerm("suppliers.view", "purchases.view"), async (c) => {
@@ -188,21 +370,52 @@ peopleRoutes.get("/suppliers/:id", requirePerm("suppliers.view", "purchases.view
 
 peopleRoutes.post("/suppliers", requirePerm("suppliers.manage"), async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
-  const r = await c.env.DB
-    .prepare("INSERT INTO suppliers (name, phone, address, notes, email, tax_id, city, contact_name, phone2, payment_terms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(b.name, b.phone || null, b.address || null, b.notes || null, b.email || null, b.tax_id || null, b.city || null, b.contact_name || null, b.phone2 || null, b.payment_terms || null)
-    .run();
-  return c.json({ id: r.meta.last_row_id }, 201);
+  if (!String(b.name ?? "").trim()) return c.json({ error: "missing_name" }, 400);
+  const settings = await getSettings(c.env.DB);
+  const currency = fxCurrency(b.currency);
+  const rate = fxRate(b.fx_rate ?? settings.usd_egp_rate);
+  const opening = supplierPayableEgp(Number(b.opening_balance ?? b.balance ?? 0), currency, rate);
+  const user = c.get("user");
+  let supplierId = 0;
+  await c.env.DB.transaction(async (tx) => {
+    const r = await tx
+      .prepare("INSERT INTO suppliers (name, phone, address, notes, email, tax_id, city, contact_name, phone2, payment_terms, balance, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(b.name, b.phone || null, b.address || null, b.notes || null, b.email || null, b.tax_id || null, b.city || null, b.contact_name || null, b.phone2 || null, b.payment_terms || null, opening, currency)
+      .run();
+    supplierId = r.meta.last_row_id;
+    await postOpeningPartyJournal(tx, { kind: "supplier", partyId: supplierId, amount: opening, name: String(b.name), userId: user.id });
+  });
+  return c.json({ id: supplierId, balance: opening, currency }, 201);
 });
 
 peopleRoutes.put("/suppliers/:id", requirePerm("suppliers.manage"), async (c) => {
   const id = Number(c.req.param("id"));
+  const prev = await c.env.DB.prepare("SELECT * FROM suppliers WHERE id = ?").bind(id).first<{ currency?: string; balance?: number }>();
+  if (!prev) return c.json({ error: "not_found" }, 404);
   const b = await c.req.json<Record<string, unknown>>();
+  const settings = await getSettings(c.env.DB);
+  const currency = fxCurrency(b.currency ?? prev.currency);
+  const rate = fxRate(b.fx_rate ?? settings.usd_egp_rate);
+  const stored = round2(Math.abs(Number(prev.balance || 0)));
   await c.env.DB
-    .prepare("UPDATE suppliers SET name=?, phone=?, address=?, notes=?, email=?, tax_id=?, city=?, contact_name=?, phone2=?, payment_terms=? WHERE id=?")
-    .bind(b.name, b.phone || null, b.address || null, b.notes || null, b.email || null, b.tax_id || null, b.city || null, b.contact_name || null, b.phone2 || null, b.payment_terms || null, id)
+    .prepare("UPDATE suppliers SET name=?, phone=?, address=?, notes=?, email=?, tax_id=?, city=?, contact_name=?, phone2=?, payment_terms=?, currency=?, balance=? WHERE id=?")
+    .bind(
+      b.name,
+      b.phone || null,
+      b.address || null,
+      b.notes || null,
+      b.email || null,
+      b.tax_id || null,
+      b.city || null,
+      b.contact_name || null,
+      b.phone2 || null,
+      b.payment_terms || null,
+      currency,
+      stored,
+      id,
+    )
     .run();
-  return c.json({ ok: true });
+  return c.json({ ok: true, balance: stored, currency, display: currency === "USD" ? round2(stored / rate) : stored, fx_rate: rate });
 });
 
 peopleRoutes.delete("/suppliers/:id", requirePerm("suppliers.manage"), async (c) => {

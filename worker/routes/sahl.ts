@@ -258,7 +258,7 @@ sahlRoutes.post("/installments", requirePerm("installments.manage"), async (c) =
       c.env.DB.prepare("UPDATE sales_invoices SET paid = ?, remaining = ?, payment_method='installment' WHERE id = ?").bind(round2(inv.paid + down), rest, inv.id),
     ]);
     if (inv.customer_id) {
-      await c.env.DB.prepare("UPDATE customers SET current_balance = MAX(current_balance - ?, 0) WHERE id = ?").bind(down, inv.customer_id).run();
+      await c.env.DB.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(down, inv.customer_id).run();
     }
   } else {
     await c.env.DB.prepare("UPDATE sales_invoices SET payment_method='installment' WHERE id = ?").bind(inv.id).run();
@@ -308,7 +308,7 @@ sahlRoutes.post("/installments/dues/:id/pay", requirePerm("installments.manage",
     c.env.DB.prepare("UPDATE sales_invoices SET paid = ?, remaining = ? WHERE id = ?").bind(round2(inv.paid + payAmt), round2(Math.max(0, inv.remaining - payAmt)), due.invoice_id),
   ]);
   if (inv.customer_id) {
-    await c.env.DB.prepare("UPDATE customers SET current_balance = MAX(current_balance - ?, 0) WHERE id = ?").bind(payAmt, inv.customer_id).run();
+    await c.env.DB.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(payAmt, inv.customer_id).run();
   }
   const payRow = await c.env.DB.prepare("SELECT id FROM payments WHERE invoice_id = ? ORDER BY id DESC LIMIT 1").bind(due.invoice_id).first<{ id: number }>();
   const paidAmount = round2(due.paid_amount + payAmt);

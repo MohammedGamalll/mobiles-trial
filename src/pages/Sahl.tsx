@@ -199,8 +199,11 @@ export function InstallmentsPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<any>(null);
+  const [payDue, setPayDue] = useState<any>(null);
+  const [payAmt, setPayAmt] = useState("");
   const [form, setForm] = useState({ invoice_id: "", down_payment: 0, count: 3, start_date: new Date().toISOString().slice(0, 10), interval_days: 30 });
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/installments?${f.qs}`)).data || []);
   }
@@ -239,7 +242,7 @@ export function InstallmentsPage() {
                   <td>{d.due_date}</td>
                   <td>{money(d.amount, lang)}</td>
                   <td><span className={statusClass(d.status)}>{statusLabel(d.status, lang)}</span> {money(d.paid_amount, lang)}</td>
-                  <td>{d.status !== "paid" && can("installments.manage") ? <Btn kind="soft" onClick={async () => { await post(`/api/installments/dues/${d.id}/pay`, {}); openPlan(detail.id); load(); }}>{tr("collect")}</Btn> : null}</td>
+                  <td>{d.status !== "paid" && can("installments.manage") ? <Btn kind="soft" onClick={() => { setPayDue(d); setPayAmt(String(Math.max(0, Number(d.amount || 0) - Number(d.paid_amount || 0)))); }}>{tr("recordInstallment")}</Btn> : null}</td>
                 </tr>
               ))}
             </tbody>
@@ -252,9 +255,28 @@ export function InstallmentsPage() {
         <Field label={tr("qty")}><input className={inputCls} type="number" value={form.count} onChange={(e) => setForm({ ...form, count: Number(e.target.value) })} /></Field>
         <Field label={tr("fromDate")}><input className={inputCls} type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} /></Field>
         <Field label={tr("days")}><input className={inputCls} type="number" value={form.interval_days} onChange={(e) => setForm({ ...form, interval_days: Number(e.target.value) })} /></Field>
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          await post("/api/installments", { invoice_id: Number(form.invoice_id), down_payment: form.down_payment, count: form.count, start_date: form.start_date, interval_days: form.interval_days });
-          setOpen(false); load();
+          try {
+            await post("/api/installments", { invoice_id: Number(form.invoice_id), down_payment: form.down_payment, count: form.count, start_date: form.start_date, interval_days: form.interval_days });
+            setOpen(false); act.clear(); load();
+          } catch (e) { act.fail(e); }
+        }}>{tr("save")}</Btn>
+      </Modal>
+      <Modal open={!!payDue} title={tr("recordInstallment")} onClose={() => setPayDue(null)}>
+        <Field label={tr("amount")}>
+          <input className={inputCls} type="text" inputMode="decimal" value={payAmt} onChange={(e) => setPayAmt(e.target.value)} />
+        </Field>
+        <ErrorNote message={act.message} />
+        <Btn className="mt-3" onClick={async () => {
+          if (!payDue || !detail) return;
+          try {
+            await post(`/api/installments/dues/${payDue.id}/pay`, { amount: Number(payAmt || 0) });
+            setPayDue(null);
+            act.clear();
+            await openPlan(detail.id);
+            load();
+          } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}

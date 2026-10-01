@@ -12,6 +12,55 @@ import { Barcode } from "../components/Barcode";
 import { useConfirm } from "../components/Confirm";
 import { playSound } from "../lib/sounds";
 
+function parseScale(raw: unknown) {
+  if (!raw) return { length: "", width: "", height: "", weight: "" };
+  if (typeof raw === "object") {
+    const o = raw as any;
+    return { length: String(o.length ?? ""), width: String(o.width ?? ""), height: String(o.height ?? ""), weight: String(o.weight ?? "") };
+  }
+  try {
+    const o = JSON.parse(String(raw));
+    return { length: String(o.length ?? ""), width: String(o.width ?? ""), height: String(o.height ?? ""), weight: String(o.weight ?? "") };
+  } catch {
+    return { length: "", width: "", height: "", weight: "" };
+  }
+}
+
+function ShippingFields({
+  value,
+  onChange,
+  tr,
+}: {
+  value: { length: string; width: string; height: string; weight: string };
+  onChange: (v: { length: string; width: string; height: string; weight: string }) => void;
+  tr: (k: any) => string;
+}) {
+  const keys = [
+    ["length", "dimLength"],
+    ["width", "dimWidth"],
+    ["height", "dimHeight"],
+    ["weight", "dimWeight"],
+  ] as const;
+  return (
+    <div className="md:col-span-2">
+      <div className="mb-2 font-bold">{tr("shippingLoading")}</div>
+      <div className="grid gap-2 md:grid-cols-4">
+        {keys.map(([k, label]) => (
+          <Field key={k} label={tr(label)}>
+            <input
+              className={inputCls}
+              type="text"
+              inputMode="decimal"
+              value={value[k]}
+              onChange={(e) => onChange({ ...value, [k]: e.target.value })}
+            />
+          </Field>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Products() {
   const { tr, lang, lookups, can, refreshLookups } = useApp();
   const [sp] = useSearchParams();
@@ -70,6 +119,7 @@ export default function Products() {
       expiry_days: "",
       opening_qty: 0,
       image_url: "",
+      ship: { length: "", width: "", height: "", weight: "" },
       units: [{ name: "قطعة", factor: 1, barcode: "", selling_price: 0, is_base: 1 }],
     };
   }
@@ -189,6 +239,7 @@ export default function Products() {
                         parent_id: p.parent_id || "",
                         model_ids: (p.models || []).map((m: any) => m.id),
                         units: p.units?.length ? p.units : empty().units,
+                        ship: parseScale(p.scale),
                         opening_qty: 0,
                       });
                       act.clear();
@@ -253,12 +304,13 @@ export default function Products() {
                             supplier_id: p.supplier_id || "",
                             parent_id: p.parent_id || "",
                             model_ids: (p.models || []).map((m: any) => m.id),
-                            units: p.units?.length ? p.units : empty().units,
-                            opening_qty: 0,
-                          });
-                          act.clear();
-                          setOpen(true);
-                        }}>{tr("edit")}</button>
+                        units: p.units?.length ? p.units : empty().units,
+                        ship: parseScale(p.scale),
+                        opening_qty: 0,
+                      });
+                      act.clear();
+                      setOpen(true);
+                    }}>{tr("edit")}</button>
                       ) : null}
                       {can("products.delete") ? (
                         <button className="text-sm font-bold text-rose-600" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); load(); })}>{tr("delete")}</button>
@@ -422,6 +474,7 @@ export default function Products() {
           <Field label={tr("specs")}>
             <textarea className={inputCls} value={form.specs} onChange={(e) => setForm({ ...form, specs: e.target.value })} />
           </Field>
+          <ShippingFields value={form.ship || parseScale("")} onChange={(ship) => setForm({ ...form, ship })} tr={tr} />
           <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={!!form.no_qty} onChange={(e) => setForm({ ...form, no_qty: e.target.checked ? 1 : 0 })} />{tr("noQty")}</label>
           <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={!!form.quick_list} onChange={(e) => setForm({ ...form, quick_list: e.target.checked ? 1 : 0 })} />{tr("quickList")}</label>
           <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={!!form.non_stock} onChange={(e) => setForm({ ...form, non_stock: e.target.checked ? 1 : 0 })} />{tr("nonStock")}</label>
@@ -445,7 +498,7 @@ export default function Products() {
             return;
           }
           try {
-            const payload = { ...form, parent_id: form.parent_id || null };
+            const payload = { ...form, parent_id: form.parent_id || null, scale: JSON.stringify(form.ship || {}) };
             if (form.id) await put(`/api/products/${form.id}`, payload);
             else await post("/api/products", payload);
             playSound("done");

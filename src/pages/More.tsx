@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
-import { money, num, statusClass, statusLabel } from "../lib/format";
+import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
+import { PaymentModal } from "../components/PaymentModal";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { authHeaders } from "../lib/session";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { matchScanned, playSound } from "../lib/sounds";
+import { MapPin } from "lucide-react";
 
 export function SalesList() {
   const { tr, lang, can } = useApp();
@@ -260,7 +262,8 @@ export function PurchasesPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<any>({ supplier_id: "", items: [{ product_id: "", quantity: 1, unit_cost: 0 }] });
+  const [form, setForm] = useState<any>({ supplier_id: "", items: [] as any[] });
+  const [draft, setDraft] = useState({ product_id: "" as any, quantity: "1", unit_cost: "", costDirty: false });
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
@@ -269,8 +272,26 @@ export function PurchasesPage() {
     setTotals(r.totals || {});
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  function resetDraft() {
+    setDraft({ product_id: "", quantity: "1", unit_cost: "", costDirty: false });
+  }
+  function addDraftLine() {
+    if (!draft.product_id) {
+      act.fail(undefined, "errNoItems");
+      return;
+    }
+    const qty = Number(draft.quantity || 0);
+    if (qty <= 0) {
+      act.fail(undefined, "errInvalidQty");
+      return;
+    }
+    const unit_cost = Number(draft.unit_cost === "" ? 0 : draft.unit_cost);
+    setForm({ ...form, items: [...form.items, { product_id: draft.product_id, quantity: qty, unit_cost }] });
+    resetDraft();
+    act.clear();
+  }
   return (
-    <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} /><Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("newPurchase")}</Btn></>}>
+    <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} /><Btn onClick={() => { act.clear(); setForm({ supplier_id: "", items: [] }); resetDraft(); setOpen(true); }}>{tr("newPurchase")}</Btn></>}>
       <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
         <Stat label={tr("purchases")} value={String(totals.count || rows.length)} />
@@ -311,18 +332,34 @@ export function PurchasesPage() {
             {lookups?.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
-        {form.items.map((it: any, i: number) => (
-          <div key={i} className="mt-2 grid grid-cols-3 gap-2">
-            <select className={inputCls} value={it.product_id} onChange={(e) => { const items = [...form.items]; items[i].product_id = Number(e.target.value); setForm({ ...form, items }); }}>
-              <option value="">product</option>
-              {/* filled via lookup products search - keep simple sku list from lookups not available; user types id via products from inventory later */}
-            </select>
-            <ProductPick value={it.product_id} onChange={(id, cost) => { const items = [...form.items]; items[i].product_id = id; if (cost) items[i].unit_cost = cost; setForm({ ...form, items }); }} />
-            <input className={inputCls} type="number" placeholder="qty" value={it.quantity} onChange={(e) => { const items = [...form.items]; items[i].quantity = Number(e.target.value); setForm({ ...form, items }); }} />
-            <input className={inputCls} type="number" placeholder="cost" value={it.unit_cost} onChange={(e) => { const items = [...form.items]; items[i].unit_cost = Number(e.target.value); setForm({ ...form, items }); }} />
+        {form.items.length ? (
+          <div className="table-wrap mt-3">
+            <table>
+              <thead><tr><th>{tr("items")}</th><th>{tr("qty")}</th><th>{tr("price")}</th></tr></thead>
+              <tbody>
+                {form.items.map((it: any, i: number) => (
+                  <tr key={`${it.product_id}-${i}`}>
+                    <td>{it.product_id}</td>
+                    <td>{it.quantity}</td>
+                    <td>{it.unit_cost}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))}
-        <button className="mt-2 text-sm font-bold text-cyan-700" onClick={() => setForm({ ...form, items: [...form.items, { product_id: "", quantity: 1, unit_cost: 0 }] })}>+ {tr("add")}</button>
+        ) : null}
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <ProductPick value={draft.product_id} onChange={(id, cost) => {
+            setDraft((d) => ({
+              ...d,
+              product_id: id,
+              unit_cost: d.costDirty ? d.unit_cost : (cost != null ? String(cost) : d.unit_cost),
+            }));
+          }} />
+          <input className={inputCls} type="text" inputMode="decimal" placeholder="qty" value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />
+          <input className={inputCls} type="text" inputMode="decimal" placeholder="cost" value={draft.unit_cost} onChange={(e) => setDraft({ ...draft, unit_cost: e.target.value, costDirty: true })} />
+        </div>
+        <button className="mt-2 text-sm font-bold text-cyan-700" onClick={addDraftLine}>+ {tr("add")}</button>
         <ErrorNote message={act.message} />
         <Btn className="mt-4" onClick={async () => {
           if (!form.supplier_id) {
@@ -452,16 +489,17 @@ export function PurchaseDetail() {
 }
 
 export function CustomersPage() {
-  const { tr, lang, can, lookups } = useApp();
+  const { tr, lang, can, lookups, settings } = useApp();
   const f = useListQuery("customers");
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ id: 0, name: "", phone: "", address: "", area: "", email: "", company: "", city: "", tax_id: "", national_id: "", customer_type: "retail", payment_terms: "cash", credit_limit: 0, current_balance: 0, price_list_id: "" as any, account_kind: "debit", discount_pct: 0, sell_price: 0 });
+  const emptyCust = () => ({ id: 0, name: "", phone: "", address: "", area: "", email: "", company: "", city: "", tax_id: "", national_id: "", customer_type: "retail", payment_terms: "cash", credit_limit: 0, current_balance: 0, price_list_id: "" as any, account_kind: "credit", discount_pct: 0, sell_price: 0, lat: "" as any, lng: "" as any });
+  const [form, setForm] = useState(emptyCust());
   const [payOpen, setPayOpen] = useState<any>(null);
-  const [payAmt, setPayAmt] = useState(0);
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
+  const shop = { lat: Number(settings.workplace_lat || 30.0566), lng: Number(settings.workplace_lng || 31.33) };
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/customers?${f.qs}`);
     setRows(r.data);
@@ -469,7 +507,7 @@ export function CustomersPage() {
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm({ id: 0, name: "", phone: "", address: "", area: "", email: "", company: "", city: "", tax_id: "", national_id: "", customer_type: "retail", payment_terms: "cash", credit_limit: 0, current_balance: 0, price_list_id: "", account_kind: "debit", discount_pct: 0, sell_price: 0 }); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
+    <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm(emptyCust()); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 md:grid-cols-2">
         <Stat label={tr("customers")} value={String(totals.count || rows.length)} />
@@ -496,10 +534,10 @@ export function CustomersPage() {
           <span>{c.phone} {c.whatsapp ? <a className="text-emerald-700" href={`https://wa.me/${String(c.whatsapp).replace(/\D/g,"").replace(/^0/,"20")}`} target="_blank" rel="noreferrer">[{tr("whatsapp")}]</a> : null}</span>,
           c.city,
           c.area,
-          money(c.current_balance, lang),
+          customerBalanceLabel(c.current_balance, lang),
           c.account_kind === "credit" ? tr("creditAccount") : tr("debitAccount"),
           <span className="flex flex-wrap items-center gap-2">
-            <button className="text-sm font-bold text-cyan-700" onClick={() => { setPayOpen(c); setPayAmt(Math.max(0, Number(c.current_balance) || 0)); }}>{tr("makeReceipt")}</button>
+            <button className="text-sm font-bold text-cyan-700" onClick={() => setPayOpen(c)}>{tr("makeReceipt")}</button>
             <ActionBtns
               canEdit={can("customers.edit")}
               canDelete={can("customers.edit")}
@@ -512,7 +550,19 @@ export function CustomersPage() {
       )}
       <Modal open={open} title={form.id ? tr("edit") : tr("addCustomer")} onClose={() => setOpen(false)}>
         {["name","phone","email","company","national_id","tax_id","city","address","area"].map((k) => <Field key={k} label={k === "email" ? tr("email") : k === "company" ? tr("company") : k === "national_id" ? tr("nationalId") : k === "tax_id" ? tr("taxId") : k === "city" ? tr("city") : k}><input className={inputCls} value={(form as any)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
-        <Field label={tr("openingBalance")}><input className={inputCls} type="number" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: Number(e.target.value) })} /></Field>
+        <Field label={tr("customerType")}>
+          <select className={inputCls} value={form.customer_type} onChange={(e) => setForm({ ...form, customer_type: e.target.value })}>
+            <option value="retail">{tr("retail")}</option>
+            <option value="wholesale">{tr("wholesale")}</option>
+            <option value="both">{tr("hybridParty")}</option>
+          </select>
+        </Field>
+        {form.id ? null : (
+          <Field label={tr("openingBalance")}>
+            <input className={inputCls} type="text" inputMode="decimal" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value as any })} />
+            <p className="mt-1 text-xs text-slate-500">{tr("openingCreditHint")}</p>
+          </Field>
+        )}
         <Field label={tr("accountKind")}>
           <select className={inputCls} value={form.account_kind} onChange={(e) => setForm({ ...form, account_kind: e.target.value })}>
             <option value="debit">{tr("debitAccount")}</option>
@@ -527,28 +577,45 @@ export function CustomersPage() {
         </Field>
         <Field label={tr("discountPct")}><input className={inputCls} type="number" value={form.discount_pct} onChange={(e) => setForm({ ...form, discount_pct: Number(e.target.value) })} /></Field>
         <Field label={tr("specialPrice")}><input className={inputCls} type="number" value={form.sell_price} onChange={(e) => setForm({ ...form, sell_price: Number(e.target.value) })} /></Field>
+        <p className="mt-2 flex items-center gap-2 text-xs font-bold text-slate-500"><MapPin size={16} /> {tr("pickCustomerPin")}</p>
+        <div className="mt-2 no-print">
+          <OsmMap
+            center={{ lat: Number(form.lat || shop.lat), lng: Number(form.lng || shop.lng) }}
+            shop={shop}
+            height={220}
+            onPick={(lat, lng) => setForm({ ...form, lat, lng })}
+            markers={form.lat && form.lng ? [{ id: "pick", lat: Number(form.lat), lng: Number(form.lng), label: "📍" }] : []}
+          />
+        </div>
         <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
           if (!form.name.trim()) { act.fail(undefined, "errNameRequired"); return; }
           try {
-            const payload = { ...form, price_list_id: form.price_list_id || null };
+            const payload = { ...form, price_list_id: form.price_list_id || null, current_balance: Number(form.current_balance || 0), lat: form.lat || null, lng: form.lng || null };
             if (form.id) await put(`/api/customers/${form.id}`, payload);
             else await post("/api/customers", payload);
             setOpen(false); act.clear(); load();
           } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
-      <Modal open={!!payOpen} title={tr("makeReceipt")} onClose={() => setPayOpen(null)}>
-        <Field label={tr("amount")}>
-          <input className={inputCls} type="number" value={payAmt} onChange={(e) => setPayAmt(Number(e.target.value))} />
-        </Field>
-        <Btn className="mt-3" onClick={async () => {
+      <PaymentModal
+        open={!!payOpen}
+        title={tr("makeReceipt")}
+        due={Math.max(0, Number(payOpen?.current_balance) || 0)}
+        debt={Number(payOpen?.current_balance) || 0}
+        onClose={() => setPayOpen(null)}
+        onSubmit={async (r) => {
           if (!payOpen) return;
-          await post("/api/ledger/vouchers", { type: "receipt", party_type: "customer", party_id: payOpen.id, party_name: payOpen.name, amount: payAmt });
-          setPayOpen(null);
-          load();
-        }}>{tr("save")}</Btn>
-      </Modal>
+          try {
+            await post(`/api/customers/${payOpen.id}/payments`, { amount: r.paid, surplus_mode: r.surplus_mode });
+            setPayOpen(null);
+            act.clear();
+            load();
+          } catch (e) {
+            act.fail(e);
+          }
+        }}
+      />
       {dialog}
     </Page>
   );
@@ -559,7 +626,10 @@ export function CustomerDetail() {
   const { tr, lang } = useApp();
   const [d, setD] = useState<any>(null);
   const [tab, setTab] = useState<"overview" | "invoices" | "payments" | "returns" | "statement" | "items" | "overdue">("overview");
-  useEffect(() => { get<{ data: any }>(`/api/customers/${id}`).then((r) => setD(r.data)); }, [id]);
+  async function reload() {
+    setD((await get<{ data: any }>(`/api/customers/${id}`)).data);
+  }
+  useEffect(() => { reload().catch(() => {}); }, [id]);
   if (!d) return <div>{tr("loading")}</div>;
   const wa = d.whatsapp || d.phone;
   const tabs = [
@@ -582,7 +652,7 @@ export function CustomerDetail() {
         <Stat label={tr("name")} value={d.name || "-"} />
         <Stat label={tr("code")} value={String(d.code || d.id)} />
         <Stat label={tr("phone")} value={d.phone || "-"} />
-        <Stat label={tr("balance")} value={money(d.current_balance, lang)} accent="rose" />
+        <Stat label={tr("balance")} value={customerBalanceLabel(d.current_balance, lang)} accent={Number(d.current_balance) > 0 ? "rose" : "emerald"} />
         <Stat label={tr("representative")} value={d.agent_name || d.sales_agent_name || "-"} />
       </div>
       <div className="mb-3 flex flex-wrap gap-2 page-tabs">
@@ -618,16 +688,19 @@ export function CustomerDetail() {
 }
 
 export function SuppliersPage() {
-  const { tr, can } = useApp();
+  const { tr, lang, can, settings } = useApp();
   const f = useListQuery("suppliers");
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ id: 0, name: "", phone: "", email: "", city: "", contact_name: "", tax_id: "", address: "", notes: "" });
+  const emptySup = () => ({ id: 0, name: "", phone: "", email: "", city: "", contact_name: "", tax_id: "", address: "", notes: "", currency: "EGP", opening_balance: "", fx_rate: settings.usd_egp_rate || "50", balance: 0 });
+  const [form, setForm] = useState(emptySup());
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
+  const rate = Number(form.fx_rate || settings.usd_egp_rate || 50);
   async function load() { setRows((await get<{ data: any[] }>(`/api/suppliers?${f.qs}`)).data); }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   return (
-    <Page title={tr("suppliers")} action={<Btn onClick={() => { setForm({ id: 0, name: "", phone: "", email: "", city: "", contact_name: "", tax_id: "", address: "", notes: "" }); setOpen(true); }}>{tr("add")}</Btn>}>
+    <Page title={tr("suppliers")} action={<Btn onClick={() => { act.clear(); setForm(emptySup()); setOpen(true); }}>{tr("add")}</Btn>}>
       <SmartFilter f={f} date={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [{ value: "active", label: tr("active") }, { value: "inactive", label: tr("inactive") }] },
         { key: "dues", label: "balance", type: "select", options: [{ value: "yes", label: tr("hasDues") }, { value: "no", label: tr("noDues") }] },
@@ -635,25 +708,42 @@ export function SuppliersPage() {
         { key: "balance", label: "balanceRange", type: "range", minKey: "balance_min", maxKey: "balance_max" },
       ]} />
       {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
-      <Table cols={[tr("name"), tr("phone"), tr("city"), tr("address"), ""]} rows={rows.map((s) => [
+      <Table cols={[tr("name"), tr("phone"), tr("city"), tr("balance"), ""]} rows={rows.map((s) => [
         <Link className="font-bold" to={`/suppliers/${s.id}`}>{s.name}</Link>,
         s.phone,
         s.city,
-        s.address,
+        supplierBalanceLabel(s.balance, s.currency, settings.usd_egp_rate, lang),
         <ActionBtns
           canEdit={can("suppliers.manage")}
           canDelete={can("suppliers.manage")}
-          onEdit={() => { setForm({ ...s, id: s.id }); setOpen(true); }}
+          onEdit={() => { setForm({ ...emptySup(), ...s, id: s.id, fx_rate: settings.usd_egp_rate || "50", opening_balance: "" }); setOpen(true); }}
           onDelete={() => confirmDelete(s.name, async () => { await del(`/api/suppliers/${s.id}`); load(); })}
         />,
       ])} />
       )}
       <Modal open={open} title={form.id ? tr("edit") : tr("suppliers")} onClose={() => setOpen(false)}>
-        {["name","contact_name","phone","email","tax_id","city","address","notes"].map((k) => <Field key={k} label={k === "email" ? tr("email") : k === "tax_id" ? tr("taxId") : k === "city" ? tr("city") : k === "contact_name" ? tr("contactName") : k}><input className={inputCls} value={(form as any)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
+        {["name","contact_name","phone","email","tax_id","city","address","notes"].map((k) => <Field key={k} label={k === "email" ? tr("email") : k === "tax_id" ? tr("taxId") : k === "city" ? tr("city") : k === "contact_name" ? tr("contactName") : k}><input className={inputCls} value={(form as any)[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
+        <Field label={tr("currency")}>
+          <select className={inputCls} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
+            <option value="EGP">EGP</option>
+            <option value="USD">USD</option>
+          </select>
+        </Field>
+        <Field label={tr("usdRate")}><input className={inputCls} type="text" inputMode="decimal" value={form.fx_rate} onChange={(e) => setForm({ ...form, fx_rate: e.target.value })} /></Field>
+        {form.id ? null : (
+          <Field label={tr("openingBalance")}>
+            <input className={inputCls} type="text" inputMode="decimal" value={form.opening_balance} onChange={(e) => setForm({ ...form, opening_balance: e.target.value })} />
+            <p className="mt-1 text-xs text-slate-500">{tr("openingCreditHint")}</p>
+          </Field>
+        )}
+        {form.id ? <p className="mt-2 text-sm font-bold">{supplierBalanceLabel(form.balance, form.currency, rate, lang)}</p> : null}
+        <ErrorNote message={act.message} />
         <Btn className="mt-3" onClick={async () => {
-          if (form.id) await put(`/api/suppliers/${form.id}`, form);
-          else await post("/api/suppliers", form);
-          setOpen(false); load();
+          try {
+            if (form.id) await put(`/api/suppliers/${form.id}`, form);
+            else await post("/api/suppliers", form);
+            setOpen(false); act.clear(); load();
+          } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -663,7 +753,7 @@ export function SuppliersPage() {
 
 export function SupplierDetail() {
   const { id } = useParams();
-  const { tr, lang } = useApp();
+  const { tr, lang, settings } = useApp();
   const [d, setD] = useState<any>(null);
   const [tab, setTab] = useState<"overview" | "purchases" | "prices" | "statement">("overview");
   useEffect(() => { get<{ data: any }>(`/api/suppliers/${id}`).then((r) => setD(r.data)); }, [id]);
@@ -680,7 +770,7 @@ export function SupplierDetail() {
         <Stat label={tr("name")} value={d.name || "-"} />
         <Stat label={tr("code")} value={String(d.code || d.id)} />
         <Stat label={tr("phone")} value={d.phone || "-"} />
-        <Stat label={tr("balance")} value={money(d.balance, lang)} accent="rose" />
+        <Stat label={tr("balance")} value={supplierBalanceLabel(d.balance, d.currency, settings.usd_egp_rate, lang)} accent="rose" />
         <Stat label={tr("city")} value={d.city || "-"} />
       </div>
       <div className="mb-3 flex flex-wrap gap-2 page-tabs">
@@ -1262,8 +1352,8 @@ export function SettingsPage() {
       {dialog}
       <AccountSettings />
       <div className="grid gap-3 md:grid-cols-2">
-        {["store_name","store_name_ar","store_address","store_phone","invoice_prefix","invoice_footer","invoice_header","default_delivery_time","whatsapp_enabled","sound_enabled","tax_enabled","tax_rate","allow_negative_stock","use_last_customer_price","price_2_name","price_3_name","price_4_name","workplace_lat","workplace_lng","geofence_meters"].map((k) => (
-          <Field key={k} label={k === "workplace_lat" ? tr("workplaceLat") : k === "workplace_lng" ? tr("workplaceLng") : k === "geofence_meters" ? tr("geofence") : k === "tax_enabled" ? tr("taxEnabled") : k === "sound_enabled" ? tr("soundEnabled") : k === "tax_rate" ? tr("taxRate") : k === "allow_negative_stock" ? tr("allowNegative") : k === "use_last_customer_price" ? tr("useLastPrice") : k === "invoice_header" ? tr("invoiceHeader") : k === "price_2_name" ? tr("price2") : k === "price_3_name" ? tr("price3") : k === "price_4_name" ? tr("price4") : k}>
+        {["store_name","store_name_ar","store_address","store_phone","invoice_prefix","invoice_footer","invoice_header","default_delivery_time","whatsapp_enabled","sound_enabled","tax_enabled","tax_rate","allow_negative_stock","use_last_customer_price","price_2_name","price_3_name","price_4_name","workplace_lat","workplace_lng","geofence_meters","usd_egp_rate"].map((k) => (
+          <Field key={k} label={k === "workplace_lat" ? tr("workplaceLat") : k === "workplace_lng" ? tr("workplaceLng") : k === "geofence_meters" ? tr("geofence") : k === "tax_enabled" ? tr("taxEnabled") : k === "sound_enabled" ? tr("soundEnabled") : k === "tax_rate" ? tr("taxRate") : k === "allow_negative_stock" ? tr("allowNegative") : k === "use_last_customer_price" ? tr("useLastPrice") : k === "invoice_header" ? tr("invoiceHeader") : k === "price_2_name" ? tr("price2") : k === "price_3_name" ? tr("price3") : k === "price_4_name" ? tr("price4") : k === "usd_egp_rate" ? tr("usdRate") : k}>
             <input className={inputCls} value={form[k] ?? (k === "sound_enabled" ? "1" : "")} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={k === "sound_enabled" || k === "tax_enabled" || k === "whatsapp_enabled" ? "1 / 0" : ""} />
           </Field>
         ))}

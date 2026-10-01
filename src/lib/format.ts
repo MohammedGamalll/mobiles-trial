@@ -7,6 +7,26 @@ export function money(n: number | string | null | undefined, lang: "ar" | "en" =
   return lang === "ar" ? `${formatted} ج.م` : `EGP ${formatted}`;
 }
 
+export function customerBalanceLabel(n: number | string | null | undefined, lang: "ar" | "en" = "ar") {
+  const v = Number(n || 0);
+  const amt = money(Math.abs(v), lang);
+  if (v > 0.005) return lang === "ar" ? `${amt} عليه` : `${amt} they owe`;
+  if (v < -0.005) return lang === "ar" ? `${amt} ليه` : `${amt} credit`;
+  return amt;
+}
+
+export function supplierBalanceLabel(egp: number | string | null | undefined, currency: string | undefined, rate: number | string | undefined, lang: "ar" | "en" = "ar") {
+  const stored = Number(egp || 0);
+  const r = Number(rate || 50) || 50;
+  const usd = String(currency || "EGP").toUpperCase() === "USD";
+  const shown = usd ? stored / r : stored;
+  const formatted = Math.abs(shown).toLocaleString(lang === "ar" ? "ar-EG" : "en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const unit = usd ? (lang === "ar" ? `${formatted} $` : `USD ${formatted}`) : money(Math.abs(shown), lang);
+  if (stored > 0.005) return lang === "ar" ? `${unit} ليه` : `${unit} we owe`;
+  if (stored < -0.005) return lang === "ar" ? `${unit} عليه` : `${unit} they owe`;
+  return unit;
+}
+
 export function num(n: number | string | null | undefined, lang: "ar" | "en" = "ar") {
   return Number(n || 0).toLocaleString(lang === "ar" ? "ar-EG" : "en-EG");
 }

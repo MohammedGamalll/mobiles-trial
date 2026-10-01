@@ -1,5 +1,5 @@
 import type { AppDb } from "./db";
-import { nextNumber, round2 } from "./helpers";
+import { nextNumber, round2, todayIso } from "./helpers";
 
 export type JournalLine = { account_id: number; debit?: number; credit?: number; notes?: string | null };
 
@@ -183,6 +183,28 @@ export async function postReturnJournal(
     lines.push({ account_id: cogs.id, credit: opts.cogs });
   }
   await postJournal(db, { date: opts.date, description: `مرتجع ${opts.number}`, source: "return", sourceId: opts.returnId, lines, userId: opts.userId });
+}
+
+export async function postOpeningPartyJournal(
+  db: AppDb,
+  opts: { kind: "customer" | "supplier"; partyId: number; amount: number; name: string; userId?: number | null },
+) {
+  const amount = round2(opts.amount);
+  if (amount <= 0) return;
+  const equity = await accountByCode(db, "3100");
+  const counter = await accountByCode(db, opts.kind === "customer" ? "1200" : "2100");
+  if (!equity || !counter) throw new Error("ledger");
+  await postJournal(db, {
+    date: todayIso(),
+    description: `رصيد افتتاحي ${opts.name}`,
+    source: opts.kind === "customer" ? "customer_opening" : "supplier_opening",
+    sourceId: opts.partyId,
+    userId: opts.userId,
+    lines: [
+      { account_id: equity.id, debit: amount },
+      { account_id: counter.id, credit: amount },
+    ],
+  });
 }
 
 export async function postCollectionJournal(

@@ -196,7 +196,7 @@ ledgerRoutes.get("/vouchers", requirePerm("ledger.view", "vouchers.create"), asy
   return c.json({ data: results, page, pageSize, totals: { total: sums?.total || 0 } });
 });
 
-ledgerRoutes.post("/vouchers", requirePerm("vouchers.create", "ledger.manage"), async (c) => {
+ledgerRoutes.post("/vouchers", requirePerm("vouchers.create", "ledger.manage", "payments.create"), async (c) => {
   const b = await c.req.json<{
     type: "receipt" | "payment";
     date?: string;
@@ -265,9 +265,16 @@ ledgerRoutes.post("/vouchers", requirePerm("vouchers.create", "ledger.manage"), 
   }
   if (b.party_type === "customer" && b.party_id && b.type === "receipt") {
     await c.env.DB.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(round2(b.amount), b.party_id).run();
+    await c.env.DB
+      .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(null, b.party_id, "cash", round2(b.amount), date, b.description || number, c.get("user").id)
+      .run();
   }
   await audit(c.env.DB, c.get("user"), "voucher", "voucher", r.meta.last_row_id, number);
-  return c.json({ id: r.meta.last_row_id, number, journal_id: journalId }, 201);
+  const custBal = b.party_type === "customer" && b.party_id
+    ? await c.env.DB.prepare("SELECT current_balance FROM customers WHERE id = ?").bind(b.party_id).first<{ current_balance: number }>()
+    : null;
+  return c.json({ id: r.meta.last_row_id, number, journal_id: journalId, current_balance: custBal?.current_balance }, 201);
 });
 
 ledgerRoutes.post("/cash-transfer", requirePerm("ledger.manage", "vouchers.create"), async (c) => {
@@ -294,10 +301,22 @@ ledgerRoutes.post("/cash-transfer", requirePerm("ledger.manage", "vouchers.creat
 
 ledgerRoutes.post("/vouchers/:id/void", requirePerm("ledger.manage"), async (c) => {
   const id = Number(c.req.param("id"));
-  const row = await c.env.DB.prepare("SELECT * FROM vouchers WHERE id = ?").bind(id).first<{ voided_at: string | null }>();
+  const row = await c.env.DB.prepare("SELECT * FROM vouchers WHERE id = ?").bind(id).first<{
+    voided_at: string | null;
+    party_type: string | null;
+    party_id: number | null;
+    type: string;
+    amount: number;
+  }>();
   if (!row) return c.json({ error: "not_found" }, 404);
   if (row.voided_at) return c.json({ error: "already_void" }, 400);
   await reverseJournal(c.env.DB, "voucher", id, c.get("user").id);
   await c.env.DB.prepare("UPDATE vouchers SET voided_at = datetime('now') WHERE id = ?").bind(id).run();
+  if (row.party_type === "customer" && row.party_id && row.type === "receipt") {
+    await c.env.DB.prepare("UPDATE customers SET current_balance = current_balance + ? WHERE id = ?").bind(round2(row.amount), row.party_id).run();
+  }
+  if (row.party_type === "supplier" && row.party_id && row.type !== "receipt") {
+    await c.env.DB.prepare("UPDATE suppliers SET balance = COALESCE(balance,0) + ? WHERE id = ?").bind(round2(row.amount), row.party_id).run();
+  }
   return c.json({ ok: true });
 });
