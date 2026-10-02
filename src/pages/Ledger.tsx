@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { ActionBtns, useConfirm } from "../components/Confirm";
@@ -209,11 +209,10 @@ export function JournalPage() {
 }
 
 export function VouchersPage() {
-  const { tr, lang, can, lookups } = useApp();
+  const { tr, lang, can } = useApp();
   const f = useListQuery("vouchers");
   const [rows, setRows] = useState<any[]>([]);
   const [cash, setCash] = useState<any[]>([]);
-  const [custs, setCusts] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ type: "receipt", cash_account_id: 1, party_type: "customer", party_id: "", party_name: "", amount: 0, description: "", date: new Date().toISOString().slice(0, 10) });
   const { confirmDelete, dialog } = useConfirm();
@@ -223,7 +222,6 @@ export function VouchersPage() {
   useEffect(() => {
     load().catch(() => {});
     get<{ data: any[] }>("/api/ledger/cash").then((r) => setCash(r.data || [])).catch(() => {});
-    get<{ data: any[] }>("/api/customers?pageSize=80").then((r) => setCusts(r.data || [])).catch(() => {});
   }, [f.qs]);
   return (
     <Page title={tr("vouchers")} action={can("vouchers.create") ? <Btn onClick={() => setOpen(true)}>{tr("newVoucher")}</Btn> : null}>
@@ -247,7 +245,7 @@ export function VouchersPage() {
       <Modal open={open} title={tr("newVoucher")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("kind")}>
-            <select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+            <select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, party_id: "", party_name: "", party_type: e.target.value === "receipt" ? "customer" : "supplier" })}>
               <option value="receipt">{tr("receiptVoucher")}</option>
               <option value="payment">{tr("paymentVoucher")}</option>
             </select>
@@ -257,16 +255,20 @@ export function VouchersPage() {
               {cash.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
             </select>
           </Field>
-          <Field label={tr("customer")}>
-            <select className={inputCls} value={form.party_id} onChange={(e) => {
-              const id = e.target.value;
-              const c = custs.find((x) => String(x.id) === id);
-              setForm({ ...form, party_id: id, party_type: form.type === "receipt" ? "customer" : "supplier", party_name: c?.name || "" });
-            }}>
-              <option value="">-</option>
-              {custs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              {(lookups?.suppliers || []).map((s) => <option key={`s${s.id}`} value={s.id}>{s.name}</option>)}
-            </select>
+          <Field label={form.type === "receipt" ? tr("customer") : tr("supplier")}>
+            <SearchPick
+              path={form.type === "receipt" ? "/api/customers" : "/api/suppliers"}
+              valueId={form.party_id}
+              valueLabel={form.party_name}
+              placeholder={tr("searchAndPick")}
+              subtitle={(r) => [r.phone, r.area, r.city].filter(Boolean).join(" · ")}
+              onPick={(row, label) => setForm({
+                ...form,
+                party_id: row ? String(row.id) : "",
+                party_type: row ? (form.type === "receipt" ? "customer" : "supplier") : form.party_type,
+                party_name: label,
+              })}
+            />
           </Field>
           <Field label={tr("name")}><input className={inputCls} value={form.party_name} onChange={(e) => setForm({ ...form, party_name: e.target.value, party_type: "other" })} /></Field>
           <Field label={tr("amount")}><input className={inputCls} type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>

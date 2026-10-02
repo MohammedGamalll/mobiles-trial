@@ -153,9 +153,16 @@ export const dict = {
     customerType: "نوع العميل",
     paymentTerms: "شروط الدفع",
     storeName: "اسم المحل",
+    storeNameAr: "اسم المحل بالعربي",
     storeAddress: "عنوان المحل",
     storePhone: "هاتف المحل",
     invoicePrefix: "بادئة الفاتورة",
+    defaultDeliveryTime: "وقت التوصيل الافتراضي",
+    whatsappEnabled: "تفعيل واتساب",
+    nameAr: "الاسم بالعربي",
+    nameEn: "الاسم بالإنجليزي",
+    csvFile: "ملف CSV",
+    searchAndPick: "ابحث واختر من القائمة",
     footer: "تذييل الفاتورة",
     waTemplates: "قوالب واتساب",
     general: "عام",
@@ -969,9 +976,16 @@ export const dict = {
     customerType: "Customer type",
     paymentTerms: "Payment terms",
     storeName: "Store name",
+    storeNameAr: "Store name (Arabic)",
     storeAddress: "Store address",
     storePhone: "Store phone",
     invoicePrefix: "Invoice prefix",
+    defaultDeliveryTime: "Default delivery time",
+    whatsappEnabled: "Enable WhatsApp",
+    nameAr: "Name (Arabic)",
+    nameEn: "Name (English)",
+    csvFile: "CSV file",
+    searchAndPick: "Search and pick from the list",
     footer: "Invoice footer",
     waTemplates: "WhatsApp templates",
     general: "General",
@@ -1638,4 +1652,41 @@ export type Msg = keyof typeof dict.ar;
 
 export function t(lang: Lang, key: Msg): string {
   return dict[lang][key] || String(key);
+}
+
+const FIELD_ALIASES: Record<string, Msg> = {
+  store_name_ar: "storeNameAr",
+  invoice_footer: "footer",
+  default_delivery_time: "defaultDeliveryTime",
+  whatsapp_enabled: "whatsappEnabled",
+  allow_negative_stock: "allowNegative",
+  use_last_customer_price: "useLastPrice",
+  geofence_meters: "geofence",
+  price_2_name: "price2",
+  price_3_name: "price3",
+  price_4_name: "price4",
+  usd_egp_rate: "usdRate",
+  brand_id: "brand",
+  selling_price: "sellingPrice",
+  wholesale_price: "wholesale",
+  min_selling_price: "minPrice",
+  min_stock: "minStock",
+  purchase_price: "openingCost",
+  opening_qty: "openingQty",
+  discount_pct: "discountPct",
+  CSV: "csvFile",
+  csv: "csvFile",
+};
+
+function toCamelKey(raw: string) {
+  return raw.replace(/_([a-z0-9])/gi, (_, c: string) => c.toUpperCase());
+}
+
+export function fieldLabel(lang: Lang, raw: string): string {
+  if (!raw) return raw;
+  if (Object.prototype.hasOwnProperty.call(dict.ar, raw)) return t(lang, raw as Msg);
+  if (FIELD_ALIASES[raw]) return t(lang, FIELD_ALIASES[raw]);
+  const camel = toCamelKey(raw);
+  if (Object.prototype.hasOwnProperty.call(dict.ar, camel)) return t(lang, camel as Msg);
+  return raw;
 }

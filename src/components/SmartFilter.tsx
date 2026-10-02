@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useApp } from "../context";
-import { get } from "../lib/api";
 import { DATE_PRESETS } from "../lib/filter-engine";
 import { loadViews, removeView, saveView } from "../lib/shortcuts";
 import { loadDefaultView, saveDefaultView, type ListQuery } from "../hooks/useListQuery";
-import { Drawer, Field, inputCls } from "./ui";
+import { Drawer, Field, SearchPick, inputCls } from "./ui";
 import type { Msg } from "../i18n";
 
 export type FilterOption = { value: string; label: string };
@@ -76,79 +75,6 @@ function descendants(all: any[], id: number) {
     }
   }
   return out;
-}
-
-function AsyncPick({
-  path,
-  labelOf,
-  value,
-  display,
-  placeholder,
-  onPick,
-}: {
-  path: string;
-  labelOf: (row: any) => string;
-  value: string;
-  display?: string;
-  placeholder: string;
-  onPick: (id: string, label: string) => void;
-}) {
-  const [q, setQ] = useState(display || "");
-  const [rows, setRows] = useState<any[]>([]);
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open || !q.trim()) {
-      setRows([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      get<{ data: any[] }>(`${path}${path.includes("?") ? "&" : "?"}q=${encodeURIComponent(q)}&pageSize=12`)
-        .then((r) => setRows(r.data || []))
-        .catch(() => setRows([]));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [q, open, path]);
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
-  return (
-    <div className="relative" ref={box}>
-      <input
-        className={inputCls}
-        value={q}
-        placeholder={placeholder}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setOpen(true);
-          if (!e.target.value && value) onPick("", "");
-        }}
-      />
-      {open && rows.length ? (
-        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-          {rows.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50"
-              onClick={() => {
-                onPick(String(r.id), labelOf(r));
-                setQ(labelOf(r));
-                setOpen(false);
-              }}
-            >
-              {labelOf(r)}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 export function EmptyFilterState({ onClear }: { onClear: () => void }) {
@@ -282,13 +208,14 @@ export function SmartFilter({
     if (field.type === "async") {
       const nameKey = `${field.key.replace(/_id$/, "")}_name`;
       return (
-        <AsyncPick
+        <SearchPick
           path={field.asyncPath || "/api/customers"}
           labelOf={field.asyncLabel || ((r) => r.name || r.name_ar || r.number || String(r.id))}
-          value={f.values[field.key] || ""}
-          display={f.values[nameKey] || ""}
+          valueId={f.values[field.key] || ""}
+          valueLabel={f.values[nameKey] || ""}
           placeholder={tr(field.label)}
-          onPick={(id, label) => f.setMany({ [field.key]: id, [nameKey]: label })}
+          subtitle={field.asyncPath?.includes("/customers") ? (r) => [r.phone, r.area, r.city].filter(Boolean).join(" · ") : undefined}
+          onPick={(row, label) => f.setMany({ [field.key]: row ? String(row.id) : "", [nameKey]: label })}
         />
       );
     }

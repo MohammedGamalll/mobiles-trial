@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, ErrorNote, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
@@ -134,7 +134,7 @@ export function ChequesPage() {
   const f = useListQuery("cheques");
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ number: "", direction: "in", party_type: "customer", party_name: "", bank: "", amount: 0, due_date: "", invoice_id: "", notes: "" });
+  const [form, setForm] = useState({ number: "", direction: "in", party_type: "customer", party_id: "", party_name: "", bank: "", amount: 0, due_date: "", invoice_id: "", notes: "" });
   const { confirmDelete, dialog } = useConfirm();
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/cheques?${f.qs}`)).data || []);
@@ -173,12 +173,26 @@ export function ChequesPage() {
       <Modal open={open} title={tr("cheques")} onClose={() => setOpen(false)}>
         <Field label={tr("chequeNo")}><input className={inputCls} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} /></Field>
         <Field label={tr("kind")}>
-          <select className={inputCls} value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })}>
+            <select className={inputCls} value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value, party_id: "", party_name: "", party_type: e.target.value === "in" ? "customer" : "supplier" })}>
             <option value="in">{tr("receiptVoucher")}</option>
             <option value="out">{tr("paymentVoucher")}</option>
           </select>
         </Field>
-        <Field label={tr("name")}><input className={inputCls} value={form.party_name} onChange={(e) => setForm({ ...form, party_name: e.target.value })} /></Field>
+        <Field label={form.direction === "in" ? tr("customer") : tr("supplier")}>
+          <SearchPick
+            path={form.direction === "in" ? "/api/customers" : "/api/suppliers"}
+            valueId={form.party_id}
+            valueLabel={form.party_name}
+            placeholder={tr("searchAndPick")}
+            subtitle={(r) => [r.phone, r.area, r.city].filter(Boolean).join(" · ")}
+            onPick={(row, label) => setForm({
+              ...form,
+              party_id: row ? String(row.id) : "",
+              party_type: row ? (form.direction === "in" ? "customer" : "supplier") : form.party_type,
+              party_name: label,
+            })}
+          />
+        </Field>
         <Field label={tr("bank")}><input className={inputCls} value={form.bank} onChange={(e) => setForm({ ...form, bank: e.target.value })} /></Field>
         <Field label={tr("amount")}><input className={inputCls} type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>
         <Field label={tr("dueDate")}><input className={inputCls} type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>

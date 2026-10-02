@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
-import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
 import { PaymentModal } from "../components/PaymentModal";
@@ -342,10 +342,14 @@ export function PurchasesPage() {
       )}
       <Modal open={open} title={tr("newPurchase")} onClose={() => { setOpen(false); act.clear(); }} wide>
         <Field label={tr("supplier")}>
-          <select className={inputCls} value={form.supplier_id} onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}>
-            <option value="">-</option>
-            {lookups?.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <SearchPick
+            path="/api/suppliers"
+            valueId={form.supplier_id}
+            valueLabel={lookups?.suppliers.find((s) => String(s.id) === String(form.supplier_id))?.name || ""}
+            placeholder={tr("searchAndPick")}
+            subtitle={(r) => [r.phone, r.city].filter(Boolean).join(" · ")}
+            onPick={(row) => setForm({ ...form, supplier_id: row ? String(row.id) : "" })}
+          />
         </Field>
         {form.items.length ? (
           <div className="table-wrap mt-3">
@@ -371,8 +375,8 @@ export function PurchasesPage() {
               unit_cost: d.costDirty ? d.unit_cost : (cost != null ? String(cost) : d.unit_cost),
             }));
           }} />
-          <input className={inputCls} type="text" inputMode="decimal" placeholder="qty" value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />
-          <input className={inputCls} type="text" inputMode="decimal" placeholder="cost" value={draft.unit_cost} onChange={(e) => setDraft({ ...draft, unit_cost: e.target.value, costDirty: true })} />
+          <input className={inputCls} type="text" inputMode="decimal" placeholder={tr("qty")} value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />
+          <input className={inputCls} type="text" inputMode="decimal" placeholder={tr("unitCost")} value={draft.unit_cost} onChange={(e) => setDraft({ ...draft, unit_cost: e.target.value, costDirty: true })} />
         </div>
         <button className="mt-2 text-sm font-bold text-cyan-700" onClick={addDraftLine}>+ {tr("add")}</button>
         <ErrorNote message={act.message} />
@@ -402,7 +406,7 @@ export function PurchasesPage() {
 }
 
 function ProductPick({ value, onChange }: { value: any; onChange: (id: number, cost?: number) => void }) {
-  const { tr } = useApp();
+  const { tr, lang } = useApp();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<any[]>([]);
   const [miss, setMiss] = useState("");
@@ -443,7 +447,7 @@ function ProductPick({ value, onChange }: { value: any; onChange: (id: number, c
       <ErrorNote message={miss} />
       {hits.map((p) => (
         <button key={p.id} className="block w-full px-2 py-1 text-start text-sm hover:bg-slate-50" onClick={() => pick(p)}>
-          {p.sku} — {p.name_en}
+          {p.sku} — {lang === "ar" ? p.name_ar : p.name_en}
         </button>
       ))}
     </div>
@@ -564,7 +568,7 @@ export function CustomersPage() {
       />
       )}
       <Modal open={open} title={form.id ? tr("edit") : tr("addCustomer")} onClose={() => setOpen(false)}>
-        {["name","phone","email","company","national_id","tax_id","city","address","area"].map((k) => <Field key={k} label={k === "email" ? tr("email") : k === "company" ? tr("company") : k === "national_id" ? tr("nationalId") : k === "tax_id" ? tr("taxId") : k === "city" ? tr("city") : k}><input className={inputCls} value={(form as any)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
+        {["name","phone","email","company","national_id","tax_id","city","address","area"].map((k) => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
         <Field label={tr("customerType")}>
           <select className={inputCls} value={form.customer_type} onChange={(e) => setForm({ ...form, customer_type: e.target.value })}>
             <option value="retail">{tr("retail")}</option>
@@ -737,7 +741,7 @@ export function SuppliersPage() {
       ])} />
       )}
       <Modal open={open} title={form.id ? tr("edit") : tr("suppliers")} onClose={() => setOpen(false)}>
-        {["name","contact_name","phone","email","tax_id","city","address","notes"].map((k) => <Field key={k} label={k === "email" ? tr("email") : k === "tax_id" ? tr("taxId") : k === "city" ? tr("city") : k === "contact_name" ? tr("contactName") : k}><input className={inputCls} value={(form as any)[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
+        {["name","contact_name","phone","email","tax_id","city","address","notes"].map((k) => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
         <Field label={tr("currency")}>
           <select className={inputCls} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
             <option value="EGP">EGP</option>
@@ -886,7 +890,7 @@ export function PriceListDetail() {
 }
 
 export function CatalogCrud({ table, title }: { table: string; title: string }) {
-  const { tr, lang, refreshLookups, can } = useApp();
+  const { tr, lang, lookups, refreshLookups, can } = useApp();
   const f = useListQuery(`catalog-${table}`);
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
@@ -921,7 +925,12 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
           ["name","warehouse","section","rack","shelf","drawer","box"].map((k) => <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)
         ) : table === "device_models" || table === "models" ? (
           <>
-            <Field label="brand_id"><input className={inputCls} value={form.brand_id || ""} onChange={(e) => setForm({ ...form, brand_id: Number(e.target.value) })} placeholder="1=Apple" /></Field>
+            <Field label={tr("brand")}>
+              <select className={inputCls} value={form.brand_id || ""} onChange={(e) => setForm({ ...form, brand_id: e.target.value ? Number(e.target.value) : "" })}>
+                <option value="">-</option>
+                {(lookups?.brands || []).map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
+              </select>
+            </Field>
             {["name","code","year"].map((k) => <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
           </>
         ) : (
@@ -1368,7 +1377,7 @@ export function SettingsPage() {
       <AccountSettings />
       <div className="grid gap-3 md:grid-cols-2">
         {["store_name","store_name_ar","store_address","store_phone","invoice_prefix","invoice_footer","invoice_header","default_delivery_time","whatsapp_enabled","sound_enabled","tax_enabled","tax_rate","allow_negative_stock","use_last_customer_price","price_2_name","price_3_name","price_4_name","workplace_lat","workplace_lng","geofence_meters","usd_egp_rate"].map((k) => (
-          <Field key={k} label={k === "workplace_lat" ? tr("workplaceLat") : k === "workplace_lng" ? tr("workplaceLng") : k === "geofence_meters" ? tr("geofence") : k === "tax_enabled" ? tr("taxEnabled") : k === "sound_enabled" ? tr("soundEnabled") : k === "tax_rate" ? tr("taxRate") : k === "allow_negative_stock" ? tr("allowNegative") : k === "use_last_customer_price" ? tr("useLastPrice") : k === "invoice_header" ? tr("invoiceHeader") : k === "price_2_name" ? tr("price2") : k === "price_3_name" ? tr("price3") : k === "price_4_name" ? tr("price4") : k === "usd_egp_rate" ? tr("usdRate") : k}>
+          <Field key={k} label={k}>
             <input className={inputCls} value={form[k] ?? (k === "sound_enabled" ? "1" : "")} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={k === "sound_enabled" || k === "tax_enabled" || k === "whatsapp_enabled" ? "1 / 0" : ""} />
           </Field>
         ))}
@@ -1396,7 +1405,7 @@ export function SettingsPage() {
                 <option value="suppliers">{tr("suppliers")}</option>
               </select>
             </Field>
-            <Field label="CSV">
+            <Field label={tr("csvFile")}>
               <input className={inputCls} type="file" accept=".csv,text/csv" onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;

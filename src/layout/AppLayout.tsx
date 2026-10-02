@@ -25,7 +25,7 @@ import { EasyHomeLink } from "../components/EasyLauncher";
 import { SahlMenu } from "../components/SahlMenu";
 import { ModernModules } from "../components/ModernModules";
 import { isFav, loadFavs, loadRecent, pushRecent, toggleFav, type FavItem } from "../lib/shortcuts";
-import { allNavItems, classicNav, modernNav } from "./nav";
+import { allNavItems, classicNav, matchNavTo, modernNav } from "./nav";
 import type { Msg } from "../i18n";
 
 export default function AppLayout() {
@@ -52,7 +52,9 @@ export default function AppLayout() {
     if (noteRead === "0" && n.read_at) return false;
     return true;
   });
-  const pageKey = (allNavItems(groups).find((i) => i.to === loc.pathname)?.key || "dashboard") as Msg;
+  const navItems = allNavItems(groups);
+  const activeTo = matchNavTo(loc.pathname, loc.search, navItems);
+  const pageKey = (navItems.find((i) => i.to === activeTo)?.key || "dashboard") as Msg;
 
   useEffect(() => {
     if (loc.pathname === "/login") return;
@@ -94,6 +96,7 @@ export default function AppLayout() {
             <div className={classic ? "space-y-0" : "space-y-0.5"}>
               {visible.map((i) => {
                 const Icon = i.icon;
+                const on = i.to === activeTo;
                 return (
                   <NavLink
                     key={i.to}
@@ -101,11 +104,10 @@ export default function AppLayout() {
                     end={i.to === "/"}
                     title={tr(i.key)}
                     onClick={() => setMenu(false)}
-                    className={({ isActive }) =>
-                      `app-nav-link flex items-center ${slim ? "justify-center px-2" : classic ? "gap-2.5 px-3" : "gap-3 px-3"} ${
-                        classic ? "rounded-md py-1.5 text-[13px]" : "rounded-xl py-2 text-sm"
-                      } font-semibold ${isActive ? "is-active" : ""}`
-                    }
+                    aria-current={on ? "page" : undefined}
+                    className={`app-nav-link flex items-center ${slim ? "justify-center px-2" : classic ? "gap-2.5 px-3" : "gap-3 px-3"} ${
+                      classic ? "rounded-md py-1.5 text-[13px]" : "rounded-xl py-2 text-sm"
+                    } font-semibold ${on ? "is-active" : ""}`}
                   >
                     <Icon size={16} />
                     {slim ? null : tr(i.key)}

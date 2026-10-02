@@ -443,19 +443,19 @@ export default function Products() {
           <Field label={tr("brand")}>
             <select className={inputCls} value={form.brand_id} onChange={(e) => setForm({ ...form, brand_id: e.target.value })}>
               <option value="">-</option>
-              {lookups?.brands.map((b) => <option key={b.id} value={b.id}>{b.name_en}</option>)}
+              {lookups?.brands.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
             </select>
           </Field>
           <Field label={tr("partType")}>
             <select className={inputCls} value={form.part_type_id} onChange={(e) => setForm({ ...form, part_type_id: e.target.value })}>
               <option value="">-</option>
-              {lookups?.part_types.map((b) => <option key={b.id} value={b.id}>{b.name_en}</option>)}
+              {lookups?.part_types.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
             </select>
           </Field>
           <Field label={tr("category")}>
             <select className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
               <option value="">-</option>
-              {lookups?.categories.map((b) => <option key={b.id} value={b.id}>{b.name_en}</option>)}
+              {lookups?.categories.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
             </select>
           </Field>
           <Field label={tr("location")}>
@@ -496,13 +496,13 @@ export default function Products() {
             </select>
           </Field>
           {["purchase_price", "selling_price", "wholesale_price", "min_selling_price", "min_stock", "price_2", "price_3", "price_4", "discount_pct", "opening_qty"].map((k) => (
-            <Field key={k} label={k === "purchase_price" ? tr("openingCost") : k === "opening_qty" ? tr("openingQty") : k === "discount_pct" ? tr("discountPct") : k === "price_2" ? tr("price2") : k === "price_3" ? tr("price3") : k === "price_4" ? tr("price4") : k}>
+            <Field key={k} label={k}>
               <input className={inputCls} type="number" value={form[k]} onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })} />
             </Field>
           ))}
           <Field label={tr("extraCodes")}>
-            <input className={inputCls} placeholder="extra 1" value={form.extra_code1} onChange={(e) => setForm({ ...form, extra_code1: e.target.value })} />
-            <input className={`${inputCls} mt-1`} placeholder="extra 2" value={form.extra_code2} onChange={(e) => setForm({ ...form, extra_code2: e.target.value })} />
+            <input className={inputCls} placeholder={tr("extraCodes")} value={form.extra_code1} onChange={(e) => setForm({ ...form, extra_code1: e.target.value })} />
+            <input className={`${inputCls} mt-1`} placeholder={tr("extraCodes")} value={form.extra_code2} onChange={(e) => setForm({ ...form, extra_code2: e.target.value })} />
           </Field>
           <Field label={tr("imageUrl")}>
             <input className={inputCls} value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder={tr("imageUrl")} />

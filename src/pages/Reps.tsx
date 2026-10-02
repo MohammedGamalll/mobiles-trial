@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { ActionBtns, useConfirm } from "../components/Confirm";
@@ -163,20 +163,11 @@ export function VisitsPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ id: 0, agent_id: user?.delivery_agent_id || "", customer_id: "", customer_name: "", date: new Date().toISOString().slice(0, 10), visit_time: "", purpose: "", result: "planned", notes: "" });
-  const [custQ, setCustQ] = useState("");
-  const [custs, setCusts] = useState<any[]>([]);
   const { confirmDelete, dialog } = useConfirm();
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/visits?${f.qs}`)).data || []);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
-  useEffect(() => {
-    if (!custQ.trim()) { setCusts([]); return; }
-    const t = setTimeout(() => {
-      get<{ data: any[] }>(`/api/customers?q=${encodeURIComponent(custQ)}&pageSize=8`).then((r) => setCusts(r.data || [])).catch(() => {});
-    }, 150);
-    return () => clearTimeout(t);
-  }, [custQ]);
   return (
     <Page title={tr("visits")} action={can("visits.own", "visits.manage") ? <Btn onClick={() => { setForm({ id: 0, agent_id: user?.delivery_agent_id || "", customer_id: "", customer_name: "", date: new Date().toISOString().slice(0, 10), visit_time: "", purpose: "", result: "planned", notes: "" }); setOpen(true); }}>{tr("newVisit")}</Btn> : null}>
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -209,7 +200,7 @@ export function VisitsPage() {
               <ActionBtns
                 canEdit={v.result === "planned"}
                 canDelete
-                onEdit={() => { setForm({ id: v.id, agent_id: v.agent_id || "", customer_id: v.customer_id || "", customer_name: v.customer_name || "", date: v.date, visit_time: v.visit_time || "", purpose: v.purpose || "", result: v.result, notes: v.notes || "" }); setOpen(true); setCustQ(""); }}
+                onEdit={() => { setForm({ id: v.id, agent_id: v.agent_id || "", customer_id: v.customer_id || "", customer_name: v.customer_name || "", date: v.date, visit_time: v.visit_time || "", purpose: v.purpose || "", result: v.result, notes: v.notes || "" }); setOpen(true); }}
                 onDelete={() => confirmDelete(v.customer_name || v.purpose || String(v.id), async () => { await del(`/api/visits/${v.id}`); load(); })}
               />
             </span>
@@ -227,10 +218,14 @@ export function VisitsPage() {
             </Field>
           ) : null}
           <Field label={tr("customer")}>
-            <input className={inputCls} value={custQ || form.customer_name} onChange={(e) => { setCustQ(e.target.value); setForm({ ...form, customer_name: e.target.value, customer_id: "" }); }} />
-            {custs.map((c) => (
-              <button key={c.id} className="mt-1 block w-full rounded-lg px-2 py-1 text-start text-sm hover:bg-slate-50" onClick={() => { setForm({ ...form, customer_id: String(c.id), customer_name: c.name }); setCustQ(""); setCusts([]); }}>{c.name}</button>
-            ))}
+            <SearchPick
+              path="/api/customers"
+              valueId={form.customer_id}
+              valueLabel={form.customer_name}
+              placeholder={tr("searchAndPick")}
+              subtitle={(r) => [r.phone, r.area, r.city].filter(Boolean).join(" · ")}
+              onPick={(row, label) => setForm({ ...form, customer_id: row ? String(row.id) : "", customer_name: label })}
+            />
           </Field>
           <Field label={tr("date")}><input className={inputCls} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
           <Field label={tr("visitPurpose")}><input className={inputCls} value={form.purpose} onChange={(e) => setForm({ ...form, purpose: e.target.value })} /></Field>

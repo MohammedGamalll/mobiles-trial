@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Download, Printer } from "lucide-react";
 import { useApp } from "../context";
+import { get } from "../lib/api";
+import { fieldLabel } from "../i18n";
 import { downloadExport } from "../lib/export";
 import { loadViews, removeView, saveView } from "../lib/shortcuts";
 
@@ -77,17 +79,115 @@ export function SavedViews({ id, value, onLoad }: { id: string; value: Record<st
   );
 }
 
+export const inputCls =
+  "ds-input w-full rounded-xl border px-3 py-2 text-sm outline-none ring-pixel/30 focus:border-cyan-400 focus:ring-2";
+
 export function Field({ label, children }: { label: string; children: ReactNode }) {
+  const { lang } = useApp();
   return (
     <label className="block text-sm">
-      <span className="mb-1 block font-semibold text-slate-600">{label}</span>
+      <span className="mb-1 block font-semibold text-slate-600">{fieldLabel(lang, label)}</span>
       {children}
     </label>
   );
 }
 
-export const inputCls =
-  "ds-input w-full rounded-xl border px-3 py-2 text-sm outline-none ring-pixel/30 focus:border-cyan-400 focus:ring-2";
+export function SearchPick({
+  path,
+  valueId,
+  valueLabel,
+  onPick,
+  placeholder,
+  labelOf,
+  subtitle,
+}: {
+  path: string;
+  valueId?: string | number | null;
+  valueLabel?: string;
+  onPick: (row: any | null, label: string) => void;
+  placeholder?: string;
+  labelOf?: (row: any) => string;
+  subtitle?: (row: any) => string;
+}) {
+  const { tr } = useApp();
+  const labelFn = labelOf || ((r: any) => r.name || r.name_ar || r.number || String(r.id));
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<any[]>([]);
+  const [pool, setPool] = useState<any[]>([]);
+  const blurRef = useRef(0);
+  const selected = valueId !== undefined && valueId !== null && String(valueId) !== "";
+
+  useEffect(() => {
+    get<{ data: any[] }>(`${path}${path.includes("?") ? "&" : "?"}pageSize=80`)
+      .then((r) => setPool(r.data || []))
+      .catch(() => setPool([]));
+  }, [path]);
+
+  useEffect(() => {
+    if (!open) return;
+    const query = q.trim().toLowerCase();
+    const local = !query
+      ? pool
+      : pool.filter((r) =>
+          `${labelFn(r)} ${r.phone || ""} ${r.code || ""} ${r.area || ""} ${r.city || ""} ${r.sku || ""}`.toLowerCase().includes(query),
+        );
+    setRows(local);
+    if (!query) return;
+    const t = setTimeout(() => {
+      get<{ data: any[] }>(`${path}${path.includes("?") ? "&" : "?"}q=${encodeURIComponent(q.trim())}&pageSize=50`)
+        .then((r) => setRows(r.data?.length ? r.data : local))
+        .catch(() => {});
+    }, 200);
+    return () => clearTimeout(t);
+  }, [q, open, path, pool]);
+
+  return (
+    <div className="relative">
+      <input
+        className={inputCls}
+        value={selected ? (valueLabel || "") : q}
+        placeholder={placeholder || tr("searchAndPick")}
+        autoComplete="off"
+        onFocus={() => {
+          window.clearTimeout(blurRef.current);
+          setOpen(true);
+        }}
+        onChange={(e) => {
+          window.clearTimeout(blurRef.current);
+          setQ(e.target.value);
+          setOpen(true);
+          if (selected) onPick(null, "");
+        }}
+        onBlur={() => {
+          blurRef.current = window.setTimeout(() => setOpen(false), 180);
+        }}
+      />
+      {open ? (
+        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-lg">
+          {rows.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const label = labelFn(r);
+                onPick(r, label);
+                setQ("");
+                setOpen(false);
+              }}
+            >
+              <div className="font-bold">{labelFn(r)}</div>
+              {subtitle ? <div className="text-[11px] text-slate-500">{subtitle(r)}</div> : null}
+            </button>
+          ))}
+          {!rows.length ? <div className="px-3 py-3 text-sm text-slate-400">{tr("noResults")}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function Btn({
   children,
