@@ -13,7 +13,7 @@ peopleRoutes.get("/customers", requirePerm("customers.view", "sales.create"), as
   const { page, pageSize, offset } = paginate(url);
   const where = ["deleted_at IS NULL"];
   const params: (string | number)[] = [];
-  applySearch(where, params, p.q, ["name", "IFNULL(phone,'')", "IFNULL(whatsapp,'')", "IFNULL(area,'')", "IFNULL(city,'')", "CAST(id AS TEXT)"]);
+  applySearch(where, params, p.q, ["name", "IFNULL(phone,'')", "IFNULL(whatsapp,'')", "IFNULL(area,'')", "IFNULL(city,'')", "CAST(id AS CHAR)"]);
   applyEq(where, params, "customer_type", p.customer_type || p.type);
   applyEq(where, params, "area", p.area);
   applyEq(where, params, "city", p.city);

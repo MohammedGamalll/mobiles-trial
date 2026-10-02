@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Check, Search, ShoppingBag } from "lucide-react";
+import { ChevronDown, Minus, MoreHorizontal, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PixelMark, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
 
@@ -42,6 +42,7 @@ type Product = {
   shelf?: string;
   drawer?: string;
   box?: string;
+  supplier_name?: string;
   current_stock?: number;
   reserved_stock?: number;
   purchase_price?: number;
@@ -66,6 +67,10 @@ type Line = Product & {
   unit_factor: number;
 };
 
+function todayIso() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+}
+
 export default function POS() {
   const { tr, lang, lookups, can, settings, branchId, warehouseId } = useApp();
   const showCost = can("costs.view");
@@ -81,6 +86,8 @@ export default function POS() {
   const [type, setType] = useState<"normal" | "delivery">("normal");
   const [customerQ, setCustomerQ] = useState("");
   const [customers, setCustomers] = useState<any[]>([]);
+  const [custPool, setCustPool] = useState<any[]>([]);
+  const [custListOpen, setCustListOpen] = useState(false);
   const [customer, setCustomer] = useState<any>(null);
   const [walkIn, setWalkIn] = useState("");
   const [method, setMethod] = useState("cash");
@@ -92,6 +99,9 @@ export default function POS() {
   const [time, setTime] = useState("");
   const [paid, setPaid] = useState(0);
   const [discount, setDiscount] = useState(0);
+  const [discMode, setDiscMode] = useState<"egp" | "pct">("egp");
+  const [invDate, setInvDate] = useState(todayIso());
+  const [extrasOpen, setExtrasOpen] = useState(false);
   const [extraAmount, setExtraAmount] = useState(0);
   const [notes, setNotes] = useState("");
   const [due, setDue] = useState("");
@@ -113,8 +123,6 @@ export default function POS() {
   const [brandFilter, setBrandFilter] = useState<number | "">("");
   const [catFilter, setCatFilter] = useState<number | "">("");
   const [picked, setPicked] = useState<number | null>(null);
-  const [inquiry, setInquiry] = useState("");
-  const [cartOpen, setCartOpen] = useState(true);
   const [clock, setClock] = useState(() => new Date());
   const [offers, setOffers] = useState<any[]>([]);
   const [listId, setListId] = useState<number | "">("");
@@ -133,6 +141,7 @@ export default function POS() {
   const qtyRef = useRef<HTMLInputElement>(null);
   const priceRef = useRef<HTMLInputElement>(null);
   const extraRef = useRef<HTMLInputElement>(null);
+  const custBlurRef = useRef<number>(0);
   const catalogRef = useRef<Product[]>([]);
   const pickRef = useRef<(p: Product) => void>(() => {});
 
@@ -174,6 +183,7 @@ export default function POS() {
       if (!["held", "quote", "order"].includes(inv?.status)) return;
       setType(inv.type === "delivery" ? "delivery" : "normal");
       setDiscount(inv.discount || 0);
+      setDiscMode("egp");
       setExtraAmount(Number(inv.extra_amount || 0));
       setNotes(inv.notes || "");
       setCart((inv.items || []).map((it: any) => ({
@@ -199,15 +209,26 @@ export default function POS() {
   }, [params]);
 
   useEffect(() => {
-    if (!customerQ.trim()) {
-      setCustomers([]);
-      return;
-    }
+    get<{ data: any[] }>("/api/customers?pageSize=80").then((r) => {
+      const rows = r.data || [];
+      setCustPool(rows);
+      setCustomers(rows);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!custListOpen) return;
+    const q = customerQ.trim();
+    const local = q
+      ? custPool.filter((c) => [c.name, c.phone, c.whatsapp, c.area, c.city, String(c.id)].some((v) => String(v || "").toLowerCase().includes(q.toLowerCase())))
+      : custPool;
+    setCustomers(local);
+    if (!q) return;
     const tmr = setTimeout(() => {
-      get<{ data: any[] }>(`/api/customers?q=${encodeURIComponent(customerQ)}&pageSize=8`).then((r) => setCustomers(r.data)).catch(() => {});
-    }, 300);
+      get<{ data: any[] }>(`/api/customers?pageSize=50&q=${encodeURIComponent(q)}`).then((r) => setCustomers(r.data || local)).catch(() => {});
+    }, 200);
     return () => clearTimeout(tmr);
-  }, [customerQ]);
+  }, [customerQ, custListOpen, custPool]);
 
   const visible = catalog;
 
@@ -233,26 +254,22 @@ export default function POS() {
 
   function pickProduct(p: Product) {
     setPicked(p.id);
-    setInquiry(lang === "ar" ? p.name_ar : p.name_en);
     setQtyField((n) => n || 1);
     setPriceField(String(pickPrice(p)));
   }
 
-  function addPicked() {
-    const p = visible.find((x) => x.id === picked);
-    if (p) {
-      add(p, { qty: qtyField, price: priceField ? Number(priceField) : undefined });
-      return;
-    }
-    if (q.trim()) {
-      addFromSearch();
-      return;
-    }
-    playSound("err");
+  function locLines(p: Product) {
+    const rows: string[] = [];
+    if (p.warehouse) rows.push(`${tr("warehouse")}: ${p.warehouse}`);
+    if (p.drawer) rows.push(`${tr("bay")}: ${p.drawer}`);
+    if (p.rack) rows.push(`${tr("locRack")}: ${p.rack}`);
+    if (p.shelf) rows.push(`${tr("locColumn")}: ${p.shelf}`);
+    if (p.box) rows.push(`${tr("box")}: ${p.box}`);
+    return rows;
   }
 
-  function slotOf(p: Product) {
-    return [p.drawer, p.rack, p.shelf, p.box, p.location_name].filter(Boolean).join(" / ");
+  function canSell(p: Product) {
+    return p.kind === "service" || !!p.non_stock || Number(p.available) > 0;
   }
 
   function add(p: Product, opts?: { qty?: number; price?: number; unit?: Unit }) {
@@ -319,6 +336,7 @@ export default function POS() {
   function clearCart() {
     setCart([]);
     setDiscount(0);
+    setDiscMode("egp");
     setExtraAmount(0);
     setNotes("");
     setPaid(0);
@@ -330,8 +348,11 @@ export default function POS() {
 
   const subtotal = cart.reduce((s, l) => s + l.qty * l.unit_price, 0);
   const lineDisc = cart.reduce((s, l) => s + l.discount, 0);
-  const taxAmount = taxOn ? Math.round(Math.max(0, subtotal - discount - lineDisc) * (taxRate / 100) * 100) / 100 : 0;
-  const total = Math.max(0, subtotal - discount - lineDisc + taxAmount + Number(extraAmount || 0));
+  const discAmt = discMode === "pct"
+    ? Math.round((subtotal * Number(discount || 0) / 100) * 100) / 100
+    : Number(discount || 0);
+  const taxAmount = taxOn ? Math.round(Math.max(0, subtotal - discAmt - lineDisc) * (taxRate / 100) * 100) / 100 : 0;
+  const total = Math.max(0, subtotal - discAmt - lineDisc + taxAmount + Number(extraAmount || 0));
   const splitPaid = pays.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const remaining = method === "credit" || type === "delivery" || pays.length
     ? Math.max(0, total - (splitPaid || paid))
@@ -361,20 +382,35 @@ export default function POS() {
     setTodayInv(r.invoices || []);
   }
 
-  useEffect(() => {
-    loadToday().catch(() => {});
-  }, []);
-
-  async function openHeld() {
+  async function loadHeldList() {
     const [heldInv, quoteInv, orderInv] = await Promise.all([
       get<{ data: any[] }>("/api/invoices?status=held"),
       get<{ data: any[] }>("/api/invoices?status=quote"),
       get<{ data: any[] }>("/api/invoices?status=order"),
     ]);
     setHeld([...(heldInv.data || []), ...(quoteInv.data || []), ...(orderInv.data || [])]);
+  }
+
+  useEffect(() => {
+    loadToday().catch(() => {});
+    loadHeldList().catch(() => {});
+  }, []);
+
+  async function openHeld() {
+    await loadHeldList().catch(() => {});
     await loadToday().catch(() => {});
     setHeldTab("held");
     setHeldOpen(true);
+  }
+
+  async function cancelHeld(id: number) {
+    try {
+      await post(`/api/invoices/${id}/cancel`);
+      await loadHeldList();
+      await loadToday().catch(() => {});
+    } catch (e) {
+      setErr(apiMessage(tr, e));
+    }
   }
 
   async function previewWa(invoiceId: number) {
@@ -433,8 +469,8 @@ export default function POS() {
         payments: pays.filter((p) => p.amount > 0),
         tax_rate: taxOn ? taxRate : 0,
         price_list_id: listId || customer?.price_list_id || null,
-        discount,
-        due_date: due || null,
+        discount: discAmt,
+        due_date: payMethod === "credit" ? (due || invDate || null) : (due || null),
         notes,
         items: cartItems(),
       };
@@ -442,6 +478,7 @@ export default function POS() {
       if (opts?.hold) {
         playSound("ok");
         clearCart();
+        void loadHeldList();
         return;
       }
       playSound("done");
@@ -506,16 +543,25 @@ export default function POS() {
         clearCart();
       } else if (e.key === "F5") {
         e.preventDefault();
-        qtyRef.current?.focus();
-        qtyRef.current?.select();
+        setExtrasOpen(true);
+        setTimeout(() => {
+          qtyRef.current?.focus();
+          qtyRef.current?.select();
+        }, 50);
       } else if (e.key === "F6") {
         e.preventDefault();
-        priceRef.current?.focus();
-        priceRef.current?.select();
+        setExtrasOpen(true);
+        setTimeout(() => {
+          priceRef.current?.focus();
+          priceRef.current?.select();
+        }, 50);
       } else if (e.key === "F7") {
         e.preventDefault();
-        extraRef.current?.focus();
-        extraRef.current?.select();
+        setExtrasOpen(true);
+        setTimeout(() => {
+          extraRef.current?.focus();
+          extraRef.current?.select();
+        }, 50);
       } else if (e.key === "F8") {
         e.preventDefault();
         const i = selRef.current;
@@ -542,40 +588,9 @@ export default function POS() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const agent = lookups?.delivery_agents.find((a) => a.id === Number(agentId));
-  const payBtns = [
-    { code: "cash", label: tr("posPayCash") },
-    { code: "visa", label: tr("posPayCard") },
-    { code: "treasury", label: tr("posPayTreasury") },
-    { code: "credit", label: tr("posPayCredit") },
-  ];
-
   return (
     <div>
       <PrintLetterhead title={quoteMode ? tr("quoteMode") : tr("pos")} />
-      <div className="no-print mb-3 grid gap-3 md:grid-cols-3">
-        <Stat label={tr("salesToday")} value={money(todayStats.sales_today, lang)} hint={`${num(todayStats.invoices_today, lang)} ${tr("invoicesCount")}`} />
-        <Stat label={tr("collected")} value={money(todayStats.collected_today, lang)} accent="emerald" />
-        <Stat label={tr("accountCredit")} value={money(todayStats.credit_today, lang)} accent="rose" />
-      </div>
-      <div className="no-print mb-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="mb-2 text-sm font-bold">{tr("todayTransactions")}</div>
-        {!todayInv.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : (
-          <div className="max-h-40 space-y-1 overflow-auto">
-            {todayInv.map((h) => (
-              <button
-                key={h.id}
-                type="button"
-                className="flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-start text-sm"
-                onClick={() => nav(`/sales/${h.id}`)}
-              >
-                <span>{h.number} · {h.customer_name || tr("walkIn")} · {statusLabel(h.status, lang)}</span>
-                <span className="font-bold">{money(h.total, lang)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
       <div className="print-only table-wrap">
         <table>
           <thead>
@@ -606,269 +621,106 @@ export default function POS() {
         ))}
       </div>
 
-      <div className={`sahl-pos no-print ${cartOpen ? "" : "is-cart-off"}`}>
-        <aside className="sahl-pos-rail">
-          <PixelMark size={28} />
-          <div className="sahl-pos-rail-title">{quoteMode ? tr("quoteMode") : tr("easySell")}</div>
-          <button type="button" className="sahl-pos-rail-btn is-sell" title={tr("easySell")}>
-            <ShoppingBag size={18} />
-            <small>{tr("easySell")}</small>
-          </button>
-          <button type="button" className="sahl-pos-rail-btn" onClick={() => searchRef.current?.focus()} title={tr("posFieldSearch")}>
-            <Search size={18} />
-            <span>1</span>
-          </button>
-          <button type="button" className="sahl-pos-rail-btn" onClick={clearCart} title={`${tr("posSavePrintNew")} F12`}>
-            F12
-            <small>{tr("posSavePrintNew")}</small>
-          </button>
-          <button type="button" className="sahl-pos-rail-btn" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit({ print: true })} title={`${tr("posPaySettle")} F11`}>
-            F11
-            <small>{tr("posPaySettle")}</small>
-          </button>
-          <p className="sahl-pos-rail-hint">{tr("posShortcuts")}</p>
-        </aside>
-
-        <div className="sahl-pos-fields">
-          <label className="sahl-pos-field" data-n="1">
-            <span className="sahl-pos-flab"><b>1</b> {tr("posFieldSearch")}</span>
-            <input
-              ref={searchRef}
-              className={inputCls}
-              placeholder={`${tr("searchProduct")} / ${tr("barcode")}`}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addFromSearch(); } }}
-            />
-          </label>
-          <label className="sahl-pos-field" data-n="2">
-            <span className="sahl-pos-flab"><b>2</b> {tr("posFieldInquiry")}</span>
-            <input className={inputCls} readOnly value={inquiry} placeholder={tr("posFieldInquiry")} />
-          </label>
-          <label className="sahl-pos-field is-qty" data-n="3">
-            <span className="sahl-pos-flab"><b>3</b> {tr("qty")}</span>
-            <input ref={qtyRef} className={inputCls} type="number" min={1} value={qtyField} onChange={(e) => setQtyField(Number(e.target.value) || 1)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPicked(); } }} />
-          </label>
-          <label className="sahl-pos-field is-price" data-n="4">
-            <span className="sahl-pos-flab"><b>4</b> {tr("sellingPrice")}</span>
-            <input ref={priceRef} className={inputCls} type="number" value={priceField} onChange={(e) => setPriceField(e.target.value)} placeholder={tr("sellingPrice")} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPicked(); } }} />
-          </label>
-          <button type="button" className="sahl-pos-add" data-n="5" onClick={addPicked}>
-            <span className="sahl-pos-flab"><b>5</b></span>
-            <Check size={18} />
-            {tr("add")}
-          </button>
-          <label className="sahl-pos-field" data-n="6">
-            <span className="sahl-pos-flab"><b>6</b> {tr("posFieldCustomer")}</span>
-            <input
-              ref={customerRef}
-              className={inputCls}
-              value={customer ? `${customer.name} — ${customer.phone || ""} — ${money(customer.current_balance, lang)}` : customerQ}
-              onChange={(e) => { setCustomer(null); setCustomerQ(e.target.value); setWalkIn(e.target.value); }}
-              placeholder={`${tr("walkIn")} / ${tr("posUnregistered")}`}
-            />
-            {customers.length ? (
-              <div className="sahl-pos-suggest">
-                {customers.map((c) => (
-                  <button key={c.id} type="button" onClick={() => {
-                    setCustomer(c);
-                    setAddress(c.address || "");
-                    setArea(c.area || "");
-                    setCustomers([]);
-                    setCustomerQ("");
-                    setWalkIn("");
-                    if (c.price_list_id) setListId(c.price_list_id);
-                    if (c.discount_pct) setDiscount(Number(c.discount_pct) || 0);
-                  }}>
-                    {c.name} · {c.phone} · {money(c.current_balance, lang)}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </label>
-          <div className="sahl-pos-clock">
-            <b>{clock.toLocaleTimeString(lang === "ar" ? "ar-EG" : "en-GB", { hour: "2-digit", minute: "2-digit" })}</b>
-            <span>{clock.toLocaleDateString("en-GB")}</span>
-          </div>
-        </div>
-
-        <section className="sahl-pos-cart">
-          <button type="button" className="sahl-pos-cart-tog" onClick={() => setCartOpen((v) => !v)} title={tr("cart")}>
-            {cartOpen ? "»" : "«"}
-          </button>
-          {cartOpen ? (
-            cart.length === 0 ? <div className="py-10 text-center text-slate-400">{tr("emptyCart")}</div> : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>{tr("items")}</th>
-                    <th>{tr("qty")}</th>
-                    <th>{tr("price")}</th>
-                    <th>{tr("discount")}</th>
-                    <th>{tr("total")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cart.map((l, i) => (
-                    <tr key={`${l.id}-${l.unit_name}-${i}`} className={sel === i ? "is-sel" : ""} onClick={() => setSel(i)}>
-                      <td>{i + 1}</td>
-                      <td>
-                        <div className="font-bold">{lang === "ar" ? l.name_ar : l.name_en}</div>
-                        <div className="text-[11px] text-slate-400">{l.sku}{l.unit_name ? ` · ${l.unit_name}` : ""}</div>
-                        {l.track_serial ? (
-                          <input className={`${inputCls} mt-1`} placeholder={tr("serials")} value={l.serials.join(",")} onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, serials: e.target.value.split(/[,]+/).map((s) => s.trim()).filter(Boolean) } : x)))} />
-                        ) : null}
-                      </td>
-                      <td>
-                        <input className={`${inputCls} w-16`} type="number" min={1} max={l.kind === "service" || l.non_stock ? 9999 : l.available} value={l.qty} onChange={(e) => setCart((c) => c.map((x, j) => {
-                          if (j !== i) return x;
-                          const cap = x.kind === "service" || x.non_stock ? 9999 : Math.max(1, Number(x.available) || 1);
-                          const qty = Math.min(Math.max(1, Number(e.target.value) || 1), cap);
-                          return { ...x, qty, discount: offerDisc(x.id, qty, x.unit_price) };
-                        }))} />
-                      </td>
-                      <td>
-                        <input className={`${inputCls} w-20`} type="number" value={l.unit_price} onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, unit_price: Number(e.target.value) } : x)))} />
-                      </td>
-                      <td>
-                        <input className={`${inputCls} w-16`} type="number" value={l.discount} onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, discount: Number(e.target.value) } : x)))} />
-                      </td>
-                      <td className="font-black">{money(l.qty * l.unit_price - l.discount, lang)}</td>
-                      <td>
-                        <button className="text-rose-500" onClick={() => setCart((c) => c.filter((_, j) => j !== i))}>✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      <div className="no-print flex h-[calc(100dvh-4.5rem)] min-h-0 flex-col md:flex-row">
+        <section className="flex min-h-0 min-w-0 flex-[7] flex-col overflow-hidden bg-[var(--surface-2)]">
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-[var(--surface)] px-3 py-2">
+            <div className="relative min-w-[12rem] flex-1">
+              <Search className="pointer-events-none absolute start-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+              <input
+                ref={searchRef}
+                className={`${inputCls} ps-8`}
+                placeholder={tr("searchProduct")}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addFromSearch(); }}
+              />
             </div>
-            )
-          ) : null}
-        </section>
-
-        <footer className="sahl-pos-pay">
-          <div className="sahl-pos-paybtns">
-            {payBtns.map((b) => (
-              <button key={b.code} type="button" className={`sahl-pos-paybtn ${method === b.code ? "is-on" : ""}`} onClick={() => setMethod(b.code)}>
-                {b.label}
-              </button>
-            ))}
+            <button
+              type="button"
+              className={`rounded-full px-3 py-1.5 text-xs font-bold ${type === "delivery" ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+              onClick={() => setType(type === "delivery" ? "normal" : "delivery")}
+            >
+              {tr("deliverySale")}
+            </button>
+            <button type="button" className="relative rounded-full border border-slate-200 px-3 py-1.5 text-xs font-bold" onClick={() => void openHeld()}>
+              {tr("heldInvoices")}
+              {held.length ? <span className="ms-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">{held.length}</span> : null}
+            </button>
+            <button type="button" className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-bold" onClick={() => setExtrasOpen(true)}>
+              <MoreHorizontal size={14} /> {tr("posMore")}
+            </button>
+            <div className="ms-auto text-xs text-slate-500">
+              <b>{clock.toLocaleTimeString(lang === "ar" ? "ar-EG" : "en-GB", { hour: "2-digit", minute: "2-digit" })}</b>
+            </div>
           </div>
-          <label className="sahl-pos-mini">
-            <span>{tr("tax")} %</span>
-            <span className="flex items-center gap-1">
-              <input type="checkbox" checked={taxOn} onChange={(e) => setTaxOn(e.target.checked)} />
-              <input className={`${inputCls} w-16`} type="number" value={taxRate} onChange={(e) => setTaxRate(Number(e.target.value))} />
-            </span>
-          </label>
-          <label className="sahl-pos-mini">
-            <span>{tr("posExtra")} F7</span>
-            <input ref={extraRef} className={`${inputCls} w-24`} type="number" value={extraAmount} onChange={(e) => setExtraAmount(Number(e.target.value))} />
-          </label>
-          <label className="sahl-pos-mini">
-            <span>{tr("discount")}</span>
-            <input className={`${inputCls} w-24`} type="number" value={discount} onChange={(e) => setDiscount(Number(e.target.value))} />
-          </label>
-          <label className="sahl-pos-mini grow">
-            <span>{tr("notes")}</span>
-            <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </label>
-          {method === "cash" || method === "treasury" ? (
-            <label className="sahl-pos-mini">
-              <span>{tr("cashAccount")}</span>
-              <select className={inputCls} value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value ? Number(e.target.value) : "")}>
-                <option value="">-</option>
-                {(lookups?.cash_accounts || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          {type === "delivery" ? (
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-[var(--surface)] px-3 py-2">
+              <select className={`${inputCls} w-44`} value={agentId} onChange={(e) => setAgentId(e.target.value ? Number(e.target.value) : "")}>
+                <option value="">{tr("agent")}</option>
+                {(lookups?.delivery_agents || []).filter((a) => !a.role_type || a.role_type === "delivery" || a.role_type === "both").map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
               </select>
-            </label>
+              <input className={`${inputCls} w-32`} type="number" placeholder={tr("deliveryFee")} value={extraAmount} onChange={(e) => setExtraAmount(Number(e.target.value))} />
+              <input className={`${inputCls} w-40`} placeholder={tr("address")} value={address} onChange={(e) => setAddress(e.target.value)} />
+              <input className={`${inputCls} w-28`} placeholder={tr("area")} value={area} onChange={(e) => setArea(e.target.value)} />
+            </div>
           ) : null}
-          {(method === "credit" || type === "delivery") ? (
-            <label className="sahl-pos-mini">
-              <span>{tr("paid")}</span>
-              <input className={`${inputCls} w-24`} type="number" value={paid} onChange={(e) => setPaid(Number(e.target.value))} />
-            </label>
-          ) : null}
-          {method === "credit" ? (
-            <label className="sahl-pos-mini">
-              <span>{tr("dueDate")}</span>
-              <input className={inputCls} type="date" value={due} onChange={(e) => setDue(e.target.value)} />
-            </label>
-          ) : null}
-          <div className="sahl-pos-totals">
-            <span>{tr("subtotal")}: {money(subtotal, lang)}</span>
-            {taxOn ? <span>{tr("taxAmount")}: {money(taxAmount, lang)}</span> : null}
-            <b>{tr("total")}: {money(total, lang)}</b>
-            <span>{tr("remaining")}: {money(remaining, lang)}</span>
-          </div>
-          {err ? <div className="w-full text-sm text-rose-600">{err}</div> : null}
-          <div className="sahl-pos-actions">
-            <Btn className="gx-confirm" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit({ print: true })}>{quoteMode ? tr("quoteMode") : tr("confirmSale")} F10</Btn>
-            <Btn className="gx-quiet" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit()}>{tr("saleWithoutPrint")} F9</Btn>
-            <Btn kind="soft" disabled={busy || !cart.length || !can("sales.create")} onClick={() => submit({ paid: total, method: "cash" })}>{tr("payNow")}</Btn>
-            <PrintBtn />
-            <Btn kind="ghost" disabled={busy || !cart.length} onClick={holdInvoice}>{tr("posHold")}</Btn>
-            <Btn kind="ghost" disabled={busy || !cart.length} onClick={() => submit({ quote: true })}>{tr("reserveQuote")}</Btn>
-            <Btn kind="ghost" disabled={busy || !cart.length} onClick={() => submit({ order: true })}>{tr("saveOrder")}</Btn>
-            <Btn kind="ghost" onClick={clearCart}>{tr("posClear")} F4</Btn>
-            {can("returns.create") ? <Btn kind="ghost" onClick={() => setRetOpen(true)}>{tr("returnFromInvoice")}</Btn> : null}
-            <Btn kind="soft" onClick={() => void openHeld()}>{tr("heldInvoices")}</Btn>
-            <button type="button" className="text-xs font-bold text-cyan-700" onClick={() => setCustOpen(true)}>{tr("addCustomer")}</button>
-            <select className={`${inputCls} w-36`} value={type} onChange={(e) => setType(e.target.value as "normal" | "delivery")}>
-              <option value="normal">{tr("normalSale")}</option>
-              <option value="delivery">{tr("deliverySale")}</option>
-            </select>
-            <select className={`${inputCls} w-36`} value={listId} onChange={(e) => setListId(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">{tr("priceList")}</option>
-              {(lookups?.price_lists || []).map((l) => <option key={l.id} value={l.id}>{lang === "ar" ? l.name : (l.name_en || l.name)}</option>)}
-            </select>
-            <select className={`${inputCls} w-36`} value={salesAgentId} onChange={(e) => setSalesAgentId(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">{tr("salesAgent")}</option>
-              {(lookups?.delivery_agents || []).filter((a) => !a.role_type || a.role_type === "sales" || a.role_type === "both").map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-            {type === "delivery" ? (
-              <>
-                <select className={`${inputCls} w-36`} value={agentId} onChange={(e) => setAgentId(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">{tr("agent")}</option>
-                  {(lookups?.delivery_agents || []).filter((a) => !a.role_type || a.role_type === "delivery" || a.role_type === "both").map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-                {agent ? <span className="text-xs">{agent.code} {agent.phone || ""}</span> : null}
-                <input className={`${inputCls} w-40`} placeholder={tr("address")} value={address} onChange={(e) => setAddress(e.target.value)} />
-                <input className={`${inputCls} w-28`} placeholder={tr("area")} value={area} onChange={(e) => setArea(e.target.value)} />
-              </>
-            ) : null}
-          </div>
-        </footer>
-
-        <section className="sahl-pos-grid">
-          <div className="sahl-pos-grid-tools">
-            <button type="button" className={`sahl-pos-chip ${kindFilter === "" && brandFilter === "" && typeFilter === "" && catFilter === "" ? "is-on" : ""}`} onClick={() => { setKindFilter(""); setTypeFilter(""); setBrandFilter(""); setCatFilter(""); }}>{tr("all")}</button>
-            <button type="button" className={`sahl-pos-chip ${kindFilter === "product" ? "is-on" : ""}`} onClick={() => setKindFilter(kindFilter === "product" ? "" : "product")}>{tr("products")}</button>
-            <button type="button" className={`sahl-pos-chip ${kindFilter === "service" ? "is-on" : ""}`} onClick={() => setKindFilter(kindFilter === "service" ? "" : "service")}>{tr("services")}</button>
-            {(lookups?.categories || []).slice(0, 8).map((c) => (
-              <button key={`cat-${c.id}`} type="button" className={`sahl-pos-chip ${catFilter === c.id ? "is-on" : ""}`} onClick={() => setCatFilter(catFilter === c.id ? "" : c.id)}>
+          <div className="flex flex-wrap gap-2 overflow-x-auto px-3 py-2">
+            <button
+              type="button"
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${kindFilter === "" && brandFilter === "" && typeFilter === "" && catFilter === "" ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+              onClick={() => { setKindFilter(""); setTypeFilter(""); setBrandFilter(""); setCatFilter(""); }}
+            >
+              {tr("all")}
+            </button>
+            <button
+              type="button"
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${kindFilter === "product" ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+              onClick={() => setKindFilter(kindFilter === "product" ? "" : "product")}
+            >
+              {tr("products")}
+            </button>
+            <button
+              type="button"
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${kindFilter === "service" ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+              onClick={() => setKindFilter(kindFilter === "service" ? "" : "service")}
+            >
+              {tr("services")}
+            </button>
+            {(lookups?.categories || []).map((c) => (
+              <button
+                key={`cat-${c.id}`}
+                type="button"
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${catFilter === c.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+                onClick={() => setCatFilter(catFilter === c.id ? "" : c.id)}
+              >
                 {lang === "ar" ? c.name_ar : c.name_en}
               </button>
             ))}
-            {(lookups?.brands || []).slice(0, 8).map((b) => (
-              <button key={b.id} type="button" className={`sahl-pos-chip ${brandFilter === b.id ? "is-on" : ""}`} onClick={() => setBrandFilter(brandFilter === b.id ? "" : b.id)}>
+            {(lookups?.brands || []).map((b) => (
+              <button
+                key={`brand-${b.id}`}
+                type="button"
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${brandFilter === b.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+                onClick={() => setBrandFilter(brandFilter === b.id ? "" : b.id)}
+              >
                 {lang === "ar" ? b.name_ar : b.name_en}
               </button>
             ))}
-            {(lookups?.part_types || []).slice(0, 6).map((t) => (
-              <button key={t.id} type="button" className={`sahl-pos-chip ${typeFilter === t.id ? "is-on" : ""}`} onClick={() => setTypeFilter(typeFilter === t.id ? "" : t.id)}>
+            {(lookups?.part_types || []).map((t) => (
+              <button
+                key={`pt-${t.id}`}
+                type="button"
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${typeFilter === t.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+                onClick={() => setTypeFilter(typeFilter === t.id ? "" : t.id)}
+              >
                 {lang === "ar" ? t.name_ar : t.name_en}
               </button>
             ))}
           </div>
           {related.length ? (
-            <div className="gx-related">
+            <div className="gx-related px-3">
               {related.map((p) => (
                 <button key={`rel-${p.id}`} type="button" className="gx-related-item" onClick={() => add(p)}>
                   <div className="text-xs font-bold">{lang === "ar" ? p.name_ar : p.name_en}</div>
@@ -877,76 +729,377 @@ export default function POS() {
               ))}
             </div>
           ) : null}
-          <div className="sahl-pos-grid-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>{tr("items")}</th>
-                  <th>{tr("unit")}</th>
-                  <th>{tr("warehouseQty")}</th>
-                  <th>{tr("accountsQty")}</th>
-                  <th>{tr("category")}</th>
-                  <th>{tr("partType")}</th>
-                  <th>{tr("brand")}</th>
-                  <th>{tr("compatible")}</th>
-                  <th>{tr("packQty")}</th>
-                  <th>{tr("slotNo")}</th>
-                  <th>{tr("sellingPrice")}</th>
-                  <th>{tr("minPrice")}</th>
-                  {showCost ? <th>{tr("lastBuyPrice")}</th> : null}
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((p) => {
-                  const inCart = cart.find((c) => c.id === p.id);
-                  const models = (p.models || []).map((m) => m.name).join(" / ");
-                  const pack = p.units?.find((u) => u.is_base)?.factor || p.units?.[0]?.factor || 1;
-                  return (
-                    <tr
-                      key={p.id}
-                      className={`${picked === p.id ? "is-pick" : ""} ${inCart ? "is-in" : ""}`}
-                      onClick={() => pickProduct(p)}
-                      onDoubleClick={() => add(p)}
-                    >
-                      <td>{p.id}</td>
-                      <td className="is-name">{lang === "ar" ? p.name_ar : p.name_en}</td>
-                      <td>{p.unit || "-"}</td>
-                      <td>{p.kind === "service" || p.non_stock ? "-" : num(p.available, lang)}</td>
-                      <td>{p.kind === "service" || p.non_stock ? "-" : num(p.current_stock ?? p.available, lang)}</td>
-                      <td>{(lang === "ar" ? p.category_ar : p.category_en) || "-"}</td>
-                      <td>{(lang === "ar" ? p.part_type_ar : p.part_type_en) || "-"}</td>
-                      <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || "-"}</td>
-                      <td className="is-name">{models || "-"}</td>
-                      <td>{pack}</td>
-                      <td>{slotOf(p) || "-"}</td>
-                      <td className="is-price">{money(p.selling_price, lang)}</td>
-                      <td className="is-price">{money(p.min_selling_price, lang)}</td>
-                      {showCost ? <td className="is-price">{money(Number(p.purchase_price || 0), lang)}</td> : null}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4">
+              {visible.map((p) => {
+                const sell = canSell(p);
+                const loc = locLines(p);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={!sell}
+                    onClick={() => { if (sell) add(p); else playSound("err"); }}
+                    className={`relative rounded-2xl border border-slate-200 bg-[var(--surface)] p-3 text-start shadow-sm transition ${sell ? "hover:border-[var(--ink)]" : "cursor-not-allowed opacity-50 grayscale"} ${picked === p.id ? "ring-2 ring-[var(--ink)]" : ""}`}
+                  >
+                    {sell ? (
+                      <span className="absolute end-2 top-2 rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-black">{p.kind === "service" || p.non_stock ? "∞" : num(p.available, lang)}</span>
+                    ) : (
+                      <span className="absolute end-2 top-2 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-700">{tr("nfd")}</span>
+                    )}
+                    <div className="pe-10 text-sm font-black leading-snug">{lang === "ar" ? p.name_ar : p.name_en}</div>
+                    <div className="mt-1 text-[11px] text-slate-500">{(lang === "ar" ? p.category_ar : p.category_en) || tr("category")}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      {[(lang === "ar" ? p.brand_ar : p.brand_en), (lang === "ar" ? p.part_type_ar : p.part_type_en)].filter(Boolean).join(" · ") || "—"}
+                    </div>
+                    <div className="mt-1 font-mono text-[11px] text-slate-400">{p.barcode || p.sku}</div>
+                    {loc.length ? <div className="mt-1 space-y-0.5 text-[10px] text-slate-500">{loc.map((row) => <div key={row}>{row}</div>)}</div> : null}
+                    {p.supplier_name ? <div className="mt-1 text-[11px] text-slate-500">{tr("supplier")}: {p.supplier_name}</div> : null}
+                    <div className="mt-2 text-base font-black text-[var(--ink)]">{money(pickPrice(p), lang)}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {!visible.length ? <div className="py-16 text-center text-sm text-slate-400">{tr("noResults")}</div> : null}
           </div>
         </section>
+
+        <aside className="flex min-h-0 min-w-0 flex-[3] flex-col border-s border-slate-200 bg-[var(--surface)] md:max-w-[32%]">
+          <div className="relative z-30 space-y-2 overflow-visible border-b border-slate-200 p-3">
+            <div className="flex gap-2">
+              <div className="relative min-w-0 flex-1">
+                <input
+                  ref={customerRef}
+                  className={`${inputCls} pe-16`}
+                  placeholder={tr("posFieldCustomer")}
+                  value={customer ? customer.name : customerQ}
+                  autoComplete="off"
+                  onFocus={() => {
+                    window.clearTimeout(custBlurRef.current);
+                    setCustListOpen(true);
+                  }}
+                  onChange={(e) => {
+                    window.clearTimeout(custBlurRef.current);
+                    setCustomer(null);
+                    setCustomerQ(e.target.value);
+                    setWalkIn(e.target.value);
+                    setCustListOpen(true);
+                  }}
+                  onBlur={() => {
+                    custBlurRef.current = window.setTimeout(() => setCustListOpen(false), 200);
+                  }}
+                />
+                <span className="absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 text-slate-400">
+                  {customer ? (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      className="rounded p-1"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setCustomer(null);
+                        setCustomerQ("");
+                        setWalkIn("");
+                        setCustListOpen(true);
+                        customerRef.current?.focus();
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="rounded p-1"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setCustListOpen((v) => !v);
+                      customerRef.current?.focus();
+                    }}
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                </span>
+                {custListOpen ? (
+                  <div className="absolute start-0 end-0 z-50 mt-1 max-h-56 overflow-auto rounded-xl border border-slate-200 bg-[var(--surface)] text-[var(--ink)] shadow-lg">
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-2 text-start text-sm hover:bg-[var(--surface-2)]"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setCustomer(null);
+                        setCustomerQ("");
+                        setWalkIn("");
+                        setCustListOpen(false);
+                      }}
+                    >
+                      {tr("walkIn")}
+                    </button>
+                    {customers.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="block w-full px-3 py-2 text-start text-sm hover:bg-[var(--surface-2)]"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setCustomer(c);
+                          setCustomerQ("");
+                          setWalkIn("");
+                          setAddress(c.address || "");
+                          setArea(c.area || "");
+                          if (c.price_list_id) setListId(Number(c.price_list_id));
+                          setCustListOpen(false);
+                        }}
+                      >
+                        <div className="font-bold">{c.name}</div>
+                        <div className="text-[11px] text-slate-500">{[c.phone, c.area, c.city].filter(Boolean).join(" · ")}</div>
+                      </button>
+                    ))}
+                    {!customers.length ? <div className="px-3 py-3 text-sm text-slate-400">{tr("noResults")}</div> : null}
+                  </div>
+                ) : null}
+              </div>
+              <button type="button" className="shrink-0 rounded-xl border border-slate-200 px-2 text-xs font-bold" onClick={() => setCustOpen(true)}>+ {tr("new")}</button>
+            </div>
+            <div className="flex gap-1 overflow-x-auto">
+              <button type="button" className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${listId === "" ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`} onClick={() => setListId("")}>{tr("priceList")}</button>
+              {(lookups?.price_lists || []).map((l) => (
+                <button key={l.id} type="button" className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${listId === l.id ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`} onClick={() => setListId(l.id)}>
+                  {lang === "ar" ? l.name : (l.name_en || l.name)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {cart.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-slate-400">
+                <ShoppingBag size={36} />
+                <div className="text-sm font-bold">{tr("cartEmpty")}</div>
+                <div className="text-xs">{tr("emptyCart")}</div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {cart.map((l, i) => (
+                  <div key={`${l.id}-${l.unit_name}-${i}`} className={`rounded-xl border px-3 py-2 ${sel === i ? "border-[var(--ink)]" : "border-slate-200"}`} onClick={() => setSel(i)}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold">{lang === "ar" ? l.name_ar : l.name_en}</div>
+                        <div className="text-[11px] text-slate-400">{l.sku}{l.unit_name ? ` · ${l.unit_name}` : ""}</div>
+                      </div>
+                      <button type="button" className="text-rose-500" onClick={() => setCart((c) => c.filter((_, j) => j !== i))}><X size={14} /></button>
+                    </div>
+                    {l.track_serial ? (
+                      <input className={`${inputCls} mt-1`} placeholder={tr("serials")} value={l.serials.join(",")} onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, serials: e.target.value.split(/[,]+/).map((s) => s.trim()).filter(Boolean) } : x)))} />
+                    ) : null}
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <button type="button" className="rounded-lg border p-1" onClick={() => setCart((c) => c.map((x, j) => {
+                          if (j !== i) return x;
+                          const qty = Math.max(1, x.qty - 1);
+                          return { ...x, qty, discount: offerDisc(x.id, qty, x.unit_price) };
+                        }))}><Minus size={12} /></button>
+                        <span className="w-8 text-center text-sm font-black">{l.qty}</span>
+                        <button type="button" className="rounded-lg border p-1" onClick={() => setCart((c) => c.map((x, j) => {
+                          if (j !== i) return x;
+                          const cap = x.kind === "service" || x.non_stock ? 9999 : Math.max(1, Number(x.available) || 1);
+                          const qty = Math.min(x.qty + 1, cap);
+                          return { ...x, qty, discount: offerDisc(x.id, qty, x.unit_price) };
+                        }))}><Plus size={12} /></button>
+                      </div>
+                      <div className="text-sm font-black">{money(l.qty * l.unit_price - l.discount, lang)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="sticky bottom-0 space-y-2 border-t border-slate-200 bg-[var(--surface)] p-3">
+            <div className="flex items-center justify-between text-sm">
+              <span>{tr("subtotal")}</span>
+              <span className="font-bold">{money(subtotal, lang)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold">{tr("discount")}</span>
+              <input className={`${inputCls} w-20`} type="number" value={discount} onChange={(e) => setDiscount(Number(e.target.value))} />
+              <button type="button" className={`rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "egp" ? "bg-[var(--ink)] text-white" : "border"}`} onClick={() => setDiscMode("egp")}>{tr("discountEgp")}</button>
+              <button type="button" className={`rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "pct" ? "bg-[var(--ink)] text-white" : "border"}`} onClick={() => setDiscMode("pct")}>%</button>
+              <span className="ms-auto text-xs text-slate-500">{money(discAmt, lang)}</span>
+            </div>
+            {type === "delivery" ? (
+              <div className="flex items-center justify-between text-sm">
+                <span>{tr("deliveryFee")}</span>
+                <span className="font-bold">{money(Number(extraAmount || 0), lang)}</span>
+              </div>
+            ) : null}
+            {taxOn ? (
+              <div className="flex items-center justify-between text-sm">
+                <span>{tr("taxAmount")}</span>
+                <span>{money(taxAmount, lang)}</span>
+              </div>
+            ) : null}
+            <div className="flex items-end justify-between">
+              <span className="text-sm font-bold">{tr("total")}</span>
+              <span className="text-2xl font-black text-[var(--ink)]">{money(total, lang)}</span>
+            </div>
+            <div className="flex gap-1">
+              {[{ code: "cash", label: tr("posPayCash") }, { code: "visa", label: tr("posPayCard") }, { code: "credit", label: tr("posPayCredit") }].map((b) => (
+                <button key={b.code} type="button" className={`flex-1 rounded-xl py-1.5 text-xs font-bold ${method === b.code ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`} onClick={() => setMethod(b.code)}>{b.label}</button>
+              ))}
+            </div>
+            <label className="flex items-center justify-between gap-2 text-xs">
+              <span>{tr("invoiceDate")}</span>
+              <input className={`${inputCls} w-36`} type="date" value={invDate} onChange={(e) => { setInvDate(e.target.value); if (method === "credit") setDue(e.target.value); }} />
+            </label>
+            {method === "credit" ? (
+              <label className="flex items-center justify-between gap-2 text-xs">
+                <span>{tr("dueDate")}</span>
+                <input className={`${inputCls} w-36`} type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+              </label>
+            ) : null}
+            {err ? <div className="text-sm text-rose-600">{err}</div> : null}
+            <div className="grid grid-cols-1 gap-2">
+              <Btn kind="ghost" disabled={busy || !cart.length} onClick={holdInvoice}>{tr("posHold")}</Btn>
+              <Btn className="gx-confirm" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit({ print: true })}>{quoteMode ? tr("quoteMode") : tr("confirmSale")}</Btn>
+              <Btn className="gx-quiet" disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer} onClick={() => submit()}>{tr("saleWithoutPrint")}</Btn>
+            </div>
+          </div>
+        </aside>
       </div>
 
-      <Modal open={heldOpen} title={tr("heldInvoices")} onClose={() => setHeldOpen(false)}>
+      <Modal open={extrasOpen} title={tr("posMore")} onClose={() => setExtrasOpen(false)} wide>
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <Stat label={tr("salesToday")} value={money(todayStats.sales_today, lang)} hint={`${num(todayStats.invoices_today, lang)} ${tr("invoicesCount")}`} />
+            <Stat label={tr("collected")} value={money(todayStats.collected_today, lang)} accent="emerald" />
+            <Stat label={tr("accountCredit")} value={money(todayStats.credit_today, lang)} accent="rose" />
+          </div>
+          <div>
+            <div className="mb-2 text-sm font-bold">{tr("todayTransactions")}</div>
+            {!todayInv.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : (
+              <div className="max-h-32 space-y-1 overflow-auto">
+                {todayInv.map((h) => (
+                  <button key={h.id} type="button" className="flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-start text-sm" onClick={() => nav(`/sales/${h.id}`)}>
+                    <span>{h.number} · {h.customer_name || tr("walkIn")} · {statusLabel(h.status, lang)}</span>
+                    <span className="font-bold">{money(h.total, lang)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("qty")} F5</span>
+              <input ref={qtyRef} className={inputCls} type="number" min={1} value={qtyField} onChange={(e) => setQtyField(Number(e.target.value) || 1)} />
+            </label>
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("sellingPrice")} F6</span>
+              <input ref={priceRef} className={inputCls} value={priceField} onChange={(e) => setPriceField(e.target.value)} />
+            </label>
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("posExtra")} F7</span>
+              <input ref={extraRef} className={inputCls} type="number" value={extraAmount} onChange={(e) => setExtraAmount(Number(e.target.value))} />
+            </label>
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("tax")} %</span>
+              <span className="flex items-center gap-1">
+                <input type="checkbox" checked={taxOn} onChange={(e) => setTaxOn(e.target.checked)} />
+                <input className={inputCls} type="number" value={taxRate} onChange={(e) => setTaxRate(Number(e.target.value))} />
+              </span>
+            </label>
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("notes")}</span>
+              <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </label>
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("salesAgent")}</span>
+              <select className={inputCls} value={salesAgentId} onChange={(e) => setSalesAgentId(e.target.value ? Number(e.target.value) : "")}>
+                <option value="">-</option>
+                {(lookups?.delivery_agents || []).filter((a) => !a.role_type || a.role_type === "sales" || a.role_type === "both").map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </label>
+            {(method === "cash" || method === "treasury") ? (
+              <label className="text-xs">
+                <span className="mb-1 block font-bold">{tr("cashAccount")}</span>
+                <select className={inputCls} value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">-</option>
+                  {(lookups?.cash_accounts || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </label>
+            ) : null}
+            {(method === "credit" || type === "delivery") ? (
+              <label className="text-xs">
+                <span className="mb-1 block font-bold">{tr("paid")}</span>
+                <input className={inputCls} type="number" value={paid} onChange={(e) => setPaid(Number(e.target.value))} />
+              </label>
+            ) : null}
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-bold">{tr("splitPay")}</div>
+            {pays.map((p, i) => (
+              <div key={i} className="mb-1 flex gap-2">
+                <select className={inputCls} value={p.method} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, method: e.target.value } : x))}>
+                  <option value="cash">{tr("posPayCash")}</option>
+                  <option value="visa">{tr("posPayCard")}</option>
+                  <option value="treasury">{tr("posPayTreasury")}</option>
+                </select>
+                <input className={inputCls} type="number" value={p.amount} onChange={(e) => setPays(pays.map((x, j) => j === i ? { ...x, amount: Number(e.target.value) } : x))} />
+              </div>
+            ))}
+            <button type="button" className="text-xs font-bold text-cyan-700" onClick={() => setPays([...pays, { method: "cash", amount: 0 }])}>{tr("addPayment")}</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn kind="soft" disabled={busy || !cart.length || !can("sales.create")} onClick={() => submit({ paid: total, method: "cash" })}>{tr("payNow")}</Btn>
+            <PrintBtn />
+            <Btn kind="ghost" disabled={busy || !cart.length} onClick={() => submit({ quote: true })}>{tr("reserveQuote")}</Btn>
+            <Btn kind="ghost" disabled={busy || !cart.length} onClick={() => submit({ order: true })}>{tr("saveOrder")}</Btn>
+            <Btn kind="ghost" onClick={clearCart}>{tr("posClear")} F4</Btn>
+            {can("returns.create") ? <Btn kind="ghost" onClick={() => { setExtrasOpen(false); setRetOpen(true); }}>{tr("returnFromInvoice")}</Btn> : null}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={heldOpen} title={tr("heldInvoices")} onClose={() => setHeldOpen(false)} wide>
         <div className="mb-3 flex flex-wrap gap-1">
           {([["held", tr("heldInvoices")], ["print", tr("heldPrint")], ["wa", tr("whatsapp")]] as const).map(([id, label]) => (
             <button key={id} type="button" className={`period-chip ${heldTab === id ? "is-on" : ""}`} onClick={() => setHeldTab(id)}>{label}</button>
           ))}
         </div>
         {heldTab === "held" ? (
-          <>
-            {(held || []).map((h) => (
-              <button key={h.id} className="mb-2 block w-full rounded-xl border px-3 py-2 text-start text-sm" onClick={() => { setHeldOpen(false); nav(`/pos?held=${h.id}`); }}>
-                {h.number} · {statusLabel(h.status, lang)} · {h.customer_name || tr("walkIn")} · {money(h.total, lang)}
-              </button>
-            ))}
-            {!held.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : null}
-          </>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{tr("invoiceNo")}</th>
+                  <th>{tr("customer")}</th>
+                  <th>{tr("total")}</th>
+                  <th>{tr("status")}</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(held || []).map((h) => (
+                  <tr key={h.id}>
+                    <td>{h.number}</td>
+                    <td>{h.customer_name || tr("walkIn")}</td>
+                    <td className="font-bold">{money(h.total, lang)}</td>
+                    <td>{statusLabel(h.status, lang)}</td>
+                    <td>
+                      <div className="flex flex-wrap gap-2 text-xs font-bold">
+                        <button type="button" className="text-cyan-700" onClick={() => { setHeldOpen(false); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
+                        <button type="button" className="text-slate-600" onClick={() => nav(`/sales/${h.id}`)}>{tr("preview")}</button>
+                        <button type="button" className="text-cyan-700" onClick={() => { setHeldOpen(false); nav(`/sales/${h.id}`); setTimeout(() => window.print(), 400); }}>{tr("print")}</button>
+                        <button type="button" className="text-emerald-700" disabled={!waEnabled || !can("whatsapp.send")} onClick={() => void previewWa(h.id)}>{tr("whatsapp")}</button>
+                        <button type="button" className="text-rose-600" onClick={() => void cancelHeld(h.id)}>{tr("delete")}</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!held.length ? <div className="p-3 text-sm text-slate-400">{tr("noData")}</div> : null}
+          </div>
         ) : (
           <>
             {(todayInv || []).map((h) => (

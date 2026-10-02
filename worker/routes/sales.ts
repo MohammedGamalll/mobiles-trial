@@ -329,7 +329,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
       ? round2(splitPays.reduce((s, p) => s + p.amount, 0))
       : round2(b.payment_method === "credit" ? b.paid || 0 : b.paid ?? (type === "normal" ? total : 0));
   const remaining = hold ? 0 : round2(total - paid);
-  if (!hold) {
+  if (!hold && type !== "delivery") {
     const cred = creditError(customer, remaining);
     if (cred) return c.json({ error: cred }, 400);
   }
@@ -560,8 +560,10 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
   if (row.customer_id) {
     customer = await c.env.DB.prepare("SELECT credit_limit, current_balance FROM customers WHERE id = ?").bind(row.customer_id).first();
   }
-  const cred = creditError(customer, remaining);
-  if (cred) return c.json({ error: cred }, 400);
+  if (row.type !== "delivery") {
+    const cred = creditError(customer, remaining);
+    if (cred) return c.json({ error: cred }, 400);
+  }
   if (surplus > 0 && !row.customer_id) return c.json({ error: "customer_required" }, 400);
   try {
     await c.env.DB.transaction(async (tx) => {
