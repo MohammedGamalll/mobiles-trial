@@ -8,6 +8,7 @@ import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
+import { ProductSuggestList, useProductSuggest } from "../components/ProductSuggest";
 
 type Unit = { id?: number; name: string; factor: number; barcode?: string; selling_price: number; is_base?: number };
 
@@ -144,6 +145,7 @@ export default function POS() {
   const custBlurRef = useRef<number>(0);
   const catalogRef = useRef<Product[]>([]);
   const pickRef = useRef<(p: Product) => void>(() => {});
+  const suggest = useProductSuggest(q, true, catalog);
 
   useEffect(() => {
     get<{ data: any[] }>("/api/offers").then((r) => setOffers(r.data || [])).catch(() => {});
@@ -631,8 +633,21 @@ export default function POS() {
                 className={`${inputCls} ps-8`}
                 placeholder={tr("searchProduct")}
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") addFromSearch(); }}
+                autoComplete="off"
+                onFocus={() => { suggest.cancelClose(); if (q.trim()) suggest.setOpen(true); }}
+                onBlur={() => suggest.scheduleClose()}
+                onChange={(e) => { setQ(e.target.value); suggest.setOpen(true); }}
+                onKeyDown={(e) => {
+                  suggest.onKeyDown(e, (p) => add(p as Product), () => addFromSearch());
+                }}
+              />
+              <ProductSuggestList
+                hits={suggest.hits}
+                open={suggest.open}
+                hi={suggest.hi}
+                onHover={suggest.setHi}
+                showPrice
+                onPick={(p) => add(p as Product)}
               />
             </div>
             <button

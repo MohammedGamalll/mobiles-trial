@@ -175,6 +175,9 @@ export default function Products() {
       <SmartFilter
         f={f}
         date={false}
+        suggestProducts
+        suggestRows={data}
+        searchPlaceholder={tr("searchProduct")}
         fields={[
           { key: "kind", label: "productKind", type: "select", quick: true, options: [{ value: "product", label: tr("kindProduct") }, { value: "service", label: tr("kindService") }] },
           { key: "brand_id", label: "brand", type: "select", quick: true, lookup: "brands" },

@@ -335,10 +335,15 @@ catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create
          OR EXISTS (SELECT 1 FROM product_models pm JOIN device_models dm ON dm.id = pm.model_id
                     WHERE pm.product_id = p.id AND (dm.name LIKE ? OR dm.code LIKE ?))
        )
-       ORDER BY CASE WHEN p.barcode = ? OR p.sku = ? OR p.extra_code1 = ? THEN 0 ELSE 1 END, p.name_en
+       ORDER BY CASE
+         WHEN p.barcode = ? OR p.sku = ? OR p.extra_code1 = ? THEN 0
+         WHEN p.name_ar LIKE ? OR p.name_en LIKE ? THEN 1
+         WHEN p.sku LIKE ? OR p.barcode LIKE ? THEN 2
+         ELSE 3
+       END, p.name_ar
        LIMIT 30`,
     )
-    .bind(q, q, q, q, q, l, l, l, l, l, l, l, l, l, q, l, l, q, q, q)
+    .bind(q, q, q, q, q, l, l, l, l, l, l, l, l, l, q, l, l, q, q, q, `${q}%`, `${q}%`, `${q}%`, `${q}%`)
     .all();
   const withModels = await attachModels(c.env.DB, results as { id: number }[]);
   const data = withoutCost(c.get("user"), await attachUnits(c.env.DB, withModels) as Record<string, unknown>[]);

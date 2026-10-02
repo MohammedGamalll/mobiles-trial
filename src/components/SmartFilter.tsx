@@ -5,6 +5,8 @@ import { DATE_PRESETS } from "../lib/filter-engine";
 import { loadViews, removeView, saveView } from "../lib/shortcuts";
 import { loadDefaultView, saveDefaultView, type ListQuery } from "../hooks/useListQuery";
 import { Drawer, Field, SearchPick, inputCls } from "./ui";
+import { ProductSuggestList, useProductSuggest } from "./ProductSuggest";
+import { productDisplayName } from "../lib/product-suggest";
 import type { Msg } from "../i18n";
 
 export type FilterOption = { value: string; label: string };
@@ -98,6 +100,8 @@ export function SmartFilter({
   sorts,
   extra,
   children,
+  suggestProducts,
+  suggestRows,
 }: {
   f: ListQuery;
   fields: FilterField[];
@@ -107,12 +111,50 @@ export function SmartFilter({
   sorts?: FilterOption[];
   extra?: ReactNode;
   children?: ReactNode;
+  suggestProducts?: boolean;
+  suggestRows?: any[];
 }) {
   const { tr, lang, lookups } = useApp();
   const fields = inputFields.filter((field) => !(field.lookup === "branches" && (lookups?.branches?.length || 0) <= 1));
   const [open, setOpen] = useState(false);
   const [views, setViews] = useState(() => loadViews(f.id));
   const [defaultOn] = useState(() => !!loadDefaultView(f.id));
+  const productSuggest = useProductSuggest(f.q, !!suggestProducts, suggestRows);
+
+  function pickProductSuggest(p: any) {
+    const label = productDisplayName(p, lang);
+    f.set("q", label);
+    productSuggest.setOpen(false);
+  }
+
+  function searchBox(className: string) {
+    return (
+      <div className={`relative ${className}`}>
+        <Search className="pointer-events-none absolute start-3 top-2.5 h-4 w-4 text-slate-400" />
+        <input
+          className={`${inputCls} ps-9`}
+          value={f.q}
+          placeholder={searchPlaceholder || tr("searchCodeOrName")}
+          autoComplete="off"
+          onFocus={() => { productSuggest.cancelClose(); if (suggestProducts && f.q.trim()) productSuggest.setOpen(true); }}
+          onBlur={() => productSuggest.scheduleClose()}
+          onChange={(e) => { f.setQ(e.target.value); if (suggestProducts) productSuggest.setOpen(true); }}
+          onKeyDown={(e) => {
+            if (suggestProducts) productSuggest.onKeyDown(e, pickProductSuggest);
+          }}
+        />
+        {suggestProducts ? (
+          <ProductSuggestList
+            hits={productSuggest.hits}
+            open={productSuggest.open}
+            hi={productSuggest.hi}
+            onHover={productSuggest.setHi}
+            onPick={pickProductSuggest}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   const lookupOpts = (field: FilterField): FilterOption[] => {
     if (field.options) return field.options;
@@ -262,17 +304,7 @@ export function SmartFilter({
 
   const form = (
     <>
-      {search ? (
-        <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute start-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            className={`${inputCls} ps-9`}
-            value={f.q}
-            placeholder={searchPlaceholder || tr("searchCodeOrName")}
-            onChange={(e) => f.setQ(e.target.value)}
-          />
-        </div>
-      ) : null}
+      {search ? searchBox("min-w-[220px] flex-1") : null}
       {date ? (
         <select className={`${inputCls} w-auto min-w-[140px]`} value={period} onChange={(e) => {
           const p = e.target.value;
@@ -335,12 +367,7 @@ export function SmartFilter({
       </div>
       <div className="md:hidden">
         <div className="flex gap-2">
-          {search ? (
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute start-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input className={`${inputCls} ps-9`} value={f.q} placeholder={searchPlaceholder || tr("searchCodeOrName")} onChange={(e) => f.setQ(e.target.value)} />
-            </div>
-          ) : null}
+          {search ? searchBox("flex-1") : null}
           <button type="button" className="rounded-xl bg-[var(--ink)] px-3 py-2 text-sm font-bold text-white" onClick={() => setOpen(true)}>
             {tr("filter")}{f.count ? ` (${f.count})` : ""}
           </button>
