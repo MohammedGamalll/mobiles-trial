@@ -13,6 +13,7 @@
     "start": "node app.cjs",
     "preview": "npm run build && npm start",
     "db:import": "node scripts/import-d1.mjs",
+    "db:import-products": "tsx scripts/import-products-xlsx.ts",
     "db:migrate": "node scripts/migrate.mjs",
     "build:live": "npm run build && npm run db:migrate",
     "test": "tsx --test tests/calc.test.ts tests/party-money.test.ts tests/pos-today.test.ts tests/delivery-pod.test.ts tests/gps-ping.test.ts",
@@ -21,7 +22,8 @@
   "dependencies": {
     "@hono/node-server": "^2.1.1",
     "hono": "^4.9.6",
-    "mysql2": "^3.24.5"
+    "mysql2": "^3.24.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.12",

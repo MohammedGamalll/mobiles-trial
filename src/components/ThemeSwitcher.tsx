@@ -1,6 +1,5 @@
 import { Palette } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useApp } from "../context";
 import type { UiLayout } from "../lib/ui-layout";
 
@@ -44,7 +43,6 @@ function Preview({ kind }: { kind: UiLayout }) {
 
 export function ThemeSwitcher() {
   const { tr, uiLayout, setUiLayout } = useApp();
-  const nav = useNavigate();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -60,7 +58,6 @@ export function ThemeSwitcher() {
   const pick = (layout: UiLayout) => {
     setUiLayout(layout);
     setOpen(false);
-    if (layout === "classic_easy") nav("/");
   };
 
   return (
@@ -72,7 +69,7 @@ export function ThemeSwitcher() {
         onClick={() => setOpen((v) => !v)}
       >
         <Palette size={16} />
-        <span className="hidden lg:inline">{tr("changeDesign")}</span>
+        <span className="hidden lg:inline">{uiLayout === "classic_easy" ? tr("classicEasyDesign") : tr("modernDesign")}</span>
       </button>
       {open ? (
         <div className="theme-switcher-panel absolute end-0 z-40 mt-2 w-72 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-xl">

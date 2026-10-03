@@ -4,6 +4,7 @@ import AppLayout from "./layout/AppLayout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import POS from "./pages/POS";
+import POSClassic from "./pages/POSClassic";
 import Products, { ProductDetail } from "./pages/Products";
 import Invoice from "./pages/Invoice";
 import { DeliveryBoard } from "./pages/Delivery";
@@ -49,6 +50,11 @@ function PermGuard({ perm, children }: { perm: string | string[]; children: Reac
   return <>{children}</>;
 }
 
+function POSGate() {
+  const { uiLayout } = useApp();
+  return uiLayout === "classic_easy" ? <POSClassic /> : <POS />;
+}
+
 function AppRoutes() {
   const { user, tr } = useApp();
   return (
@@ -63,7 +69,7 @@ function AppRoutes() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="pos" element={<PermGuard perm="sales.create"><POS /></PermGuard>} />
+        <Route path="pos" element={<PermGuard perm="sales.create"><POSGate /></PermGuard>} />
         <Route path="sales" element={<PermGuard perm="sales.view"><SalesList /></PermGuard>} />
         <Route path="sales/:id" element={<PermGuard perm={["sales.view", "delivery.view"]}><Invoice /></PermGuard>} />
         <Route path="delivery" element={<DeliveryBoard />} />

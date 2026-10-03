@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
@@ -76,7 +76,8 @@ export default function Products() {
   const [offer, setOffer] = useState({ product_id: "", min_qty: 2, discount_type: "percent", discount_value: 5, name: "", valid_from: "", valid_to: "" });
   const [form, setForm] = useState<any>(empty());
   const [view, setView] = useState<"list" | "board">("list");
-  const { confirmDelete, dialog } = useConfirm();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const { confirmDelete, confirm, dialog } = useConfirm();
   const act = useActionError();
 
   function empty() {
@@ -159,6 +160,34 @@ export default function Products() {
           ) : null}
           {can("prices.manage") || can("products.edit") ? (
             <Btn kind="soft" onClick={() => setPriceOpen(true)}>{tr("bulkPrices")}</Btn>
+          ) : null}
+          {can("products.create") || can("import.manage") ? (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  confirm(tr("uploadProducts"), `${tr("replaceProductsHint")}\n${file.name}`, async () => {
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    fd.append("replace", "1");
+                    const res = await fetch("/api/import/products-file", { method: "POST", credentials: "include", headers: authHeaders(), body: fd });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw Object.assign(new Error(data.error || "fail"), { payload: data });
+                    playSound("done");
+                    act.clear();
+                    await refreshLookups();
+                    await load();
+                  });
+                }}
+              />
+              <Btn kind="soft" onClick={() => fileRef.current?.click()}>{tr("uploadProducts")}</Btn>
+            </>
           ) : null}
           {can("products.create") ? (
             <Btn onClick={() => { act.clear(); setForm(empty()); setOpen(true); }}>{tr("addProduct")}</Btn>

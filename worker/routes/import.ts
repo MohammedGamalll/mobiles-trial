@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { audit, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
+import { importProductRows, parseProductWorkbook } from "../lib/product-import";
 
 export const importRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -114,4 +115,21 @@ importRoutes.post("/commit", requirePerm("import.manage", "products.create"), as
   }
   await audit(c.env.DB, user, "import", kind, null, `Import ${kind} +${inserted} skip ${skipped}`);
   return c.json({ ok: true, inserted, skipped });
+});
+
+importRoutes.post("/products-file", requirePerm("products.create", "import.manage"), async (c) => {
+  const body = await c.req.parseBody({ all: true });
+  const raw = body.file;
+  const file = raw instanceof File ? raw : Array.isArray(raw) ? raw.find((x) => x instanceof File) : null;
+  if (!(file instanceof File) || !file.size) return c.json({ error: "missing_file" }, 400);
+  const replace = String(body.replace || "") === "1" || String(body.replace || "").toLowerCase() === "true";
+  let rows;
+  try {
+    rows = parseProductWorkbook(Buffer.from(await file.arrayBuffer()), file.name);
+  } catch {
+    return c.json({ error: "bad_excel" }, 400);
+  }
+  const result = await importProductRows(c.env.DB, rows, { replace, userId: c.get("user").id });
+  await audit(c.env.DB, c.get("user"), "import", "products", null, `Excel products +${result.inserted} skip ${result.skipped} replace=${replace ? 1 : 0}`);
+  return c.json({ ok: true, ...result });
 });

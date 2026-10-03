@@ -53,6 +53,7 @@ function withoutCost<T extends Record<string, unknown>>(user: { role_slug: strin
   return rows.map((row) => {
     const next = { ...row };
     delete next.purchase_price;
+    delete next.last_purchase_price;
     return next;
   });
 }

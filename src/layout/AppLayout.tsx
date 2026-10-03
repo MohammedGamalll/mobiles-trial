@@ -189,7 +189,7 @@ export default function AppLayout() {
           {classic && loc.pathname !== "/" ? <EasyHomeLink /> : pos ? <EasyHomeLink /> : null}
           <button
             type="button"
-            className={`top-search relative min-w-0 flex-1 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
+            className={`top-search relative min-w-0 flex-1 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classic && pos ? "hidden" : ""} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
             onClick={() => setCmd(true)}
           >
             <Search className="pointer-events-none absolute top-2.5 start-3 text-slate-400" size={16} />
