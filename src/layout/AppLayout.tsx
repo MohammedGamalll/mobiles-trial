@@ -26,6 +26,7 @@ import { SahlMenu } from "../components/SahlMenu";
 import { ModernModules } from "../components/ModernModules";
 import { isFav, loadFavs, loadRecent, pushRecent, toggleFav, type FavItem } from "../lib/shortcuts";
 import { allNavItems, classicNav, matchNavTo, modernNav } from "./nav";
+import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
 
 export default function AppLayout() {
@@ -203,10 +204,10 @@ export default function AppLayout() {
               {(lookups?.branches || []).map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name : (b.name_en || b.name)}</option>)}
             </select>
           ) : null}
-          {(lookups?.locations || []).filter((l) => !l.kind || l.kind === "warehouse").length ? (
+          {warehouseLocations(lookups?.locations).length ? (
             <select className={`hidden max-w-[140px] px-2 py-2 text-sm sm:block ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={warehouseId || ""} onChange={(e) => setWarehouseId(Number(e.target.value) || 0)} title={tr("warehouses")}>
               <option value="">{tr("warehouses")}</option>
-              {(lookups?.locations || []).filter((l) => !l.kind || l.kind === "warehouse").map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              {warehouseLocations(lookups?.locations).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           ) : null}
           <div className="relative">

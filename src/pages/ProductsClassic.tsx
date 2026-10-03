@@ -88,7 +88,7 @@ export default function ProductsClassic() {
         <FilterBox label={tr("location")} value={cat.filters.location_id} onChange={() => cat.setFilters({ ...cat.filters, location_id: "" })}>
           <select value={cat.filters.location_id} onChange={(e) => cat.setFilters({ ...cat.filters, location_id: e.target.value ? Number(e.target.value) : "" })}>
             <option value="">-</option>
-            {(lookups?.locations || []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {(lookups?.locations || []).map((l) => <option key={l.id} value={l.id}>{l.label || l.name}</option>)}
           </select>
         </FilterBox>
         <button type="button" className="inv-classic-yellow" onClick={() => setAdvanced((v) => !v)}>{tr("invAdvancedSearch")}</button>
@@ -144,6 +144,7 @@ export default function ProductsClassic() {
         </aside>
 
         <div className="inv-classic-grid">
+          {cat.loading ? <div className="px-4 py-8 text-center font-bold">{tr("loading")}</div> : null}
           <table>
             <thead>
               <tr>
@@ -190,7 +191,16 @@ export default function ProductsClassic() {
               <tr>
                 <td colSpan={3}>{tr("invGrandQty")}</td>
                 <td>{num(totalQty, lang)}</td>
-                <td colSpan={cat.showCost ? 9 : 7}>{num(cat.rows.length, lang)}</td>
+                <td colSpan={cat.showCost ? 9 : 7}>
+                  {num(cat.rows.length, lang)} / {num(cat.total, lang)}
+                  <span className="ms-3">
+                    <button type="button" disabled={cat.filters.page <= 1 || cat.loading} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page - 1 })}>{tr("prev")}</button>
+                    {" "}
+                    {cat.filters.page}/{Math.max(1, Math.ceil((cat.total || 0) / 80))}
+                    {" "}
+                    <button type="button" disabled={cat.loading || cat.filters.page >= Math.max(1, Math.ceil((cat.total || 0) / 80))} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page + 1 })}>{tr("next")}</button>
+                  </span>
+                </td>
               </tr>
             </tfoot>
           </table>

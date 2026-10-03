@@ -178,6 +178,7 @@ export async function ensureAppSchema(db: AppDb) {
     ["suppliers", "customer_id INTEGER"],
     ["sales_invoices", "extra_amount REAL NOT NULL DEFAULT 0"],
     ["sales_invoices", "cash_account_id INTEGER"],
+    ["sales_invoices", "location_id INTEGER"],
     ["sales_invoices", "stock_committed_at TEXT"],
     ["sales_invoices", "finance_committed_at TEXT"],
     ["sales_invoices", "assigned_at TEXT"],

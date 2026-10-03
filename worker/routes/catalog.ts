@@ -2,32 +2,24 @@ import { Hono } from "hono";
 import { audit, isDupEntry, like, nextNumber, paginate, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { availableBatches, logMovement } from "../lib/stock";
-import { applyEq, applyLocationCol, applyRange, applySearch, listParams, PRODUCT_SORT, sortSql } from "../lib/filters";
+import { applyEq, applyRange, applySearch, listParams, PRODUCT_SORT, sortSql, stockScopeIds } from "../lib/filters";
+import { placeLabel, resolveProductPlace } from "../lib/product-place";
+import { withLocationLabels } from "../lib/location-label";
 
 export const catalogRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
-function placeLabel(p: { warehouse?: string | null; box?: string | null; rack?: string | null; shelf?: string | null; drawer?: string | null; location_name?: string | null; name?: string | null }) {
-  const bin = [p.rack, p.shelf, p.drawer].filter((x) => String(x || "").trim()).join("-");
-  const bits = [
-    String(p.warehouse || "").trim() || "",
-    String(p.box || "").trim() ? `باكيه ${String(p.box).trim()}` : "",
-    bin,
-  ].filter(Boolean);
-  if (bits.length) return bits.join(" · ");
-  return String(p.location_name || p.name || "").trim();
-}
-
-const productSelect = `
+function productSelectSql(availSql: string, stockJoin = "") {
+  return `
   SELECT p.*, b.name_ar as brand_ar, b.name_en as brand_en,
     pt.name_ar as part_type_ar, pt.name_en as part_type_en,
     c.name_ar as category_ar, c.name_en as category_en,
     sl.name as location_name, sl.warehouse, sl.rack, sl.shelf, sl.drawer, sl.box,
     s.name as supplier_name,
-    CASE WHEN p.kind = 'service' THEN 9999 ELSE (p.current_stock - p.reserved_stock) END as available,
+    CASE WHEN p.kind = 'service' THEN 9999 ELSE ${availSql} END as available,
     CASE
       WHEN p.kind = 'service' THEN 'in'
-      WHEN (p.current_stock - p.reserved_stock) <= 0 THEN 'out'
-      WHEN (p.current_stock - p.reserved_stock) <= CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END THEN 'low'
+      WHEN ${availSql} <= 0 THEN 'out'
+      WHEN ${availSql} <= CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END THEN 'low'
       ELSE 'in'
     END as stock_status
   FROM products p
@@ -36,7 +28,64 @@ const productSelect = `
   LEFT JOIN categories c ON c.id = p.category_id
   LEFT JOIN storage_locations sl ON sl.id = p.location_id
   LEFT JOIN suppliers s ON s.id = p.supplier_id
+  ${stockJoin}
 `;
+}
+
+const productSelect = productSelectSql("(p.current_stock - p.reserved_stock)");
+
+function scopedStockJoin(stockIds: number[] | null) {
+  if (!stockIds) {
+    return { join: "", availSql: "(p.current_stock - p.reserved_stock)", binds: [] as number[] };
+  }
+  if (!stockIds.length) {
+    return { join: "", availSql: "0", binds: [] as number[] };
+  }
+  return {
+    join: `LEFT JOIN (
+      SELECT product_id,
+             COALESCE(SUM(remaining_qty),0) as scope_current,
+             COALESCE(SUM(reserved_qty),0) as scope_reserved
+      FROM inventory_batches
+      WHERE location_id IN (${stockIds.map(() => "?").join(",")})
+      GROUP BY product_id
+    ) sc ON sc.product_id = p.id`,
+    availSql: "(COALESCE(sc.scope_current,0) - COALESCE(sc.scope_reserved,0))",
+    binds: stockIds,
+  };
+}
+
+async function applyStockScope<T extends Record<string, unknown>>(db: AppDb, products: T[], locIds: number[] | null) {
+  if (!locIds || !products.length) return products;
+  const ids = products.map((p) => Number(p.id));
+  const { results } = locIds.length
+    ? await db
+        .prepare(
+          `SELECT product_id, COALESCE(SUM(remaining_qty),0) as current_stock, COALESCE(SUM(reserved_qty),0) as reserved_stock
+           FROM inventory_batches
+           WHERE product_id IN (${ids.map(() => "?").join(",")}) AND location_id IN (${locIds.map(() => "?").join(",")})
+           GROUP BY product_id`,
+        )
+        .bind(...ids, ...locIds)
+        .all<{ product_id: number; current_stock: number; reserved_stock: number }>()
+    : { results: [] as { product_id: number; current_stock: number; reserved_stock: number }[] };
+  const map = new Map((results || []).map((r) => [r.product_id, r]));
+  return products.map((p) => {
+    if (String(p.kind || "product") === "service") return { ...p, available: 9999, stock_status: "in" };
+    const s = map.get(Number(p.id)) || { current_stock: 0, reserved_stock: 0 };
+    const current_stock = Number(s.current_stock) || 0;
+    const reserved_stock = Number(s.reserved_stock) || 0;
+    const available = current_stock - reserved_stock;
+    const min = Math.max(Number(p.reorder_point || 0), Number(p.min_stock || 0));
+    return {
+      ...p,
+      current_stock,
+      reserved_stock,
+      available,
+      stock_status: available <= 0 ? "out" : available <= min ? "low" : "in",
+    };
+  });
+}
 
 async function attachModels(db: AppDb, products: { id: number }[]) {
   if (!products.length) return products;
@@ -246,14 +295,15 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
   applyEq(where, params, "p.color", p.color);
   applyEq(where, params, "p.supplier_id", p.supplier_id, true);
   applyEq(where, params, "p.active", p.active, true);
-  await applyLocationCol(c.env.DB, where, params, "p.location_id", p);
+  const stockIds = await stockScopeIds(c.env.DB, p);
+  const stockExpr = scopedStockJoin(stockIds);
   applyRange(where, params, "p.selling_price", p.price_min, p.price_max);
-  applyRange(where, params, "(p.current_stock - p.reserved_stock)", p.qty_min, p.qty_max);
-  if (status === "low") where.push("p.kind != 'service' AND (p.current_stock - p.reserved_stock) > 0 AND (p.current_stock - p.reserved_stock) <= CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END");
-  if (status === "out") where.push("p.kind != 'service' AND (p.current_stock - p.reserved_stock) <= 0");
-  if (status === "in") where.push("p.kind = 'service' OR (p.current_stock - p.reserved_stock) > CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END");
+  applyRange(where, params, stockExpr.availSql, p.qty_min, p.qty_max);
+  if (status === "low") where.push(`p.kind != 'service' AND ${stockExpr.availSql} > 0 AND ${stockExpr.availSql} <= CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END`);
+  if (status === "out") where.push(`p.kind != 'service' AND ${stockExpr.availSql} <= 0`);
+  if (status === "in") where.push(`p.kind = 'service' OR ${stockExpr.availSql} > CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END`);
   if (status === "dead") {
-    where.push(`p.kind != 'service' AND (p.current_stock - p.reserved_stock) > 0 AND p.id NOT IN (
+    where.push(`p.kind != 'service' AND ${stockExpr.availSql} > 0 AND p.id NOT IN (
       SELECT sii.product_id FROM sales_invoice_items sii JOIN sales_invoices si ON si.id = sii.invoice_id
       WHERE si.deleted_at IS NULL AND si.status NOT IN ('cancelled','draft','held','quote','order') AND si.date >= date('now','-90 days'))`);
   }
@@ -275,25 +325,32 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
     LEFT JOIN brands b ON b.id = p.brand_id
     LEFT JOIN part_types pt ON pt.id = p.part_type_id
     LEFT JOIN categories c ON c.id = p.category_id
-    LEFT JOIN storage_locations sl ON sl.id = p.location_id`;
-  const count = await c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...params).first<{ n: number }>();
+    LEFT JOIN storage_locations sl ON sl.id = p.location_id
+    ${stockExpr.join}`;
+  const queryBinds = [...stockExpr.binds, ...params];
+  const qtySort =
+    p.sort === "qty_high" ? `ORDER BY ${stockExpr.availSql} DESC`
+    : p.sort === "qty_low" ? `ORDER BY ${stockExpr.availSql} ASC`
+    : "";
+  const count = await c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...queryBinds).first<{ n: number }>();
   const totals = await c.env.DB
     .prepare(
-      `SELECT COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE (p.current_stock - p.reserved_stock) END),0) as qty,
-              COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE (p.current_stock - p.reserved_stock) * p.selling_price END),0) as value
+      `SELECT COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} END),0) as qty,
+              COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} * p.selling_price END),0) as value
        ${joinSql} ${whereSql}`,
     )
-    .bind(...params)
+    .bind(...queryBinds)
     .first<{ qty: number; value: number }>();
-  const order = sortSql(p.sort === "moved" ? "" : p.sort, PRODUCT_SORT, p.sort === "moved"
+  const order = qtySort || sortSql(p.sort === "moved" ? "" : p.sort, PRODUCT_SORT, p.sort === "moved"
     ? `(SELECT COALESCE(SUM(ABS(sm.qty)),0) FROM stock_movements sm WHERE sm.product_id = p.id) DESC, p.id DESC`
     : "p.id DESC");
   const { results } = await c.env.DB
-    .prepare(`${productSelect} ${whereSql} ${order} LIMIT ? OFFSET ?`)
-    .bind(...params, pageSize, offset)
+    .prepare(`${productSelectSql(stockExpr.availSql, stockExpr.join)} ${whereSql} ${order} LIMIT ? OFFSET ?`)
+    .bind(...queryBinds, pageSize, offset)
     .all();
+  const light = url.searchParams.get("full") !== "1";
   const withModels = await attachModels(c.env.DB, results as { id: number }[]);
-  const withUnits = await attachUnits(c.env.DB, withModels);
+  const withUnits = light ? withModels : await attachUnits(c.env.DB, withModels);
   const user = c.get("user");
   const showCost = user.role_slug === "admin" || user.permissions.includes("costs.view") || user.permissions.includes("products.edit");
   let priced = withUnits as Record<string, unknown>[];
@@ -313,20 +370,37 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
       }
     }
   }
-  const reported = await attachStockReport(c.env.DB, priced as { id: number }[]);
+  const scoped = await applyStockScope(c.env.DB, priced, stockIds);
+  const reported = light
+    ? scoped.map((p) => {
+      const available = Number((p as { available?: number }).available) || 0;
+      const price = Number((p as { selling_price?: number }).selling_price) || 0;
+      const label = placeLabel(p as { warehouse?: string; box?: string; rack?: string; shelf?: string; drawer?: string; location_name?: string });
+      return {
+        ...p,
+        opening_qty: Number((p as { current_stock?: number }).current_stock) || 0,
+        warehouses: label ? [{ warehouse: label, qty: available, value: 0 }] : [],
+        stock_value: Math.round(available * price * 100) / 100,
+        cost_value: 0,
+      };
+    })
+    : await attachStockReport(c.env.DB, scoped as { id: number }[]);
   const data = withoutCost(user, reported as Record<string, unknown>[]);
   if (!showCost) {
     for (const row of data) delete row.cost_value;
   }
+  const scopedQty = Number(totals?.qty) || 0;
+  const scopedValue = Number(totals?.value) || 0;
   return c.json({
     data,
     total: count?.n || 0,
     page,
     pageSize,
+    stock_scope: stockIds,
     totals: {
       count: count?.n || 0,
-      qty: Number(totals?.qty) || 0,
-      value: Number(totals?.value) || 0,
+      qty: scopedQty,
+      value: scopedValue,
       cost_value: showCost ? data.reduce((s, p) => s + (Number(p.cost_value) || 0), 0) : undefined,
     },
   });
@@ -358,7 +432,11 @@ catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create
     .bind(q, q, q, q, q, l, l, l, l, l, l, l, l, l, q, l, l, q, q, q, `${q}%`, `${q}%`, `${q}%`, `${q}%`)
     .all();
   const withModels = await attachModels(c.env.DB, results as { id: number }[]);
-  const data = withoutCost(c.get("user"), await attachUnits(c.env.DB, withModels) as Record<string, unknown>[]);
+  const stockIds = await stockScopeIds(c.env.DB, listParams(new URL(c.req.url)));
+  const data = withoutCost(
+    c.get("user"),
+    await applyStockScope(c.env.DB, (await attachUnits(c.env.DB, withModels)) as Record<string, unknown>[], stockIds),
+  );
   return c.json({ data });
 });
 
@@ -366,9 +444,11 @@ catalogRoutes.get("/products/:id", requirePerm("products.view", "sales.create"),
   const id = Number(c.req.param("id"));
   const row = await c.env.DB.prepare(`${productSelect} WHERE p.id = ? AND p.deleted_at IS NULL`).bind(id).first();
   if (!row) return c.json({ error: "not_found" }, 404);
-  const withModels = await attachModels(c.env.DB, [row as { id: number }]);
+  const stockIds = await stockScopeIds(c.env.DB, listParams(new URL(c.req.url)));
+  const scoped = await applyStockScope(c.env.DB, [row as Record<string, unknown>], stockIds);
+  const withModels = await attachModels(c.env.DB, scoped as { id: number }[]);
   const withUnits = await attachUnits(c.env.DB, withModels);
-  const batches = await availableBatches(c.env.DB, id);
+  const batches = await availableBatches(c.env.DB, id, stockIds || undefined);
   const allBatches = await c.env.DB
     .prepare("SELECT * FROM inventory_batches WHERE product_id = ? ORDER BY purchase_date DESC")
     .bind(id)
@@ -380,6 +460,14 @@ catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const sku = String(b.sku || "").trim();
   if (!sku || !b.name_ar) return c.json({ error: "missing_fields" }, 400);
+  b.location_id = await resolveProductPlace(c.env.DB, {
+    warehouse: String(b.warehouse || ""),
+    box: String(b.box || ""),
+    rack: String(b.rack || ""),
+    shelf: String(b.shelf || ""),
+    drawer: String(b.drawer || ""),
+    locationId: b.location_id ? Number(b.location_id) : null,
+  });
   let result;
   try {
     result = await c.env.DB
@@ -456,6 +544,14 @@ catalogRoutes.put("/products/:id", requirePerm("products.edit"), async (c) => {
   const id = Number(c.req.param("id"));
   const prev = await c.env.DB.prepare("SELECT sku, name_ar, selling_price, min_selling_price, purchase_price, active, kind FROM products WHERE id = ?").bind(id).first();
   const b = await c.req.json<Record<string, unknown>>();
+  b.location_id = await resolveProductPlace(c.env.DB, {
+    warehouse: String(b.warehouse || ""),
+    box: String(b.box || ""),
+    rack: String(b.rack || ""),
+    shelf: String(b.shelf || ""),
+    drawer: String(b.drawer || ""),
+    locationId: b.location_id ? Number(b.location_id) : null,
+  });
   try {
     await c.env.DB
       .prepare(
@@ -533,7 +629,7 @@ function crud(table: string, perm: string, fields: string[]) {
       const r = await c.env.DB.prepare(`SELECT * FROM ${table}`).all();
       rows = r.results || [];
     }
-    return c.json({ data: rows });
+    return c.json({ data: table === "storage_locations" ? withLocationLabels(rows as { id: number; name: string }[]) : rows });
   });
   catalogRoutes.post(`/${table}`, requirePerm(perm), async (c) => {
     const b = await c.req.json<Record<string, unknown>>();

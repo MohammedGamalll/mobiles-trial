@@ -7,7 +7,7 @@ import { productDisplayName, rankProductHits } from "../lib/product-suggest";
 const EMPTY: any[] = [];
 
 export function useProductSuggest(q: string, enabled = true, extra: any[] = EMPTY) {
-  const { lang } = useApp();
+  const { lang, warehouseId } = useApp();
   const [pool, setPool] = useState<any[]>([]);
   const [remote, setRemote] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
@@ -16,10 +16,12 @@ export function useProductSuggest(q: string, enabled = true, extra: any[] = EMPT
 
   useEffect(() => {
     if (!enabled) return;
-    get<{ data: any[] }>("/api/products?pageSize=400&active=1")
+    const p = new URLSearchParams({ pageSize: "400", active: "1" });
+    if (warehouseId) p.set("location_id", String(warehouseId));
+    get<{ data: any[] }>(`/api/products?${p}`)
       .then((r) => setPool(r.data || []))
       .catch(() => setPool([]));
-  }, [enabled]);
+  }, [enabled, warehouseId]);
 
   useEffect(() => {
     setHi(0);
@@ -29,12 +31,12 @@ export function useProductSuggest(q: string, enabled = true, extra: any[] = EMPT
       return;
     }
     const t = setTimeout(() => {
-      get<{ data: any[] }>(`/api/products/search?q=${encodeURIComponent(n)}`)
+      get<{ data: any[] }>(`/api/products/search?q=${encodeURIComponent(n)}${warehouseId ? `&location_id=${warehouseId}` : ""}`)
         .then((r) => setRemote(r.data || []))
         .catch(() => {});
     }, 80);
     return () => clearTimeout(t);
-  }, [q, enabled]);
+  }, [q, enabled, warehouseId]);
 
   const hits = useMemo(() => {
     if (!q.trim()) return [];

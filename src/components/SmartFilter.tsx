@@ -171,7 +171,9 @@ export function SmartFilter({
           ? `${r.name}${r.code ? ` (${r.code})` : ""}`
           : field.lookup === "delivery_agents"
             ? `${r.code} — ${r.name}`
-            : field.lookup === "suppliers" || field.lookup === "locations" || field.lookup === "price_lists" || field.lookup === "branches"
+            : field.lookup === "locations"
+              ? r.label || r.path || r.name
+            : field.lookup === "suppliers" || field.lookup === "price_lists" || field.lookup === "branches"
               ? r.name || r.name_ar || r.path
               : lang === "ar"
                 ? r.name_ar || r.name
@@ -200,7 +202,7 @@ export function SmartFilter({
         for (const k of ["warehouse_id", "bay_id", "shelf_id", "bin_id"] as const) {
           if (v[k]) {
             const loc = lookups?.locations.find((x) => String(x.id) === v[k]);
-            out.push({ key: k, label: loc?.name || v[k] });
+            out.push({ key: k, label: loc?.label || loc?.name || v[k] });
           }
         }
         continue;
@@ -278,19 +280,19 @@ export function SmartFilter({
         <div className={box}>
           <select className={inputCls} value={f.values.warehouse_id || ""} onChange={(e) => f.setMany({ warehouse_id: e.target.value, bay_id: "", shelf_id: "", bin_id: "" })}>
             <option value="">{tr("warehouse")}</option>
-            {warehouses.map((l) => <option key={l.id} value={l.id}>{l.path || l.name}</option>)}
+            {warehouses.map((l) => <option key={l.id} value={l.id}>{l.label || l.path || l.name}</option>)}
           </select>
           <select className={inputCls} value={f.values.bay_id || ""} onChange={(e) => f.setMany({ bay_id: e.target.value, shelf_id: "", bin_id: "" })}>
             <option value="">{tr("bay")}</option>
-            {bays.map((l) => <option key={l.id} value={l.id}>{l.path || l.name}</option>)}
+            {bays.map((l) => <option key={l.id} value={l.id}>{l.label || l.path || l.name}</option>)}
           </select>
           <select className={inputCls} value={f.values.shelf_id || ""} onChange={(e) => f.setMany({ shelf_id: e.target.value, bin_id: "" })}>
             <option value="">{tr("shelf")}</option>
-            {shelves.map((l) => <option key={l.id} value={l.id}>{l.path || l.name}</option>)}
+            {shelves.map((l) => <option key={l.id} value={l.id}>{l.label || l.path || l.name}</option>)}
           </select>
           <select className={inputCls} value={f.values.bin_id || ""} onChange={(e) => f.set("bin_id", e.target.value)}>
             <option value="">{tr("fork")}</option>
-            {bins.map((l) => <option key={l.id} value={l.id}>{l.path || l.name}</option>)}
+            {bins.map((l) => <option key={l.id} value={l.id}>{l.label || l.path || l.name}</option>)}
           </select>
         </div>
       );

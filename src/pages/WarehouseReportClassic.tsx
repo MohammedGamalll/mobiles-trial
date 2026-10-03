@@ -5,6 +5,7 @@ import { get } from "../lib/api";
 import { money, num } from "../lib/format";
 import { PrintLetterhead } from "../components/ui";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import { warehouseLocations } from "../lib/warehouses";
 
 export default function WarehouseReportClassic() {
   const { tr, lang, lookups, can } = useApp();
@@ -51,7 +52,7 @@ export default function WarehouseReportClassic() {
           <span>{tr("warehouse")}</span>
           <select value={cat.filters.location_id} onChange={(e) => { cat.setFilters({ ...cat.filters, location_id: e.target.value ? Number(e.target.value) : "" }); setReady(false); }}>
             <option value="">-</option>
-            {(lookups?.locations || []).filter((l) => !l.kind || l.kind === "warehouse").map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {warehouseLocations(lookups?.locations).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </label>
         <label className="inv-classic-filter">

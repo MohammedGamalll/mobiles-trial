@@ -3,6 +3,7 @@ import { Camera, Check } from "lucide-react";
 import { useApp } from "../../context";
 import { authHeaders } from "../../lib/session";
 import { emptyProduct, type ProductForm } from "../../hooks/useProductCatalog";
+import { LocationSelect } from "../PlaceFields";
 
 type Tab = "general" | "units" | "opening" | "more";
 
@@ -119,11 +120,18 @@ export function ProductDialogClassic({
                     {(lookups?.suppliers || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </label>
-                <label><span>{tr("posColPack")}</span><input value={form.box} onChange={(e) => set({ box: e.target.value })} /></label>
-                <label><span>{tr("posColBin")}</span><input value={[form.rack, form.shelf, form.drawer].filter(Boolean).join("+")} onChange={(e) => {
-                  const [rack = "", shelf = "", drawer = ""] = e.target.value.split("+");
-                  set({ rack, shelf, drawer });
-                }} /></label>
+                <LocationSelect
+                  classic
+                  value={form.location_id || ""}
+                  onChange={(id, loc) => set({
+                    location_id: id,
+                    warehouse: loc?.warehouse || loc?.name || "",
+                    box: loc?.box || "",
+                    rack: loc?.rack || "",
+                    shelf: loc?.shelf || "",
+                    drawer: loc?.drawer || "",
+                  })}
+                />
               </div>
             </div>
           ) : null}
@@ -158,13 +166,6 @@ export function ProductDialogClassic({
           ) : null}
           {tab === "opening" ? (
             <div className="inv-dlg-split">
-              <label>
-                <span>{tr("location")}</span>
-                <select value={form.location_id} onChange={(e) => set({ location_id: e.target.value ? Number(e.target.value) : "" })}>
-                  <option value="">-</option>
-                  {(lookups?.locations || []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-              </label>
               <label>
                 <span>{tr("qty")}</span>
                 <input type="number" value={form.opening_qty} onChange={(e) => set({ opening_qty: Number(e.target.value) || 0 })} />

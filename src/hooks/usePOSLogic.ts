@@ -173,13 +173,14 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       if (typeFilter) p.set("part_type_id", String(typeFilter));
       if (brandFilter) p.set("brand_id", String(brandFilter));
       if (catFilter) p.set("category_id", String(catFilter));
+      if (warehouseId) p.set("location_id", String(warehouseId));
       get<{ data: Product[] }>(`/api/products?${p}`).then((r) => {
         if (!live) return;
         setCatalog(r.data || []);
       }).catch(() => {});
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [q, listId, kindFilter, typeFilter, brandFilter, catFilter, stockTick]);
+  }, [q, listId, kindFilter, typeFilter, brandFilter, catFilter, stockTick, warehouseId]);
 
   useEffect(() => {
     const heldId = Number(params.get("held") || 0);

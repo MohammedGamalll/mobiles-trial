@@ -13,17 +13,23 @@ export type BatchRow = {
 
 export type Allocation = { batch_id: number; batch_code: string; qty: number; unit_cost: number; location_id?: number | null };
 
-export async function availableBatches(db: AppDb, productId: number, locationId?: number | null) {
-  const loc = Number(locationId || 0);
-  const { results } = loc
+function asLocationIds(locationId?: number | number[] | null) {
+  if (Array.isArray(locationId)) return locationId.map(Number).filter((n) => n > 0);
+  const n = Number(locationId || 0);
+  return n > 0 ? [n] : [];
+}
+
+export async function availableBatches(db: AppDb, productId: number, locationId?: number | number[] | null) {
+  const ids = asLocationIds(locationId);
+  const { results } = ids.length
     ? await db
         .prepare(
           `SELECT id, batch_code, product_id, remaining_qty, reserved_qty, unit_cost, purchase_date, location_id
            FROM inventory_batches
-           WHERE product_id = ? AND (remaining_qty - reserved_qty) > 0 AND location_id = ?
+           WHERE product_id = ? AND (remaining_qty - reserved_qty) > 0 AND location_id IN (${ids.map(() => "?").join(",")})
            ORDER BY datetime(purchase_date) ASC, id ASC`,
         )
-        .bind(productId, loc)
+        .bind(productId, ...ids)
         .all<BatchRow>()
     : await db
         .prepare(
@@ -35,6 +41,16 @@ export async function availableBatches(db: AppDb, productId: number, locationId?
         .bind(productId)
         .all<BatchRow>();
   return results;
+}
+
+async function assertAllocInScope(db: AppDb, alloc: Allocation[], locationId?: number | number[] | null) {
+  const ids = asLocationIds(locationId);
+  if (!ids.length || !alloc.length) return;
+  const set = new Set(ids);
+  for (const a of alloc) {
+    const row = await db.prepare("SELECT location_id FROM inventory_batches WHERE id = ?").bind(a.batch_id).first<{ location_id: number | null }>();
+    if (!row || !set.has(Number(row.location_id || 0))) throw new Error("INSUFFICIENT_STOCK");
+  }
 }
 
 export function planAllocation(batches: BatchRow[], qty: number, preferredBatchId?: number | null): Allocation[] {
@@ -68,7 +84,8 @@ export function weightedCost(alloc: Allocation[]) {
   return qty ? cost / qty : 0;
 }
 
-export async function applyReserve(db: AppDb, alloc: Allocation[], productId: number) {
+export async function applyReserve(db: AppDb, alloc: Allocation[], productId: number, locationId?: number | number[] | null) {
+  await assertAllocInScope(db, alloc, locationId);
   const stmts = alloc.map((a) =>
     db.prepare("UPDATE inventory_batches SET reserved_qty = reserved_qty + ? WHERE id = ?").bind(a.qty, a.batch_id),
   );
@@ -79,7 +96,8 @@ export async function applyReserve(db: AppDb, alloc: Allocation[], productId: nu
   await db.batch(stmts);
 }
 
-export async function applyIssue(db: AppDb, alloc: Allocation[], productId: number, fromReserved: boolean) {
+export async function applyIssue(db: AppDb, alloc: Allocation[], productId: number, fromReserved: boolean, locationId?: number | number[] | null) {
+  await assertAllocInScope(db, alloc, locationId);
   for (const a of alloc) {
     const upd = fromReserved
       ? await db

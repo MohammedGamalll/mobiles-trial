@@ -11,6 +11,7 @@ import { useListQuery } from "../hooks/useListQuery";
 import { Barcode } from "../components/Barcode";
 import { useConfirm } from "../components/Confirm";
 import { playSound } from "../lib/sounds";
+import { LocationSelect } from "../components/PlaceFields";
 
 function parseScale(raw: unknown) {
   if (!raw) return { length: "", width: "", height: "", weight: "" };
@@ -62,7 +63,7 @@ function ShippingFields({
 }
 
 export default function Products() {
-  const { tr, lang, lookups, can, refreshLookups } = useApp();
+  const { tr, lang, lookups, can, refreshLookups, warehouseId } = useApp();
   const [sp] = useSearchParams();
   const f = useListQuery("products", { q: sp.get("q") || "", status: sp.get("status") || "" });
   const [data, setData] = useState<any[]>([]);
@@ -76,6 +77,7 @@ export default function Products() {
   const [offer, setOffer] = useState({ product_id: "", min_qty: 2, discount_type: "percent", discount_value: 5, name: "", valid_from: "", valid_to: "" });
   const [form, setForm] = useState<any>(empty());
   const [view, setView] = useState<"list" | "board">("list");
+  const [loading, setLoading] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const { confirmDelete, confirm, dialog } = useConfirm();
   const act = useActionError();
@@ -92,6 +94,11 @@ export default function Products() {
       part_type_id: "",
       category_id: "",
       location_id: "",
+      warehouse: "المخزن الرئيسي",
+      rack: "",
+      shelf: "",
+      drawer: "",
+      box: "",
       supplier_id: "",
       purchase_price: 0,
       selling_price: 0,
@@ -127,11 +134,20 @@ export default function Products() {
   }
 
   async function load() {
-    const p = new URLSearchParams(f.qs);
-    p.set("pageSize", "5000");
-    const r = await get<{ data: any[]; totals?: any }>(`/api/products?${p}`);
-    setData(r.data);
-    setTotals(r.totals || {});
+    setLoading(true);
+    try {
+      const p = new URLSearchParams(f.qs);
+      p.set("pageSize", "80");
+      if (!p.get("page")) p.set("page", "1");
+      if (warehouseId && !p.get("location_id") && !p.get("locations") && !p.get("warehouse_id")) {
+        p.set("location_id", String(warehouseId));
+      }
+      const r = await get<{ data: any[]; totals?: any }>(`/api/products?${p}`);
+      setData(r.data);
+      setTotals(r.totals || {});
+    } finally {
+      setLoading(false);
+    }
     const ops = new URLSearchParams();
     if (f.values.category_id) ops.set("category_id", String(f.values.category_id));
     get<{ purchases: any[]; shipments: any[]; date: string }>(`/api/inventory/daily-ops?${ops}`)
@@ -141,9 +157,9 @@ export default function Products() {
   }
   useEffect(() => {
     let live = true;
-    load().catch(() => { if (live) setData([]); });
+    load().catch(() => { if (live) { setData([]); setLoading(false); } });
     return () => { live = false; };
-  }, [f.qs]);
+  }, [f.qs, warehouseId]);
 
   const qualities = Array.from(new Set((lookups as any)?.products ? [] : ["A", "B", "C", "Original", "Copy"]));
 
@@ -256,7 +272,7 @@ export default function Products() {
           </div>
         }
       />
-      {!data.length ? <EmptyFilterState onClear={f.clear} /> : view === "board" ? (
+      {loading ? <div className="rounded-2xl border border-slate-100 bg-white px-4 py-8 text-center text-sm font-bold text-slate-500">{tr("loading")}</div> : !data.length ? <EmptyFilterState onClear={f.clear} /> : view === "board" ? (
       <div className="acc-board">
         {[...data.reduce((m, p) => {
             const k = (lang === "ar" ? p.brand_ar : p.brand_en) || tr("brands");
@@ -285,6 +301,11 @@ export default function Products() {
                         part_type_id: p.part_type_id || "",
                         category_id: p.category_id || "",
                         location_id: p.location_id || "",
+                        warehouse: p.warehouse || "",
+                        rack: p.rack || "",
+                        shelf: p.shelf || "",
+                        drawer: p.drawer || "",
+                        box: p.box || "",
                         supplier_id: p.supplier_id || "",
                         parent_id: p.parent_id || "",
                         model_ids: (p.models || []).map((m: any) => m.id),
@@ -364,6 +385,11 @@ export default function Products() {
                             part_type_id: p.part_type_id || "",
                             category_id: p.category_id || "",
                             location_id: p.location_id || "",
+                            warehouse: p.warehouse || "",
+                            rack: p.rack || "",
+                            shelf: p.shelf || "",
+                            drawer: p.drawer || "",
+                            box: p.box || "",
                             supplier_id: p.supplier_id || "",
                             parent_id: p.parent_id || "",
                             model_ids: (p.models || []).map((m: any) => m.id),
@@ -389,6 +415,11 @@ export default function Products() {
         </div>
       </div>
       )}
+      <div className="no-print flex flex-wrap items-center justify-end gap-2 text-sm font-bold">
+        <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={f.page <= 1 || loading} onClick={() => f.set("page", String(f.page - 1))}>{tr("prev")}</button>
+        <span>{num(f.page, lang)} / {num(Math.max(1, Math.ceil((Number(totals.count) || 0) / 80)), lang)}</span>
+        <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={loading || f.page >= Math.max(1, Math.ceil((Number(totals.count) || 0) / 80))} onClick={() => f.set("page", String(f.page + 1))}>{tr("next")}</button>
+      </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
           <div className="mb-2 font-bold">{tr("dailyPurchases")}{daily.date ? ` · ${daily.date}` : ""}</div>
@@ -491,12 +522,18 @@ export default function Products() {
               {lookups?.categories.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
             </select>
           </Field>
-          <Field label={tr("location")}>
-            <select className={inputCls} value={form.location_id} onChange={(e) => setForm({ ...form, location_id: e.target.value })}>
-              <option value="">-</option>
-              {lookups?.locations.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-          </Field>
+          <LocationSelect
+            value={form.location_id || ""}
+            onChange={(id, loc) => setForm({
+              ...form,
+              location_id: id,
+              warehouse: loc?.warehouse || loc?.name || "",
+              box: loc?.box || "",
+              rack: loc?.rack || "",
+              shelf: loc?.shelf || "",
+              drawer: loc?.drawer || "",
+            })}
+          />
           <Field label={tr("compatible")}>
             <select multiple className={`${inputCls} h-28`} value={form.model_ids.map(String)} onChange={(e) => setForm({ ...form, model_ids: [...e.target.selectedOptions].map((o) => Number(o.value)) })}>
               {lookups?.models.map((m) => <option key={m.id} value={m.id}>{m.brand_en} {m.name}</option>)}

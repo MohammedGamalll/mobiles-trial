@@ -131,7 +131,7 @@ export function applySearch(where: string[], params: Bind[], q: string | undefin
   params.push(...binds);
 }
 
-export function numVal(v?: string) {
+export function numVal(v?: string | number | null) {
   if (v == null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -189,7 +189,36 @@ export async function descendantLocationIds(db: AppDb, rootId: number): Promise<
 }
 
 export async function locationFilterId(p: ListQ) {
-  return numVal(p.bin_id || p.fork_id || p.shelf_id || p.bay_id || p.warehouse_id || p.location_id);
+  return numVal(p.bin_id || p.fork_id || p.shelf_id || p.bay_id || p.warehouse_id || p.location_id || p.locations);
+}
+
+export async function stockScopeIds(db: AppDb, p: ListQ | { warehouse?: string; warehouse_id?: string | number; location_id?: string | number; locations?: string | number }): Promise<number[] | null> {
+  const name = String((p as ListQ).warehouse || "").trim();
+  const id = numVal((p as ListQ).warehouse_id || (p as ListQ).location_id || (p as ListQ).locations);
+  if (!name && id == null) return null;
+  if (name) {
+    const { results } = await db
+      .prepare("SELECT id FROM storage_locations WHERE deleted_at IS NULL AND (warehouse = ? OR name = ?)")
+      .bind(name, name)
+      .all<{ id: number }>();
+    return (results || []).map((r) => r.id);
+  }
+  const loc = await db
+    .prepare("SELECT id, name, warehouse, kind, rack, box FROM storage_locations WHERE id = ? AND deleted_at IS NULL")
+    .bind(id)
+    .first<{ id: number; name: string; warehouse: string | null; kind: string | null; rack: string | null; box: string | null }>();
+  if (!loc) return [id!];
+  const desc = await descendantLocationIds(db, loc.id);
+  const isWarehouse = loc.kind === "warehouse" || (!loc.rack && !loc.box);
+  const wh = String(loc.warehouse || loc.name || "").trim();
+  if (isWarehouse && wh) {
+    const { results } = await db
+      .prepare("SELECT id FROM storage_locations WHERE deleted_at IS NULL AND (warehouse = ? OR name = ? OR parent_id = ? OR id = ?)")
+      .bind(wh, loc.name, loc.id, loc.id)
+      .all<{ id: number }>();
+    return [...new Set([...desc, ...(results || []).map((r) => r.id)])];
+  }
+  return desc;
 }
 
 export async function applyLocationCol(db: AppDb, where: string[], params: Bind[], col: string, p: ListQ) {

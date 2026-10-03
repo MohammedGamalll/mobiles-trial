@@ -12,6 +12,7 @@ export type CatalogFilters = {
   location_id: number | "";
   part_type_id: number | "";
   barcode: string;
+  page: number;
 };
 
 export function emptyProduct() {
@@ -26,6 +27,7 @@ export function emptyProduct() {
     part_type_id: "" as number | "",
     category_id: "" as number | "",
     location_id: "" as number | "",
+    warehouse: "المخزن الرئيسي",
     supplier_id: "" as number | "",
     purchase_price: 0,
     last_purchase_price: 0,
@@ -54,7 +56,7 @@ export function emptyProduct() {
 export type ProductForm = ReturnType<typeof emptyProduct>;
 
 export function useProductCatalog() {
-  const { tr, can, refreshLookups } = useApp();
+  const { tr, can, refreshLookups, warehouseId } = useApp();
   const showCost = can("costs.view");
   const [rows, setRows] = useState<any[]>([]);
   const [filters, setFilters] = useState<CatalogFilters>({
@@ -65,35 +67,46 @@ export function useProductCatalog() {
     location_id: "",
     part_type_id: "",
     barcode: "",
+    page: 1,
   });
   const [picked, setPicked] = useState<number | null>(null);
   const [checked, setChecked] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    p.set("pageSize", "5000");
+    p.set("pageSize", "80");
+    p.set("page", String(filters.page || 1));
     p.set("active", "1");
     if (filters.q.trim()) p.set("q", filters.q.trim());
     if (filters.barcode.trim()) p.set("q", filters.barcode.trim() || filters.q.trim());
     if (filters.category_id) p.set("category_id", String(filters.category_id));
     if (filters.brand_id) p.set("brand_id", String(filters.brand_id));
     if (filters.supplier_id) p.set("supplier_id", String(filters.supplier_id));
-    if (filters.location_id) p.set("locations", String(filters.location_id));
+    if (filters.location_id) p.set("location_id", String(filters.location_id));
+    else if (warehouseId) p.set("location_id", String(warehouseId));
     if (filters.part_type_id) p.set("part_type_id", String(filters.part_type_id));
     return p.toString();
-  }, [filters]);
+  }, [filters, warehouseId]);
 
   const load = useCallback(async () => {
-    const r = await get<{ data: any[] }>(`/api/products?${qs}`);
-    setRows(r.data || []);
+    setLoading(true);
+    try {
+      const r = await get<{ data: any[]; total?: number }>(`/api/products?${qs}`);
+      setRows(r.data || []);
+      setTotal(Number(r.total) || (r.data || []).length);
+    } finally {
+      setLoading(false);
+    }
   }, [qs]);
 
   useEffect(() => {
     let live = true;
-    load().catch(() => { if (live) setRows([]); });
+    load().catch(() => { if (live) { setRows([]); setLoading(false); } });
     return () => { live = false; };
   }, [load, tick]);
 
@@ -104,7 +117,8 @@ export function useProductCatalog() {
   }
 
   async function loadOne(id: number): Promise<ProductForm> {
-    const r = await get<{ data: any }>(`/api/products/${id}`);
+    const loc = filters.location_id || warehouseId;
+    const r = await get<{ data: any }>(`/api/products/${id}${loc ? `?location_id=${loc}` : ""}`);
     const p = r.data || {};
     return {
       ...emptyProduct(),
@@ -113,7 +127,12 @@ export function useProductCatalog() {
       part_type_id: p.part_type_id || "",
       category_id: p.category_id || "",
       location_id: p.location_id || "",
+      warehouse: p.warehouse || "",
       supplier_id: p.supplier_id || "",
+      rack: p.rack || "",
+      shelf: p.shelf || "",
+      drawer: p.drawer || "",
+      box: p.box || "",
       units: p.units?.length ? p.units : emptyProduct().units,
       opening_qty: Number(p.opening_qty || 0),
     };
@@ -171,6 +190,6 @@ export function useProductCatalog() {
 
   return {
     rows, filters, setFilters, picked, setPicked, selected, checked, setChecked, toggleCheck,
-    showCost, busy, err, setErr, load, loadOne, save, remove, reload: () => setTick((n) => n + 1),
+    showCost, busy, loading, total, err, setErr, load, loadOne, save, remove, reload: () => setTick((n) => n + 1),
   };
 }

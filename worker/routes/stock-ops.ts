@@ -3,6 +3,7 @@ import { audit, nextNumber, paginate, todayIso, type AppBindings, type AppVars, 
 import { applyDate, applyEq, applyLocationCol, applySearch, listParams } from "../lib/filters";
 import { requirePerm } from "../lib/auth";
 import { logMovement, maybeStockAlerts } from "../lib/stock";
+import { withLocationLabels } from "../lib/location-label";
 
 export const stockOpsRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -48,6 +49,14 @@ async function descendantIds(db: AppDb, rootId: number) {
   return [...out];
 }
 
+stockOpsRoutes.get("/locations", requirePerm("locations.manage", "inventory.view", "products.view", "sales.create"), async (c) => {
+  const { results } = await c.env.DB
+    .prepare("SELECT * FROM storage_locations WHERE deleted_at IS NULL ORDER BY COALESCE(sort_order, 0), id")
+    .all();
+  const labeled = withLocationLabels(results || []);
+  return c.json({ data: labeled.filter((l) => Number((l as { active?: number }).active) !== 0) });
+});
+
 stockOpsRoutes.get("/locations/tree", requirePerm("locations.manage", "inventory.view"), async (c) => {
   const { results } = await c.env.DB
     .prepare(
@@ -59,7 +68,7 @@ stockOpsRoutes.get("/locations/tree", requirePerm("locations.manage", "inventory
        ORDER BY COALESCE(sl.sort_order, 0), sl.id`,
     )
     .all();
-  return c.json({ data: results });
+  return c.json({ data: withLocationLabels(results || []) });
 });
 
 stockOpsRoutes.post("/locations", requirePerm("locations.manage"), async (c) => {

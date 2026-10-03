@@ -12,7 +12,7 @@ import {
   type AppVars,
   type AppDb,
 } from "../lib/helpers";
-import { applyInvoiceListFilters, INVOICE_SORT, listParams, sortSql } from "../lib/filters";
+import { applyInvoiceListFilters, INVOICE_SORT, listParams, sortSql, stockScopeIds } from "../lib/filters";
 import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
@@ -257,6 +257,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   const planned: { item: CartItem; product: { id: number; name_ar: string; sku: string; min_selling_price: number; selling_price: number; kind: string; track_serial?: number; location_id?: number | null }; alloc: Allocation[]; lineTotal: number; unitCost: number; isService: boolean; stockQty: number }[] = [];
   const reserveHold = !!(b.reserve && (b.quote || b.hold || b.order));
   const saleLocationId = Number(b.location_id || 0) || null;
+  const saleScope = await stockScopeIds(c.env.DB, { location_id: saleLocationId || undefined, warehouse: (b as { warehouse?: string }).warehouse });
   for (const item of b.items) {
     if (!(Number(item.quantity) > 0)) return c.json({ error: "invalid_qty", product_id: item.product_id }, 400);
     const product = await c.env.DB
@@ -294,8 +295,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     const factor = Number(item.unit_factor || 1) || 1;
     const stockQty = item.quantity * factor;
     if (!isService && ((!b.hold && !b.quote && !b.order) || reserveHold)) {
-      const locId = Number(item.location_id || saleLocationId || product.location_id || 0) || null;
-      const batches = await availableBatches(c.env.DB, product.id, locId);
+      const batches = await availableBatches(c.env.DB, product.id, saleScope || undefined);
       try {
         alloc = planAllocation(batches, stockQty, item.batch_id);
         unitCost = weightedCost(alloc);
@@ -388,10 +388,10 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
         )
         .run();
       const id = ins.meta.last_row_id;
-      if (extra || b.cash_account_id) {
+      if (extra || b.cash_account_id || saleLocationId) {
         await tx
-          .prepare("UPDATE sales_invoices SET extra_amount = ?, cash_account_id = ? WHERE id = ?")
-          .bind(extra, b.cash_account_id || null, id)
+          .prepare("UPDATE sales_invoices SET extra_amount = ?, cash_account_id = ?, location_id = COALESCE(?, location_id) WHERE id = ?")
+          .bind(extra, b.cash_account_id || null, saleLocationId, id)
           .run();
       }
       for (const p of planned) {
@@ -430,7 +430,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
         if (p.isService) continue;
         if (hold) {
           if (reserveHold && p.alloc.length) {
-            await applyReserve(tx, p.alloc, p.product.id);
+            await applyReserve(tx, p.alloc, p.product.id, saleScope || saleLocationId);
             for (const serial of serials) {
               await tx.prepare("UPDATE product_serials SET status='reserved', invoice_id=?, invoice_item_id=? WHERE product_id=? AND serial=? AND status='in_stock'").bind(id, itemId, p.product.id, serial).run();
             }
@@ -441,7 +441,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
           await tx.prepare("UPDATE product_serials SET status='sold', invoice_id=?, invoice_item_id=? WHERE product_id=? AND serial=? AND status='in_stock'").bind(id, itemId, p.product.id, serial).run();
         }
         if (type === "delivery") {
-          await applyReserve(tx, p.alloc, p.product.id);
+          await applyReserve(tx, p.alloc, p.product.id, saleScope || saleLocationId);
           for (const a of p.alloc) {
             await logMovement(tx, {
               productId: p.product.id,
@@ -457,7 +457,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
             });
           }
         } else {
-          await applyIssue(tx, p.alloc, p.product.id, false);
+          await applyIssue(tx, p.alloc, p.product.id, false, saleScope || saleLocationId);
           for (const a of p.alloc) {
             await logMovement(tx, {
               productId: p.product.id,
@@ -537,6 +537,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     payment_method: string;
     total: number;
     cash_account_id?: number | null;
+    location_id?: number | null;
     items: { id: number; product_id: number; quantity: number; unit_price: number; discount: number; item_kind?: string }[];
     item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number }[];
   };
@@ -568,12 +569,13 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
   try {
     await c.env.DB.transaction(async (tx) => {
       costTotal = 0;
+      const saleScope = await stockScopeIds(tx, { location_id: row.location_id || undefined });
       for (const item of row.items) {
         if (item.item_kind === "service") continue;
         const existing = (row.item_batches || []).filter((x) => x.invoice_item_id === item.id);
         let alloc: Allocation[] = existing.map((x) => ({ batch_id: x.batch_id, batch_code: "", qty: x.qty, unit_cost: x.unit_cost }));
         if (!alloc.length) {
-          const batches = await availableBatches(tx, item.product_id);
+          const batches = await availableBatches(tx, item.product_id, saleScope || undefined);
           try {
             alloc = planAllocation(batches, item.quantity);
           } catch {
@@ -589,9 +591,9 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
         }
         costTotal = round2(costTotal + alloc.reduce((s, a) => s + a.qty * a.unit_cost, 0));
         if (row.type === "delivery") {
-          if (!existing.length) await applyReserve(tx, alloc, item.product_id);
+          if (!existing.length) await applyReserve(tx, alloc, item.product_id, saleScope || row.location_id);
         } else {
-          await applyIssue(tx, alloc, item.product_id, wasReserved && existing.length > 0);
+          await applyIssue(tx, alloc, item.product_id, wasReserved && existing.length > 0, saleScope || row.location_id);
           await maybeStockAlerts(tx, item.product_id);
         }
       }
