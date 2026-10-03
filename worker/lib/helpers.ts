@@ -118,7 +118,7 @@ export async function setSetting(db: AppDb, key: string, value: string) {
 
 export function paginate(url: URL) {
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
-  const pageSize = Math.min(300, Math.max(1, Number(url.searchParams.get("pageSize") || 20)));
+  const pageSize = Math.min(10000, Math.max(1, Number(url.searchParams.get("pageSize") || 20)));
   return { page, pageSize, offset: (page - 1) * pageSize };
 }
 

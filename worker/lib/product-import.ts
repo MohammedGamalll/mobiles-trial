@@ -21,6 +21,10 @@ export type ProductImportRow = {
   supplier: string;
   box: string;
   location: string;
+  rack: string;
+  shelf: string;
+  drawer: string;
+  model: string;
 };
 
 const HEADER_ALIASES: Record<string, keyof ProductImportRow> = {
@@ -67,6 +71,20 @@ const HEADER_ALIASES: Record<string, keyof ProductImportRow> = {
   بكيه: "box",
   "رف+شوكه+درج": "location",
   رف_شوكه_درج: "location",
+  رف_شوكة_درج: "location",
+  المكان: "location",
+  الموقع: "location",
+  الرف: "location",
+  الموديل: "model",
+  موديل: "model",
+  model: "model",
+  models: "model",
+  الكميه: "qty",
+  الكمية: "qty",
+  سعرالبيع: "selling_price",
+  سعر_الشراء: "purchase_price",
+  متوسط_الشراء: "purchase_price",
+  كود_الصنف: "extra_code1",
 };
 
 function cellStr(v: unknown) {
@@ -76,8 +94,12 @@ function cellStr(v: unknown) {
 }
 
 function cellNum(v: unknown) {
-  const s = cellStr(v).replace(/,/g, "");
-  if (!s) return 0;
+  const s = cellStr(v)
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/,/g, "")
+    .replace(/[^\d.-]/g, "");
+  if (!s || s === "-" || s === ".") return 0;
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
@@ -101,13 +123,43 @@ function normName(raw: string) {
   return s;
 }
 
+function headerKey(raw: unknown): keyof ProductImportRow | null {
+  const exact = HEADER_ALIASES[normHeader(raw)] || HEADER_ALIASES[cellStr(raw)];
+  if (exact) return exact;
+  const n = normHeader(raw);
+  if (!n) return null;
+  if (n.includes("رقم_الصنف") || n === "sku") return "sku";
+  if (n.includes("اسم_الصنف") || n === "name") return "name_ar";
+  if (n.includes("كمي")) return "qty";
+  if (n.includes("وحد")) return "unit";
+  if (n.includes("سعر_البيع") || n.includes("سعرالبيع")) return "selling_price";
+  if (n.includes("متوسط") || n.includes("سعر_الشراء")) return "purchase_price";
+  if (n.includes("اخر_سعر") || n.includes("آخر_سعر") || n.includes("last_purchase")) return "last_purchase_price";
+  if (n.includes("باركود") || n.includes("barcode")) return "barcode";
+  if (n.includes("كود_الصنف") || n.includes("extra_code")) return "extra_code1";
+  if (n.includes("تصنيف") || n.includes("category")) return "quality";
+  if (n.includes("نوع") || n.includes("part_type")) return "part_type";
+  if (n.includes("مارك") || n.includes("brand")) return "brand";
+  if (n.includes("مورد") || n.includes("supplier")) return "supplier";
+  if (n.includes("بكيه") || n === "box") return "box";
+  if (n.includes("رف") || n.includes("شوك") || n.includes("درج") || n.includes("مكان") || n.includes("موقع")) return "location";
+  if (n.includes("موديل") || n.includes("model")) return "model";
+  return null;
+}
+
 function headerIndex(row: unknown[]) {
   const map: Partial<Record<keyof ProductImportRow, number>> = {};
   row.forEach((cell, i) => {
-    const key = HEADER_ALIASES[normHeader(cell)] || HEADER_ALIASES[cellStr(cell)];
+    const key = headerKey(cell);
     if (key && map[key] == null) map[key] = i;
   });
   return map.sku != null && map.name_ar != null ? map : null;
+}
+
+function parseBin(raw: string) {
+  const s = raw.replace(/رف|شوكة|شوكه|درج/g, " ").replace(/\s+/g, " ").trim();
+  const parts = s.split(/[+\/|,،\-]+/).map((p) => p.trim()).filter(Boolean);
+  return { rack: parts[0] || "", shelf: parts[1] || "", drawer: parts[2] || "" };
 }
 
 export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
@@ -132,6 +184,8 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
     if (!sku || !name) continue;
     const avgBuy = cellNum(get("purchase_price"));
     const lastBuy = cellNum(get("last_purchase_price"));
+    const locRaw = cellStr(get("location"));
+    const bin = parseBin(locRaw);
     out.push({
       sku,
       name_ar: name,
@@ -140,7 +194,7 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
       unit: cellStr(get("unit")) || "قطعة",
       selling_price: cellNum(get("selling_price")),
       purchase_price: avgBuy || lastBuy,
-      last_purchase_price: lastBuy,
+      last_purchase_price: lastBuy || avgBuy,
       barcode: cellStr(get("barcode")),
       extra_code1: cellStr(get("extra_code1")),
       extra_code2: cellStr(get("extra_code2")) || cellStr(get("box")),
@@ -149,7 +203,11 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
       brand: normName(cellStr(get("brand"))),
       supplier: normName(cellStr(get("supplier"))),
       box: cellStr(get("box")),
-      location: cellStr(get("location")),
+      location: locRaw,
+      rack: bin.rack,
+      shelf: bin.shelf,
+      drawer: bin.drawer,
+      model: cellStr(get("model")) || name,
     });
   }
   return out;
@@ -201,11 +259,11 @@ async function ensureSupplier(db: AppDb, cache: Map<string, number>, name: strin
   return ins.meta.last_row_id;
 }
 
-async function ensureLocation(db: AppDb, cache: Map<string, number>, loc: string, box: string) {
-  const rack = loc.trim();
-  if (!rack) return null;
-  const label = box ? `رف ${rack}` : `رف ${rack}`;
-  const key = `loc:${label}:${box}`;
+async function ensureLocation(db: AppDb, cache: Map<string, number>, row: ProductImportRow) {
+  const rack = row.rack || row.location.trim();
+  if (!rack && !row.shelf && !row.drawer && !row.box) return null;
+  const label = ["رف " + (row.rack || rack), row.shelf ? "شوكة " + row.shelf : "", row.drawer ? "درج " + row.drawer : ""].filter(Boolean).join(" ");
+  const key = `loc:${label}:${row.box}`;
   if (cache.has(key)) return cache.get(key)!;
   const found = await db.prepare("SELECT id FROM storage_locations WHERE deleted_at IS NULL AND name = ? LIMIT 1").bind(label).first<{ id: number }>();
   if (found?.id) {
@@ -213,11 +271,36 @@ async function ensureLocation(db: AppDb, cache: Map<string, number>, loc: string
     return found.id;
   }
   const ins = await db
-    .prepare("INSERT INTO storage_locations (name, rack, box, active) VALUES (?, ?, ?, 1)")
-    .bind(label, rack, box || null)
+    .prepare("INSERT INTO storage_locations (name, warehouse, rack, shelf, drawer, box, active) VALUES (?, ?, ?, ?, ?, ?, 1)")
+    .bind(label, "المخزن الرئيسي", row.rack || rack || null, row.shelf || null, row.drawer || null, row.box || null)
     .run();
   cache.set(key, ins.meta.last_row_id);
   return ins.meta.last_row_id;
+}
+
+async function ensureModels(db: AppDb, cache: Map<string, number>, brandId: number | null, raw: string) {
+  if (!brandId || !raw.trim()) return [] as number[];
+  const parts = raw.split(/[\/|,،]+/).map((s) => s.replace(/\s+/g, " ").trim()).filter((s) => s.length >= 2);
+  const names = (parts.length > 1 ? parts : [raw.replace(/\s+/g, " ").trim()]).slice(0, 6);
+  const ids: number[] = [];
+  for (const name of names) {
+    const key = `model:${brandId}:${name.toLowerCase()}`;
+    let id = cache.get(key);
+    if (!id) {
+      const found = await db
+        .prepare("SELECT id FROM device_models WHERE deleted_at IS NULL AND brand_id = ? AND name = ? LIMIT 1")
+        .bind(brandId, name)
+        .first<{ id: number }>();
+      if (found?.id) id = found.id;
+      else {
+        const ins = await db.prepare("INSERT INTO device_models (brand_id, name, code, active) VALUES (?, ?, ?, 1)").bind(brandId, name, name).run();
+        id = ins.meta.last_row_id;
+      }
+      cache.set(key, id);
+    }
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 export async function importProductRows(db: AppDb, rows: ProductImportRow[], opts: { replace?: boolean; userId?: number } = {}) {
@@ -243,7 +326,8 @@ export async function importProductRows(db: AppDb, rows: ProductImportRow[], opt
       const typeId = await ensurePair(db, "part_types", cache, r.part_type);
       const catId = await ensurePair(db, "categories", cache, r.quality);
       const supplierId = await ensureSupplier(db, cache, r.supplier);
-      const locationId = await ensureLocation(db, cache, r.location, r.box);
+      const locationId = await ensureLocation(db, cache, r);
+      const modelIds = await ensureModels(db, cache, brandId, r.model);
       const ins = await db
         .prepare(
           `INSERT INTO products (sku, barcode, part_number, name_ar, name_en, brand_id, part_type_id, category_id, location_id, supplier_id,
@@ -276,6 +360,18 @@ export async function importProductRows(db: AppDb, rows: ProductImportRow[], opt
         )
         .run();
       const id = ins.meta.last_row_id;
+      try {
+        await db.prepare("UPDATE products SET last_purchase_price = ? WHERE id = ?").bind(r.last_purchase_price, id).run();
+      } catch {
+        /* column may be missing on older DBs */
+      }
+      for (const mid of modelIds) {
+        try {
+          await db.prepare("INSERT OR IGNORE INTO product_models (product_id, model_id) VALUES (?, ?)").bind(id, mid).run();
+        } catch {
+          /* ignore duplicate model link */
+        }
+      }
       if (r.qty > 0) {
         const code = await nextNumber(db, "batch");
         const batch = await db

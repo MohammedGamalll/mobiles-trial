@@ -128,7 +128,7 @@ export default function Products() {
 
   async function load() {
     const p = new URLSearchParams(f.qs);
-    p.set("pageSize", "50");
+    p.set("pageSize", "5000");
     const r = await get<{ data: any[]; totals?: any }>(`/api/products?${p}`);
     setData(r.data);
     setTotals(r.totals || {});
@@ -180,7 +180,7 @@ export default function Products() {
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) throw Object.assign(new Error(data.error || "fail"), { payload: data });
                     playSound("done");
-                    act.clear();
+                    act.setMessage(`${tr("importProductsOk")} — ${data.inserted || 0}/${data.total || 0}`);
                     await refreshLookups();
                     await load();
                   });
@@ -195,8 +195,9 @@ export default function Products() {
           <Btn kind="ghost" onClick={() => setView(view === "list" ? "board" : "list")}>{view === "list" ? tr("boardView") : tr("listView")}</Btn>
         </div>
       </div>
+      {act.message ? <p className="text-sm font-bold text-emerald-700">{act.message}</p> : null}
       <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
-        <Stat label={tr("products")} value={num(totals.count, lang)} />
+        <Stat label={tr("products")} value={`${num(data.length, lang)} / ${num(totals.count, lang)}`} />
         <Stat label={tr("qty")} value={num(totals.qty, lang)} />
         <Stat label={tr("stockValue")} value={money(totals.value, lang)} />
         {can("costs.view") && totals.cost_value != null ? <Stat label={tr("lineValue")} value={money(totals.cost_value, lang)} accent="emerald" /> : null}

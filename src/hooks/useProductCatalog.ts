@@ -74,7 +74,7 @@ export function useProductCatalog() {
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    p.set("pageSize", "400");
+    p.set("pageSize", "5000");
     p.set("active", "1");
     if (filters.q.trim()) p.set("q", filters.q.trim());
     if (filters.barcode.trim()) p.set("q", filters.barcode.trim() || filters.q.trim());
