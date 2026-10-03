@@ -6,6 +6,8 @@ import Dashboard from "./pages/Dashboard";
 import POS from "./pages/POS";
 import POSClassic from "./pages/POSClassic";
 import Products, { ProductDetail } from "./pages/Products";
+import ProductsClassic from "./pages/ProductsClassic";
+import WarehouseReportClassic from "./pages/WarehouseReportClassic";
 import Invoice from "./pages/Invoice";
 import { DeliveryBoard } from "./pages/Delivery";
 import DeliverySettle from "./pages/DeliverySettle";
@@ -55,6 +57,16 @@ function POSGate() {
   return uiLayout === "classic_easy" ? <POSClassic /> : <POS />;
 }
 
+function ProductsGate() {
+  const { uiLayout } = useApp();
+  return uiLayout === "classic_easy" ? <ProductsClassic /> : <Products />;
+}
+
+function InventoryGate() {
+  const { uiLayout } = useApp();
+  return uiLayout === "classic_easy" ? <WarehouseReportClassic /> : <InventoryPage />;
+}
+
 function AppRoutes() {
   const { user, tr } = useApp();
   return (
@@ -86,9 +98,9 @@ function AppRoutes() {
         <Route path="hr/leaves" element={<LeavesPage />} />
         <Route path="hr/advances" element={<AdvancesPage />} />
         <Route path="hr/payroll" element={<PayrollPage />} />
-        <Route path="products" element={<Products />} />
+        <Route path="products" element={<ProductsGate />} />
         <Route path="products/:id" element={<ProductDetail />} />
-        <Route path="inventory" element={<PermGuard perm="inventory.view"><InventoryPage /></PermGuard>} />
+        <Route path="inventory" element={<PermGuard perm="inventory.view"><InventoryGate /></PermGuard>} />
         <Route path="batches" element={<PermGuard perm="inventory.view"><BatchesPage /></PermGuard>} />
         <Route path="purchases" element={<PermGuard perm="purchases.view"><PurchasesPage /></PermGuard>} />
         <Route path="purchases/:id" element={<PermGuard perm="purchases.view"><PurchaseDetail /></PermGuard>} />

@@ -52,12 +52,20 @@ export async function loadPosToday(db: AppDb, day = todayIso(), limit = 40) {
     )
     .bind(day, limit)
     .all();
+  const expenses = await db
+    .prepare(`SELECT COALESCE(SUM(amount),0) as n FROM expenses WHERE voided_at IS NULL AND DATE(date) = ?`)
+    .bind(day)
+    .first<{ n: unknown }>();
+  const collectedToday = numAgg(collected?.n);
+  const expensesToday = numAgg(expenses?.n);
   return {
     date: day,
     sales_today: numAgg(sums?.sales),
     invoices_today: numAgg(sums?.c),
-    collected_today: numAgg(collected?.n),
+    collected_today: collectedToday,
     credit_today: numAgg(sums?.credit),
+    expenses_today: expensesToday,
+    expected_cash: Math.round((collectedToday - expensesToday) * 100) / 100,
     invoices: invoices.results,
   };
 }

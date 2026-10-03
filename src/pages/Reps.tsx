@@ -3,10 +3,11 @@ import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { ActionBtns, useConfirm } from "../components/Confirm";
+import { useActionError } from "../lib/errors";
 
 function Page({ title, action, children }: { title: string; action?: any; children: any }) {
   return (
@@ -296,19 +297,70 @@ export function TargetsPage() {
 }
 
 export function CommissionsPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
   const f = useListQuery("commissions", { month: monthNow() });
   const [rows, setRows] = useState<any[]>([]);
+  const [payout, setPayout] = useState<any[]>([]);
+  const cashAccounts = lookups?.cash_accounts || [];
+  const [cashId, setCashId] = useState(cashAccounts[0]?.id || 1);
+  const { message: payErr, fail: failPay, clear: clearPay } = useActionError();
+  const month = String(f.values.month || monthNow());
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/commissions?${f.qs}`)).data || []);
+    setPayout((await get<{ data: any[] }>(`/api/commissions/payout?month=${encodeURIComponent(month)}`)).data || []);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  useEffect(() => {
+    if (cashAccounts.length && !cashAccounts.some((a) => a.id === cashId)) setCashId(cashAccounts[0].id);
+  }, [cashAccounts]);
+  async function payLine(id: number) {
+    clearPay();
+    try {
+      await post(`/api/commissions/${id}/pay`, { cash_account_id: cashId });
+      await load();
+    } catch (err) {
+      failPay(err);
+    }
+  }
+  async function payAgent(agentId: number) {
+    clearPay();
+    try {
+      await post("/api/commissions/payout", { agent_id: agentId, month, cash_account_id: cashId });
+      await load();
+    } catch (err) {
+      failPay(err);
+    }
+  }
   return (
     <Page title={tr("commissions")}>
+      <ErrorNote message={payErr} />
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <Field label="cashBox">
+          <select className={inputCls} value={cashId} onChange={(e) => setCashId(Number(e.target.value))}>
+            {cashAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <h2 className="mb-2 text-lg font-black">{tr("courierNet")}</h2>
+      <Table
+        cols={[tr("agent"), tr("commissions"), tr("advances"), tr("netDue"), ""]}
+        rows={payout.map((p) => [
+          `${p.agent_name} (${p.agent_code})`,
+          money(p.accrued, lang),
+          money(p.open_advances, lang),
+          money(p.net_due, lang),
+          Number(p.accrued) > 0 && can("targets.manage", "hr.payroll") ? (
+            <button className="font-bold text-cyan-700" onClick={() => payAgent(p.agent_id)}>{tr("payAllCommissions")}</button>
+          ) : null,
+        ])}
+      />
       <SmartFilter f={f} date={false} fields={[
         { key: "month", label: "month", type: "text" },
         { key: "agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
-        { key: "status", label: "status", type: "select", options: [{ value: "open", label: statusLabel("open", lang) }, { value: "paid", label: tr("payCommission") }] },
+        { key: "status", label: "status", type: "select", options: [
+          { value: "accrued", label: statusLabel("accrued", lang) },
+          { value: "paid", label: tr("payCommission") },
+        ] },
       ]} />
       <Table
         cols={[tr("agent"), tr("invoiceNo"), tr("customer"), tr("total"), tr("commissionRate"), tr("commissions"), tr("status"), ""]}
@@ -321,7 +373,7 @@ export function CommissionsPage() {
           money(c.amount, lang),
           statusLabel(c.status === "paid" ? "commission_paid" : c.status, lang),
           c.status !== "paid" && can("targets.manage", "hr.payroll") ? (
-            <button className="font-bold text-cyan-700" onClick={async () => { await post(`/api/commissions/${c.id}/pay`, {}); load(); }}>{tr("payCommission")}</button>
+            <button className="font-bold text-cyan-700" onClick={() => payLine(c.id)}>{tr("payCommission")}</button>
           ) : null,
         ])}
       />

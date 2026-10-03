@@ -85,7 +85,7 @@ function creditError(customer: { credit_limit: number; current_balance: number }
   return null;
 }
 
-salesRoutes.get("/pos/today", requirePerm("sales.create", "sales.view"), async (c) => {
+salesRoutes.get("/pos/today", requirePerm("sales.create", "sales.view", "expenses.view"), async (c) => {
   const data = await loadPosToday(c.env.DB);
   return c.json(data);
 });

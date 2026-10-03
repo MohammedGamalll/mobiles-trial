@@ -260,11 +260,11 @@ export async function postCollectionJournal(
   });
 }
 
-export async function postExpenseJournal(db: AppDb, opts: { id: number; amount: number; date: string; description?: string | null; userId?: number | null }) {
+export async function postExpenseJournal(db: AppDb, opts: { id: number; amount: number; date: string; description?: string | null; userId?: number | null; cashAccountId?: number | null }) {
   if (await existingJournal(db, "expense", opts.id)) return;
   const exp = await accountByCode(db, "5200");
-  const cash = await cashByKind(db, "cash");
-  if (!exp || !cash) return;
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!exp || !cash) throw new Error("ledger");
   await postJournal(db, {
     date: opts.date,
     description: opts.description || `مصروف #${opts.id}`,
@@ -273,6 +273,24 @@ export async function postExpenseJournal(db: AppDb, opts: { id: number; amount: 
     userId: opts.userId,
     lines: [
       { account_id: exp.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
+export async function postCommissionJournal(db: AppDb, opts: { id: number; amount: number; date: string; description?: string | null; userId?: number | null; cashAccountId?: number | null }) {
+  if (await existingJournal(db, "commission", opts.id)) return;
+  const sal = await accountByCode(db, "5300");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!sal || !cash || opts.amount <= 0) throw new Error("ledger");
+  await postJournal(db, {
+    date: opts.date,
+    description: opts.description || `عمولة #${opts.id}`,
+    source: "commission",
+    sourceId: opts.id,
+    userId: opts.userId,
+    lines: [
+      { account_id: sal.id, debit: opts.amount },
       { account_id: cash.account_id, credit: opts.amount },
     ],
   });

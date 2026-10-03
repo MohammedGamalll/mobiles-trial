@@ -954,24 +954,47 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
 }
 
 export function ExpensesPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
   const f = useListQuery("expenses");
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
+  const [shift, setShift] = useState({ collected_today: 0, expenses_today: 0, expected_cash: 0 });
   const [cats, setCats] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ category_id: 1, amount: 0, description: "", date: new Date().toISOString().slice(0,10), cost_center: "", recurring: 0, recur_every_days: 30 });
+  const cashAccounts = lookups?.cash_accounts || [];
+  const [form, setForm] = useState({ category_id: 1, amount: 0, description: "", date: new Date().toISOString().slice(0,10), cost_center: "", recurring: 0, recur_every_days: 30, cash_account_id: cashAccounts[0]?.id || 1 });
   const { confirmDelete, dialog } = useConfirm();
+  const { message: expErr, fail: failExp, clear: clearExp } = useActionError();
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/expenses?${f.qs}`);
     setRows(r.data);
     setTotals(r.totals || {});
     setCats((await get<{ data: any[] }>("/api/expense-categories")).data);
+    try {
+      const today = await get<{ collected_today?: number; expenses_today?: number; expected_cash?: number }>("/api/pos/today");
+      setShift({
+        collected_today: Number(today.collected_today) || 0,
+        expenses_today: Number(today.expenses_today) || 0,
+        expected_cash: Number(today.expected_cash) || 0,
+      });
+    } catch {
+      /* shift stays 0 if POS today is forbidden */
+    }
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  useEffect(() => {
+    if (cashAccounts.length && !cashAccounts.some((a) => a.id === form.cash_account_id)) {
+      setForm((prev) => ({ ...prev, cash_account_id: cashAccounts[0].id }));
+    }
+  }, [cashAccounts]);
   return (
-    <Page title={tr("expenses")} action={<><ExportBtn kind="expenses" query={f.qs} /><Btn onClick={() => setOpen(true)}>{tr("newExpense")}</Btn></>}>
-      <Stat label={tr("total")} value={money(totals.total, lang)} />
+    <Page title={tr("expenses")} action={<><ExportBtn kind="expenses" query={f.qs} /><Btn onClick={() => { clearExp(); setOpen(true); }}>{tr("newExpense")}</Btn></>}>
+      <div className="mb-3 grid gap-3 md:grid-cols-4">
+        <Stat label={tr("total")} value={money(totals.total, lang)} />
+        <Stat label={tr("collected")} value={money(shift.collected_today, lang)} accent="emerald" />
+        <Stat label={tr("expensesToday")} value={money(shift.expenses_today, lang)} accent="rose" />
+        <Stat label={tr("expectedCash")} value={money(shift.expected_cash, lang)} />
+      </div>
       <SmartFilter f={f} fields={[
         { key: "category_id", label: "expensesCat", type: "select", quick: true, options: cats.map((c) => ({ value: String(c.id), label: lang === "ar" ? c.name_ar : c.name_en })) },
         { key: "recurring", label: "recurring", type: "select", options: [{ value: "1", label: tr("recurring") }, { value: "0", label: tr("all") }] },
@@ -989,10 +1012,15 @@ export function ExpensesPage() {
       ])} />
       )}
       <Modal open={open} title={tr("newExpense")} onClose={() => setOpen(false)}>
+        <ErrorNote message={expErr} />
         <select className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: Number(e.target.value) })}>
           {cats.map((c) => <option key={c.id} value={c.id}>{lang==="ar"?c.name_ar:c.name_en}</option>)}
         </select>
         <input className={`${inputCls} mt-2`} type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} />
+        <input className={`${inputCls} mt-2`} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+        <select className={`${inputCls} mt-2`} value={form.cash_account_id} onChange={(e) => setForm({ ...form, cash_account_id: Number(e.target.value) })}>
+          {cashAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
         <input className={`${inputCls} mt-2`} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder={tr("description")} />
         <input className={`${inputCls} mt-2`} value={form.cost_center} onChange={(e) => setForm({ ...form, cost_center: e.target.value })} placeholder={tr("costCenter")} />
         <label className="mt-2 flex items-center gap-2 text-sm">
@@ -1000,7 +1028,15 @@ export function ExpensesPage() {
           {tr("recurring")}
         </label>
         {form.recurring ? <input className={`${inputCls} mt-2`} type="number" value={form.recur_every_days} onChange={(e) => setForm({ ...form, recur_every_days: Number(e.target.value) })} /> : null}
-        <Btn className="mt-3" onClick={async () => { await post("/api/expenses", form); setOpen(false); load(); }}>{tr("save")}</Btn>
+        <Btn className="mt-3" onClick={async () => {
+          try {
+            await post("/api/expenses", form);
+            setOpen(false);
+            load();
+          } catch (err) {
+            failExp(err);
+          }
+        }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
     </Page>
@@ -1375,10 +1411,41 @@ export function SettingsPage() {
     <Page title={tr("settings")}>
       {dialog}
       <AccountSettings />
+      <div className="mb-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+        <Field label="storeLogo">
+          <div className="flex flex-wrap items-center gap-3">
+            {form.logo_url ? <img src={form.logo_url} alt="" className="h-14 w-14 rounded-lg border object-contain" /> : null}
+            <input
+              type="file"
+              accept="image/*"
+              className="text-sm"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                const fd = new FormData();
+                fd.append("file", file);
+                const res = await fetch("/api/uploads", { method: "POST", credentials: "include", headers: authHeaders(), body: fd });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.url) setForm((prev) => ({ ...prev, logo_url: data.url }));
+              }}
+            />
+          </div>
+        </Field>
+        <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
+          <input type="checkbox" checked={form.tax_enabled === "1"} onChange={(e) => setForm({ ...form, tax_enabled: e.target.checked ? "1" : "0" })} />
+          {tr("taxEnabled")}
+        </label>
+        {form.tax_enabled === "1" ? (
+          <Field label="taxRate">
+            <input className={inputCls} type="number" min={0} step="0.01" value={form.tax_rate ?? ""} onChange={(e) => setForm({ ...form, tax_rate: e.target.value })} />
+          </Field>
+        ) : null}
+      </div>
       <div className="grid gap-3 md:grid-cols-2">
-        {["store_name","store_name_ar","store_address","store_phone","invoice_prefix","invoice_footer","invoice_header","default_delivery_time","whatsapp_enabled","sound_enabled","tax_enabled","tax_rate","allow_negative_stock","use_last_customer_price","price_2_name","price_3_name","price_4_name","workplace_lat","workplace_lng","geofence_meters","usd_egp_rate"].map((k) => (
+        {["store_name","store_name_ar","store_address","store_phone","invoice_prefix","invoice_footer","invoice_header","default_delivery_time","whatsapp_enabled","sound_enabled","allow_negative_stock","use_last_customer_price","price_2_name","price_3_name","price_4_name","workplace_lat","workplace_lng","geofence_meters","usd_egp_rate"].map((k) => (
           <Field key={k} label={k}>
-            <input className={inputCls} value={form[k] ?? (k === "sound_enabled" ? "1" : "")} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={k === "sound_enabled" || k === "tax_enabled" || k === "whatsapp_enabled" ? "1 / 0" : ""} />
+            <input className={inputCls} value={form[k] ?? (k === "sound_enabled" ? "1" : "")} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={k === "sound_enabled" || k === "whatsapp_enabled" ? "1 / 0" : ""} />
           </Field>
         ))}
       </div>
@@ -1709,7 +1776,9 @@ export function AuditPage() {
       {tab === "log" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "action", label: "actions", type: "select", quick: true, options: ["create", "edit", "delete", "approve", "cancel", "login"].map((a) => ({ value: a, label: a })) },
+            { key: "action", label: "actions", type: "select", quick: true, options: [
+              "create_invoice", "cancel_invoice", "change_price", "expense", "pay_commission", "approve", "login",
+            ].map((a) => ({ value: a, label: a })) },
             { key: "entity", label: "source", type: "text" },
             { key: "entity_id", label: "invoiceNo", type: "text" },
             { key: "user_id", label: "users", type: "text" },

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { audit, paginate, todayIso, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { applyDate, applyEq, applySearch, listParams } from "../lib/filters";
+import { postCommissionJournal } from "../lib/ledger";
 
 export const repsRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -259,6 +260,78 @@ repsRoutes.put("/visits/:id", requirePerm("visits.own", "visits.manage"), async 
   return c.json({ ok: true });
 });
 
+repsRoutes.get("/commissions/payout", requirePerm("reps.view", "hr.payroll"), async (c) => {
+  const month = monthParam(new URL(c.req.url));
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT a.id as agent_id, a.name as agent_name, a.code as agent_code,
+        COALESCE((SELECT SUM(c.amount) FROM sales_commissions c WHERE c.agent_id = a.id AND c.month = ? AND c.status IN ('accrued','open')), 0) as accrued,
+        COALESCE((SELECT SUM(c.amount) FROM sales_commissions c WHERE c.agent_id = a.id AND c.month = ? AND c.status = 'paid'), 0) as paid,
+        COALESCE((SELECT SUM(sa.amount) FROM salary_advances sa
+          JOIN employees e ON e.id = sa.employee_id
+          WHERE e.delivery_agent_id = a.id AND e.deleted_at IS NULL AND sa.status = 'open'), 0) as open_advances
+       FROM delivery_agents a
+       WHERE a.deleted_at IS NULL
+         AND (
+           EXISTS (SELECT 1 FROM sales_commissions c WHERE c.agent_id = a.id AND c.month = ?)
+           OR EXISTS (
+             SELECT 1 FROM salary_advances sa JOIN employees e ON e.id = sa.employee_id
+             WHERE e.delivery_agent_id = a.id AND e.deleted_at IS NULL AND sa.status = 'open'
+           )
+         )
+       ORDER BY a.code`,
+    )
+    .bind(month, month, month)
+    .all();
+  const data = (results || []).map((r: any) => {
+    const accrued = Number(r.accrued) || 0;
+    const paid = Number(r.paid) || 0;
+    const open_advances = Number(r.open_advances) || 0;
+    return {
+      ...r,
+      accrued,
+      paid,
+      open_advances,
+      net_due: Math.round((accrued - open_advances) * 100) / 100,
+    };
+  });
+  return c.json({ data, month });
+});
+
+repsRoutes.post("/commissions/payout", requirePerm("targets.manage", "hr.payroll"), async (c) => {
+  const b = await c.req.json<{ agent_id: number; month?: string; cash_account_id?: number }>();
+  const month = b.month || todayIso().slice(0, 7);
+  const agentId = Number(b.agent_id || 0);
+  if (!agentId) return c.json({ error: "missing_fields" }, 400);
+  const { results } = await c.env.DB
+    .prepare("SELECT id, amount FROM sales_commissions WHERE agent_id = ? AND month = ? AND status IN ('accrued','open')")
+    .bind(agentId, month)
+    .all<{ id: number; amount: number }>();
+  const rows = results || [];
+  if (!rows.length) return c.json({ ok: true, paid: 0 });
+  try {
+    await c.env.DB.transaction(async (tx) => {
+      for (const row of rows) {
+        await tx.prepare("UPDATE sales_commissions SET status = 'paid' WHERE id = ? AND status != 'paid'").bind(row.id).run();
+        await postCommissionJournal(tx, {
+          id: row.id,
+          amount: Number(row.amount),
+          date: todayIso(),
+          description: `صرف عمولة #${row.id}`,
+          userId: c.get("user").id,
+          cashAccountId: b.cash_account_id || null,
+        });
+      }
+    });
+    await audit(c.env.DB, c.get("user"), "pay_commission", "sales_commission", agentId, `Pay commissions ${month}`);
+    return c.json({ ok: true, paid: rows.length });
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    if (msg === "ledger") return c.json({ error: "ledger" }, 400);
+    throw e;
+  }
+});
+
 repsRoutes.get("/commissions", requirePerm("reps.view", "hr.payroll"), async (c) => {
   const p = listParams(new URL(c.req.url));
   const month = p.month || todayIso().slice(0, 7);
@@ -283,7 +356,30 @@ repsRoutes.get("/commissions", requirePerm("reps.view", "hr.payroll"), async (c)
 
 repsRoutes.post("/commissions/:id/pay", requirePerm("targets.manage", "hr.payroll"), async (c) => {
   const id = Number(c.req.param("id"));
-  await c.env.DB.prepare("UPDATE sales_commissions SET status = 'paid' WHERE id = ?").bind(id).run();
-  await audit(c.env.DB, c.get("user"), "pay_commission", "sales_commission", id, "Pay commission");
-  return c.json({ ok: true });
+  const b = await c.req.json<{ cash_account_id?: number }>().catch(() => ({}) as { cash_account_id?: number });
+  const row = await c.env.DB
+    .prepare("SELECT id, amount, status FROM sales_commissions WHERE id = ?")
+    .bind(id)
+    .first<{ id: number; amount: number; status: string }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.status === "paid") return c.json({ ok: true });
+  try {
+    await c.env.DB.transaction(async (tx) => {
+      await tx.prepare("UPDATE sales_commissions SET status = 'paid' WHERE id = ? AND status != 'paid'").bind(id).run();
+      await postCommissionJournal(tx, {
+        id,
+        amount: Number(row.amount),
+        date: todayIso(),
+        description: `صرف عمولة #${id}`,
+        userId: c.get("user").id,
+        cashAccountId: b.cash_account_id || null,
+      });
+    });
+    await audit(c.env.DB, c.get("user"), "pay_commission", "sales_commission", id, "Pay commission");
+    return c.json({ ok: true });
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    if (msg === "ledger") return c.json({ error: "ledger" }, 400);
+    throw e;
+  }
 });

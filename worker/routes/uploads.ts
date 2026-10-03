@@ -35,7 +35,7 @@ publicUploadRoutes.get("/:name", async (c) => {
   });
 });
 
-uploadRoutes.post("/", requirePerm("products.create", "products.edit"), async (c) => {
+uploadRoutes.post("/", requirePerm("products.create", "products.edit", "settings.edit"), async (c) => {
   const dir = c.env.UPLOAD_DIR;
   if (!dir) return c.json({ error: "upload_unavailable" }, 503);
   const body = await c.req.parseBody({ all: true });

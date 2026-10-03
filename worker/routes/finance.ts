@@ -46,20 +46,36 @@ financeRoutes.get("/expense-categories", requirePerm("expenses.view", "settings.
 });
 
 financeRoutes.post("/expenses", requirePerm("expenses.create"), async (c) => {
-  const b = await c.req.json<{ category_id: number; amount: number; date?: string; description?: string; cost_center?: string; recurring?: number; recur_every_days?: number }>();
+  const b = await c.req.json<{ category_id: number; amount: number; date?: string; description?: string; cost_center?: string; recurring?: number; recur_every_days?: number; cash_account_id?: number }>();
   const date = b.date || todayIso();
   const days = Number(b.recur_every_days || 0);
   const nextDue = b.recurring && days > 0 ? new Date(`${date}T12:00:00`) : null;
   if (nextDue) nextDue.setDate(nextDue.getDate() + days);
-  const r = await c.env.DB
-    .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id, cost_center, recurring, recur_every_days, next_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(b.category_id, b.amount, date, b.description || null, c.get("user").id, b.cost_center || null, b.recurring ? 1 : 0, days || null, nextDue ? nextDue.toISOString().slice(0, 10) : null)
-    .run();
-  await tryLedger(() =>
-    postExpenseJournal(c.env.DB, { id: r.meta.last_row_id, amount: b.amount, date: b.date || todayIso(), description: b.description, userId: c.get("user").id }),
-  );
-  await audit(c.env.DB, c.get("user"), "expense", "expense", r.meta.last_row_id, `${b.amount}`);
-  return c.json({ id: r.meta.last_row_id }, 201);
+  const amount = Number(b.amount || 0);
+  if (!(amount > 0) || !b.category_id) return c.json({ error: "missing_fields" }, 400);
+  try {
+    const id = await c.env.DB.transaction(async (tx) => {
+      const r = await tx
+        .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id, cost_center, recurring, recur_every_days, next_due, cash_account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(b.category_id, amount, date, b.description || null, c.get("user").id, b.cost_center || null, b.recurring ? 1 : 0, days || null, nextDue ? nextDue.toISOString().slice(0, 10) : null, b.cash_account_id || null)
+        .run();
+      await postExpenseJournal(tx, {
+        id: r.meta.last_row_id,
+        amount,
+        date,
+        description: b.description,
+        userId: c.get("user").id,
+        cashAccountId: b.cash_account_id || null,
+      });
+      return r.meta.last_row_id;
+    });
+    await audit(c.env.DB, c.get("user"), "expense", "expense", id, `${amount}`);
+    return c.json({ id }, 201);
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    if (msg === "ledger") return c.json({ error: "ledger" }, 400);
+    throw e;
+  }
 });
 
 financeRoutes.post("/expenses/:id/void", requirePerm("expenses.void", "expenses.create"), async (c) => {

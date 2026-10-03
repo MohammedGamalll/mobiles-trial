@@ -275,12 +275,15 @@ export function PrintLetterhead({ title }: { title: string }) {
   return (
     <div className="print-only mb-5 border-b border-slate-300 pb-4">
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="flex items-start gap-3">
+          {settings.logo_url ? <img src={settings.logo_url} alt="" className="h-14 w-14 object-contain" /> : null}
+          <div>
           <div className="text-2xl font-black tracking-wide">{tr("app")}</div>
           <div className="text-sm text-slate-600">{settings.store_name_ar || settings.store_name || tr("app")}</div>
           <div className="text-xs text-slate-500">{settings.store_address}</div>
           <div className="text-xs text-slate-500">{settings.store_phone}</div>
           {settings.invoice_header ? <div className="mt-2 whitespace-pre-wrap text-sm">{settings.invoice_header}</div> : null}
+          </div>
         </div>
         <div className="text-end text-sm">
           <div className="font-black">{title}</div>

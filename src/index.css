@@ -1815,3 +1815,296 @@ html[data-ui="modern"] .login-gold {
 .pos-classic-black-gap {
   flex: 1;
 }
+
+.inv-classic {
+  display: flex;
+  height: calc(100dvh - var(--header-h));
+  flex-direction: column;
+  background: #fff;
+  color: #111;
+}
+.inv-classic-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #ddd;
+  background: #f7f7f7;
+}
+.inv-classic-top b {
+  font-size: 15px;
+  font-weight: 900;
+}
+.inv-classic-filter {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  font-weight: 800;
+}
+.inv-classic-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.inv-classic-filter select,
+.inv-classic-filter input,
+.inv-classic-adv input,
+.inv-classic-adv select {
+  height: 26px;
+  min-width: 110px;
+  border: 1px solid #ccc;
+  padding: 0 6px;
+  font-size: 12px;
+}
+.inv-classic-yellow {
+  height: 28px;
+  padding: 0 12px;
+  background: #f4d03f;
+  font-size: 12px;
+  font-weight: 800;
+}
+.inv-classic-yellow.is-lg {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.inv-classic-adv {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #fff8dc;
+  border-bottom: 1px solid #eee;
+}
+.inv-classic-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.inv-classic-side {
+  display: flex;
+  width: 168px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px;
+  border-inline-end: 1px solid #ddd;
+  background: #fafafa;
+}
+.inv-classic-cmds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inv-classic-side button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid #ccc;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: start;
+}
+.inv-classic-cmds .is-del { background: #e53935; border-color: #c62828; color: #fff; }
+.inv-classic-cmds .is-edit { background: #f4d03f; border-color: #d4ac0d; }
+.inv-classic-cmds .is-new { background: #1e88e5; border-color: #1565c0; color: #fff; }
+.inv-classic-side button:disabled { opacity: 0.35; }
+.inv-classic-dist {
+  margin-top: auto;
+  border: 1px solid #ccc;
+  background: #fff;
+  font-size: 11px;
+}
+.inv-classic-dist > div {
+  padding: 4px;
+  background: #e8f5e9;
+  font-weight: 800;
+}
+.inv-classic-dist table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.inv-classic-dist th,
+.inv-classic-dist td {
+  border: 1px solid #ddd;
+  padding: 2px 4px;
+}
+.inv-classic-grid {
+  min-width: 0;
+  flex: 1;
+  overflow: auto;
+}
+.inv-classic-grid table,
+.inv-classic-moves table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.inv-classic-grid th,
+.inv-classic-grid td,
+.inv-classic-moves td {
+  border: 1px solid #d8d8d8;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+.inv-classic-grid th {
+  position: sticky;
+  top: 0;
+  background: #f3f3f3;
+  font-weight: 800;
+}
+.inv-classic-grid td.is-name { font-weight: 700; }
+.inv-classic-grid tbody tr:hover { background: #eef7ee; }
+.inv-classic-grid tbody tr.is-pick { background: #d6f0d6; }
+.inv-classic-grid tfoot tr {
+  background: #43a047;
+  color: #fff;
+  font-weight: 800;
+}
+.inv-classic-moves {
+  max-height: 160px;
+  overflow: auto;
+  border-top: 1px solid #ddd;
+}
+.inv-classic-pane-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: #e8f5e9;
+  font-weight: 800;
+}
+.inv-dlg-back {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+.inv-dlg {
+  display: flex;
+  width: min(920px, 96vw);
+  max-height: 92dvh;
+  flex-direction: column;
+  background: #43a047;
+  color: #111;
+  padding: 12px;
+}
+.inv-dlg-sm { width: min(480px, 96vw); background: #fff; }
+.inv-dlg-head {
+  display: flex;
+  gap: 12px;
+}
+.inv-dlg-photo {
+  display: flex;
+  width: 110px;
+  height: 110px;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #888;
+}
+.inv-dlg-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.inv-dlg-fields,
+.inv-dlg-body,
+.inv-dlg-split {
+  display: grid;
+  gap: 8px;
+}
+.inv-dlg-fields { flex: 1; }
+.inv-dlg-split { grid-template-columns: 1fr 1fr; }
+.inv-dlg label {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+.inv-dlg-sm label { color: #111; }
+.inv-dlg input,
+.inv-dlg select,
+.inv-dlg textarea {
+  height: 28px;
+  border: 1px solid #2e7d32;
+  padding: 0 6px;
+  background: #fff;
+}
+.inv-dlg textarea { height: 80px; }
+.inv-dlg-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 10px 0 8px;
+}
+.inv-dlg-tabs button {
+  height: 28px;
+  padding: 0 12px;
+  background: #e8f5e9;
+  font-weight: 800;
+}
+.inv-dlg-tabs button.is-on { background: #fff; }
+.inv-dlg-body {
+  min-height: 180px;
+  padding: 10px;
+  background: #fff;
+  overflow: auto;
+}
+.inv-dlg-body label { color: #111; }
+.inv-dlg-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.inv-dlg-table th,
+.inv-dlg-table td { border: 1px solid #ccc; padding: 2px; }
+.inv-dlg-table input { width: 100%; height: 24px; border: 0; }
+.inv-dlg-addunit {
+  margin-top: 8px;
+  height: 28px;
+  padding: 0 10px;
+  background: #f4d03f;
+  font-weight: 800;
+}
+.inv-dlg-inline { margin-bottom: 8px; }
+.inv-dlg-err { padding: 4px 8px; color: #fff; background: #c62828; font-weight: 800; }
+.inv-dlg-sm .inv-dlg-err { color: #fff; }
+.inv-dlg-actions {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.inv-dlg-actions button {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  font-weight: 800;
+}
+.inv-dlg-actions .is-save { background: #f4d03f; }
+.inv-dlg-actions .is-cancel { background: #ececec; }
+.inv-dlg-pane-title {
+  padding: 6px 8px;
+  font-weight: 900;
+}
+.pos-classic-quick {
+  display: flex;
+  align-self: end;
+  gap: 4px;
+}
+.pos-classic-quick button {
+  height: 28px;
+  padding: 0 8px;
+  background: #f4d03f;
+  font-size: 11px;
+  font-weight: 800;
+}

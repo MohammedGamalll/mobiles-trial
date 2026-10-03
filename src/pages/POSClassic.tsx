@@ -14,13 +14,16 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { get, post } from "../lib/api";
+import { get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintLetterhead, inputCls } from "../components/ui";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
 import { ProductSuggestList } from "../components/ProductSuggest";
+import { ProductDialogClassic } from "../components/classic/ProductDialogClassic";
+import { AccountDialogClassic } from "../components/classic/AccountDialogClassic";
+import { emptyProduct, type ProductForm } from "../hooks/useProductCatalog";
 import { usePOSLogic, type Product } from "../hooks/usePOSLogic";
 
 function binText(p: Product) {
@@ -52,10 +55,15 @@ export default function POSClassic() {
     subtotal, discAmt, total, creditNeedCustomer,
     printRows, printTotal, printExtra, waEnabled, cartQty, showGoods, partyHits, applyParty, saveAccount,
     loadToday, loadHeldList, openHeld, cancelHeld, previewWa, submit, holdInvoice,
-    forceGoods, setForceGoods,
+    forceGoods, setForceGoods, setStockTick,
   } = pos;
   const [railOpen, setRailOpen] = useState(true);
   const [desk, setDesk] = useState<"sale" | "cart" | "held" | "sold" | "control">("sale");
+  const [prodOpen, setProdOpen] = useState(false);
+  const [prodForm, setProdForm] = useState<ProductForm>(emptyProduct());
+  const [prodBusy, setProdBusy] = useState(false);
+  const [prodErr, setProdErr] = useState("");
+  const [acctOpen, setAcctOpen] = useState(false);
   const rtl = lang === "ar";
   const Collapse = rtl ? ChevronRight : ChevronLeft;
   const Expand = rtl ? ChevronLeft : ChevronRight;
@@ -220,6 +228,10 @@ export default function POSClassic() {
             <button type="button" className="pos-classic-add" onClick={onAdd}>
               <Check size={16} /> {tr("posAdd")}
             </button>
+            <div className="pos-classic-quick">
+              <button type="button" onClick={() => setAcctOpen(true)}>{tr("posQuickCustomer")}</button>
+              {can("products.create") ? <button type="button" onClick={() => { setProdForm(emptyProduct()); setProdErr(""); setProdOpen(true); }}>{tr("posQuickProduct")}</button> : null}
+            </div>
             <label className="pos-classic-field is-no">
               <span>{tr("posInvoiceNoShort")}</span>
               <input readOnly value={invoiceNo} />
@@ -781,6 +793,50 @@ export default function POSClassic() {
           ) : null}
         </div>
       </Modal>
+      <ProductDialogClassic
+        open={prodOpen}
+        form={prodForm}
+        busy={prodBusy}
+        err={prodErr}
+        onChange={setProdForm}
+        onClose={() => setProdOpen(false)}
+        onSave={async () => {
+          if (!String(prodForm.sku || "").trim() || !String(prodForm.name_ar || "").trim()) {
+            setProdErr(tr("errMissing"));
+            return;
+          }
+          setProdBusy(true);
+          setProdErr("");
+          try {
+            const payload = {
+              ...prodForm,
+              brand_id: prodForm.brand_id || null,
+              part_type_id: prodForm.part_type_id || null,
+              category_id: prodForm.category_id || null,
+              location_id: prodForm.location_id || null,
+              supplier_id: prodForm.supplier_id || null,
+            };
+            if (prodForm.id) await put(`/api/products/${prodForm.id}`, payload);
+            else await post("/api/products", payload);
+            playSound("done");
+            setProdOpen(false);
+            setStockTick((n) => n + 1);
+          } catch (e) {
+            playSound("err");
+            setProdErr(apiMessage(tr, e));
+          } finally {
+            setProdBusy(false);
+          }
+        }}
+      />
+      <AccountDialogClassic
+        open={acctOpen}
+        onClose={() => setAcctOpen(false)}
+        onSaved={(kind, row) => {
+          setPartyKind(kind);
+          applyParty(row, kind);
+        }}
+      />
     </div>
   );
 }

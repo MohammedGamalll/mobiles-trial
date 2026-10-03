@@ -35,6 +35,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const loc = useLocation();
   const pos = loc.pathname === "/pos";
+  const classicDesk = classic && (pos || loc.pathname === "/products" || loc.pathname === "/inventory");
   const [cmd, setCmd] = useState(false);
   const [notes, setNotes] = useState<any[]>([]);
   const [noteType, setNoteType] = useState("");
@@ -189,7 +190,7 @@ export default function AppLayout() {
           {classic && loc.pathname !== "/" ? <EasyHomeLink /> : pos ? <EasyHomeLink /> : null}
           <button
             type="button"
-            className={`top-search relative min-w-0 flex-1 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classic && pos ? "hidden" : ""} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
+            className={`top-search relative min-w-0 flex-1 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classicDesk ? "hidden" : ""} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
             onClick={() => setCmd(true)}
           >
             <Search className="pointer-events-none absolute top-2.5 start-3 text-slate-400" size={16} />
@@ -303,8 +304,8 @@ export default function AppLayout() {
             </button>
           </div>
         </header>
-        {pos ? null : classic ? <SahlMenu /> : <ModernModules />}
-        <main className={loc.pathname === "/pos" ? "app-main sahl-pos-main" : classic && loc.pathname === "/" ? "app-main easy-main" : "app-main p-4 md:p-6"}>
+        {classicDesk ? null : classic ? <SahlMenu /> : <ModernModules />}
+        <main className={classicDesk || pos ? "app-main sahl-pos-main" : classic && loc.pathname === "/" ? "app-main easy-main" : "app-main p-4 md:p-6"}>
           <Outlet />
         </main>
       </div>

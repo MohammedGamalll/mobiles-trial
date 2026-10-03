@@ -112,7 +112,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [heldOpen, setHeldOpen] = useState(false);
   const [heldTab, setHeldTab] = useState<"held" | "print" | "wa">("held");
   const [todayInv, setTodayInv] = useState<any[]>([]);
-  const [todayStats, setTodayStats] = useState({ sales_today: 0, collected_today: 0, credit_today: 0, invoices_today: 0 });
+  const [todayStats, setTodayStats] = useState({ sales_today: 0, collected_today: 0, credit_today: 0, invoices_today: 0, expenses_today: 0, expected_cash: 0 });
   const [stockTick, setStockTick] = useState(0);
   const [doneOpen, setDoneOpen] = useState(false);
   const [doneInv, setDoneInv] = useState<any>(null);
@@ -408,6 +408,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       collected_today: number;
       credit_today: number;
       invoices_today: number;
+      expenses_today?: number;
+      expected_cash?: number;
       invoices: any[];
     }>("/api/pos/today");
     setTodayStats({
@@ -415,6 +417,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       collected_today: Number(r.collected_today) || 0,
       credit_today: Number(r.credit_today) || 0,
       invoices_today: Number(r.invoices_today) || 0,
+      expenses_today: Number(r.expenses_today) || 0,
+      expected_cash: Number(r.expected_cash) || 0,
     });
     setTodayInv(r.invoices || []);
   }
@@ -580,8 +584,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     }
   }
 
-  function applyParty(row: any) {
-    if (partyKind === "supplier") {
+  function applyParty(row: any, kind = partyKind) {
+    if (kind === "supplier") {
       setSupplier(row);
       setWalkIn(row.name || "");
       setAccountCode(String(row.id || ""));
@@ -590,7 +594,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       setCustomer(null);
       return;
     }
-    if (partyKind === "agent") {
+    if (kind === "agent") {
       setSalesAgentId(row.id);
       setWalkIn(row.name || "");
       setAccountCode(String(row.code || row.id || ""));

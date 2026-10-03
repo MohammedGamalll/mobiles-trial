@@ -189,6 +189,7 @@ export async function ensureAppSchema(db: AppDb) {
     ["sales_invoice_items", "unit_name TEXT"],
     ["sales_invoice_items", "unit_factor REAL NOT NULL DEFAULT 1"],
     ["work_shifts", "weekdays TEXT"],
+    ["expenses", "cash_account_id INTEGER"],
   ];
   for (const [table, def] of alters) await run(`ALTER TABLE ${table} ADD COLUMN ${def}`);
   await run(`INSERT OR IGNORE INTO payment_methods (code, name_ar, name_en, active, sort_order) VALUES
