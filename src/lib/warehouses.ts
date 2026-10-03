@@ -18,10 +18,7 @@ export function locationLabel(l?: Partial<LocationRow> | null) {
 }
 
 export function isWarehouseLocation(l: LocationRow) {
-  if (l.kind === "warehouse") return true;
-  if (Number(l.parent_id || 0)) return false;
-  if (l.kind && l.kind !== "warehouse") return false;
-  return !(l.box || l.rack || l.shelf || l.drawer);
+  return l.kind === "warehouse";
 }
 
 export function warehouseLocations(locations?: LocationRow[] | null) {

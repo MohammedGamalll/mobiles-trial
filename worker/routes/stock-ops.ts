@@ -88,10 +88,14 @@ stockOpsRoutes.post("/locations", requirePerm("locations.manage"), async (c) => 
   }>();
   if (!b.name?.trim()) return c.json({ error: "missing" }, 400);
   const kind = KINDS.includes((b.kind || "bin") as (typeof KINDS)[number]) ? b.kind || "bin" : "bin";
+  let parentId = b.parent_id ? Number(b.parent_id) : null;
+  if (kind === "warehouse") parentId = null;
+  if (kind === "aisle" && !parentId) return c.json({ error: "parent_required" }, 400);
   let parentPath = "";
   let warehouse = b.warehouse || "";
-  if (b.parent_id) {
-    const parent = await locationById(c.env.DB, Number(b.parent_id));
+  if (kind === "warehouse" && !warehouse) warehouse = b.name.trim();
+  if (parentId) {
+    const parent = await locationById(c.env.DB, parentId);
     if (!parent) return c.json({ error: "parent_missing" }, 400);
     parentPath = parent.path || parent.code || "";
     if (!warehouse) {
@@ -124,7 +128,7 @@ stockOpsRoutes.post("/locations", requirePerm("locations.manage"), async (c) => 
       b.box || null,
       b.notes || null,
       b.active === 0 ? 0 : 1,
-      b.parent_id || null,
+      parentId,
       kind,
       code,
       path,

@@ -55,6 +55,7 @@ const ERR_KEYS: Record<string, Msg> = {
   gps_spoof: "errGpsSpoof",
   forbidden: "noAccess",
   parent_missing: "errParentMissing",
+  parent_required: "errParentRequired",
   duplicate_serial: "errDuplicateSerial",
   serials_required: "errSerialsRequired",
   unreachable: "loginUnreachable",

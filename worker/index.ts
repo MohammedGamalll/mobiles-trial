@@ -279,7 +279,7 @@ app.get("/api/lookups", async (c) => {
     c.env.DB.prepare("SELECT * FROM part_types WHERE deleted_at IS NULL AND active = 1 ORDER BY name_en"),
     c.env.DB.prepare("SELECT * FROM categories WHERE deleted_at IS NULL AND active = 1 ORDER BY name_en"),
     c.env.DB.prepare("SELECT dm.*, b.name_en as brand_en FROM device_models dm JOIN brands b ON b.id = dm.brand_id WHERE dm.deleted_at IS NULL AND dm.active = 1 ORDER BY b.name_en, dm.name"),
-    c.env.DB.prepare("SELECT * FROM storage_locations WHERE deleted_at IS NULL ORDER BY name"),
+    c.env.DB.prepare("SELECT * FROM storage_locations WHERE deleted_at IS NULL ORDER BY CASE WHEN kind = 'warehouse' THEN 0 ELSE 1 END, name ASC"),
     c.env.DB.prepare("SELECT * FROM suppliers WHERE deleted_at IS NULL AND active = 1 ORDER BY name"),
     c.env.DB.prepare("SELECT * FROM payment_methods WHERE active = 1 ORDER BY sort_order"),
     c.env.DB.prepare("SELECT * FROM delivery_agents WHERE deleted_at IS NULL AND status = 'active' ORDER BY code"),
