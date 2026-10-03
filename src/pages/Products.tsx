@@ -347,8 +347,8 @@ export default function Products() {
                   <td>{num(p.opening_qty, lang)}</td>
                   <td className="text-xs">
                     {(p.warehouses || []).length
-                      ? (p.warehouses as { warehouse: string; qty: number }[]).map((w) => `${w.warehouse}: ${num(w.qty, lang)}`).join(" · ")
-                      : (p.warehouse ? `${p.warehouse}: ${num(p.available, lang)}` : p.location_name || "—")}
+                      ? (p.warehouses as { warehouse: string; qty: number }[]).map((w) => `${w.warehouse}${w.qty ? `: ${num(w.qty, lang)}` : ""}`).join(" · ")
+                      : [p.warehouse, p.box ? `باكيه ${p.box}` : "", [p.rack, p.shelf, p.drawer].filter(Boolean).join("-") || p.location_name].filter(Boolean).join(" · ") || "—"}
                   </td>
                   <td>{money(p.selling_price, lang)}</td>
                   <td className="text-xs">{p.location_name}</td>

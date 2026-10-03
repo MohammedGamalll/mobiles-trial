@@ -20,6 +20,7 @@ export type ProductImportRow = {
   brand: string;
   supplier: string;
   box: string;
+  warehouse: string;
   location: string;
   rack: string;
   shelf: string;
@@ -69,6 +70,14 @@ const HEADER_ALIASES: Record<string, keyof ProductImportRow> = {
   الماركة: "brand",
   المورد: "supplier",
   بكيه: "box",
+  باكيه: "box",
+  الباكيه: "box",
+  رقم_الباكيه: "box",
+  المخزن: "warehouse",
+  اسم_المخزن: "warehouse",
+  مخزن: "warehouse",
+  warehouse: "warehouse",
+  store: "warehouse",
   "رف+شوكه+درج": "location",
   رف_شوكه_درج: "location",
   رف_شوكة_درج: "location",
@@ -141,7 +150,8 @@ function headerKey(raw: unknown): keyof ProductImportRow | null {
   if (n.includes("نوع") || n.includes("part_type")) return "part_type";
   if (n.includes("مارك") || n.includes("brand")) return "brand";
   if (n.includes("مورد") || n.includes("supplier")) return "supplier";
-  if (n.includes("بكيه") || n === "box") return "box";
+  if (n.includes("بكيه") || n.includes("باكيه") || n === "box") return "box";
+  if (n.includes("مخزن") || n.includes("warehouse") || n === "store") return "warehouse";
   if (n.includes("رف") || n.includes("شوك") || n.includes("درج") || n.includes("مكان") || n.includes("موقع")) return "location";
   if (n.includes("موديل") || n.includes("model")) return "model";
   return null;
@@ -203,6 +213,7 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
       brand: normName(cellStr(get("brand"))),
       supplier: normName(cellStr(get("supplier"))),
       box: cellStr(get("box")),
+      warehouse: normName(cellStr(get("warehouse"))),
       location: locRaw,
       rack: bin.rack,
       shelf: bin.shelf,
@@ -259,11 +270,22 @@ async function ensureSupplier(db: AppDb, cache: Map<string, number>, name: strin
   return ins.meta.last_row_id;
 }
 
+function placeLabel(row: Pick<ProductImportRow, "warehouse" | "box" | "rack" | "shelf" | "drawer" | "location">) {
+  const rack = row.rack || "";
+  const bin = [rack, row.shelf, row.drawer].filter(Boolean).join("-");
+  return [
+    row.warehouse || "المخزن الرئيسي",
+    row.box ? `باكيه ${row.box}` : "",
+    bin || (row.location ? `رف ${row.location}` : ""),
+  ].filter(Boolean).join(" · ");
+}
+
 async function ensureLocation(db: AppDb, cache: Map<string, number>, row: ProductImportRow) {
-  const rack = row.rack || row.location.trim();
-  if (!rack && !row.shelf && !row.drawer && !row.box) return null;
-  const label = ["رف " + (row.rack || rack), row.shelf ? "شوكة " + row.shelf : "", row.drawer ? "درج " + row.drawer : ""].filter(Boolean).join(" ");
-  const key = `loc:${label}:${row.box}`;
+  const rack = row.rack || "";
+  if (!row.warehouse && !rack && !row.shelf && !row.drawer && !row.box && !row.location.trim()) return null;
+  const warehouse = row.warehouse || "المخزن الرئيسي";
+  const label = placeLabel({ ...row, warehouse, rack: rack || row.location.trim() });
+  const key = `loc:${label}`;
   if (cache.has(key)) return cache.get(key)!;
   const found = await db.prepare("SELECT id FROM storage_locations WHERE deleted_at IS NULL AND name = ? LIMIT 1").bind(label).first<{ id: number }>();
   if (found?.id) {
@@ -272,7 +294,7 @@ async function ensureLocation(db: AppDb, cache: Map<string, number>, row: Produc
   }
   const ins = await db
     .prepare("INSERT INTO storage_locations (name, warehouse, rack, shelf, drawer, box, active) VALUES (?, ?, ?, ?, ?, ?, 1)")
-    .bind(label, "المخزن الرئيسي", row.rack || rack || null, row.shelf || null, row.drawer || null, row.box || null)
+    .bind(label, warehouse, rack || row.location.trim() || null, row.shelf || null, row.drawer || null, row.box || null)
     .run();
   cache.set(key, ins.meta.last_row_id);
   return ins.meta.last_row_id;

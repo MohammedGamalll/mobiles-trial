@@ -6,6 +6,17 @@ import { applyEq, applyLocationCol, applyRange, applySearch, listParams, PRODUCT
 
 export const catalogRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
+function placeLabel(p: { warehouse?: string | null; box?: string | null; rack?: string | null; shelf?: string | null; drawer?: string | null; location_name?: string | null; name?: string | null }) {
+  const bin = [p.rack, p.shelf, p.drawer].filter((x) => String(x || "").trim()).join("-");
+  const bits = [
+    String(p.warehouse || "").trim() || "",
+    String(p.box || "").trim() ? `باكيه ${String(p.box).trim()}` : "",
+    bin,
+  ].filter(Boolean);
+  if (bits.length) return bits.join(" · ");
+  return String(p.location_name || p.name || "").trim();
+}
+
 const productSelect = `
   SELECT p.*, b.name_ar as brand_ar, b.name_en as brand_en,
     pt.name_ar as part_type_ar, pt.name_en as part_type_en,
@@ -103,17 +114,16 @@ async function attachStockReport(db: AppDb, products: { id: number }[]) {
     .all<{ product_id: number; opening_qty: number }>();
   const warehouses = await db
     .prepare(
-      `SELECT ib.product_id,
-              COALESCE(NULLIF(TRIM(sl.warehouse), ''), 'بدون مخزن') as warehouse,
+      `SELECT ib.product_id, sl.warehouse, sl.box, sl.rack, sl.shelf, sl.drawer, sl.name as location_name,
               COALESCE(SUM(ib.remaining_qty - ib.reserved_qty),0) as qty,
               COALESCE(SUM((ib.remaining_qty - ib.reserved_qty) * ib.unit_cost),0) as value
        FROM inventory_batches ib
        LEFT JOIN storage_locations sl ON sl.id = ib.location_id
        WHERE ib.product_id IN (${ph})
-       GROUP BY ib.product_id, COALESCE(NULLIF(TRIM(sl.warehouse), ''), 'بدون مخزن')`,
+       GROUP BY ib.product_id, sl.id, sl.warehouse, sl.box, sl.rack, sl.shelf, sl.drawer, sl.name`,
     )
     .bind(...ids)
-    .all<{ product_id: number; warehouse: string; qty: number; value: number }>();
+    .all<{ product_id: number; warehouse: string | null; box: string | null; rack: string | null; shelf: string | null; drawer: string | null; location_name: string | null; qty: number; value: number }>();
   const costs = await db
     .prepare(
       `SELECT product_id, COALESCE(SUM((remaining_qty - reserved_qty) * unit_cost),0) as cost_value
@@ -132,17 +142,18 @@ async function attachStockReport(db: AppDb, products: { id: number }[]) {
   const whMap = new Map<number, { warehouse: string; qty: number; value: number }[]>();
   for (const r of warehouses.results) {
     const arr = whMap.get(r.product_id) || [];
-    arr.push({ warehouse: r.warehouse, qty: Number(r.qty) || 0, value: Number(r.value) || 0 });
+    arr.push({ warehouse: placeLabel(r), qty: Number(r.qty) || 0, value: Number(r.value) || 0 });
     whMap.set(r.product_id, arr);
   }
   const costMap = new Map(costs.results.map((r) => [r.product_id, Number(r.cost_value) || 0]));
   return products.map((p) => {
     const available = Number((p as { available?: number }).available) || 0;
     const price = Number((p as { selling_price?: number }).selling_price) || 0;
+    const fromLoc = placeLabel(p as { warehouse?: string; box?: string; rack?: string; shelf?: string; drawer?: string; location_name?: string });
     return {
       ...p,
       opening_qty: openMap.get(p.id) || 0,
-      warehouses: whMap.get(p.id) || [],
+      warehouses: whMap.get(p.id) || (fromLoc ? [{ warehouse: fromLoc, qty: available, value: 0 }] : []),
       stock_value: Math.round(available * price * 100) / 100,
       cost_value: costMap.get(p.id) || 0,
     };
