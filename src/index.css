@@ -2105,6 +2105,116 @@ html[data-ui="modern"] .login-gold {
   height: 28px;
   padding: 0 8px;
   background: #f4d03f;
+  color: #111;
   font-size: 11px;
   font-weight: 800;
+}
+
+.pos-classic,
+.inv-classic,
+.inv-dlg,
+.sahl-pos {
+  color-scheme: light;
+}
+
+.pos-classic input,
+.pos-classic select,
+.pos-classic textarea,
+.inv-classic input,
+.inv-classic select,
+.inv-classic textarea,
+.inv-dlg input,
+.inv-dlg select,
+.inv-dlg textarea,
+.sahl-pos input,
+.sahl-pos select,
+.sahl-pos textarea {
+  color: #111 !important;
+  background-color: #fff !important;
+  color-scheme: light;
+}
+
+.pos-classic option,
+.inv-classic option,
+.inv-dlg option,
+.sahl-pos option {
+  color: #111;
+  background-color: #fff;
+}
+
+.pos-classic-table th,
+.pos-classic-table td,
+.inv-classic-grid th,
+.inv-classic-grid td,
+.sahl-pos-grid th,
+.sahl-pos-grid td,
+.pos-classic-filters select,
+.pos-classic-filters button,
+.pos-classic-docs button,
+.inv-classic-side button,
+.inv-classic-filter,
+.inv-classic-top b {
+  color: #111;
+}
+
+.pos-classic-table tfoot tr,
+.pos-classic-table tfoot td,
+.inv-classic-grid tfoot tr,
+.inv-classic-grid tfoot td,
+.pos-classic-docs button.is-on,
+.inv-classic-cmds .is-del,
+.inv-classic-cmds .is-new,
+.pos-classic-rail-btn.is-sell,
+.pos-classic-add,
+.pos-classic-field span,
+.pos-classic-green {
+  color: #fff !important;
+}
+
+.pos-classic-field.is-qty span,
+.pos-classic-field.is-search span,
+.pos-classic-rail-btn.is-save,
+.inv-classic-cmds .is-edit,
+.inv-classic-yellow,
+.inv-dlg-actions .is-save,
+.inv-dlg-actions .is-cancel,
+.inv-dlg-addunit,
+.inv-dlg-tabs button {
+  color: #111 !important;
+}
+
+.inv-dlg-head label,
+.inv-dlg-head label span,
+.inv-dlg-err {
+  color: #fff !important;
+}
+
+.inv-dlg-sm,
+.inv-dlg-sm .inv-dlg-pane-title,
+.inv-dlg-body,
+.inv-dlg-body label,
+.inv-dlg-body label span,
+.inv-dlg-table,
+.inv-dlg-table th,
+.inv-dlg-table td {
+  color: #111 !important;
+}
+
+.pos-classic-green input,
+.pos-classic-green select,
+.pos-classic-green option {
+  color: #111 !important;
+  background-color: #fff !important;
+}
+
+.pos-classic .product-suggest-list,
+.pos-classic-suggest,
+.inv-classic .product-suggest-list {
+  background: #fff !important;
+  color: #111 !important;
+}
+
+.pos-classic .product-suggest-list button,
+.pos-classic-suggest button {
+  color: #111 !important;
 }

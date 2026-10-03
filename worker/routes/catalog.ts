@@ -138,19 +138,21 @@ async function attachUnits(db: AppDb, products: { id: number }[]) {
   }
 }
 
-async function attachStockReport(db: AppDb, products: { id: number }[]) {
+async function attachStockReport(db: AppDb, products: { id: number }[], locIds: number[] | null = null) {
   if (!products.length) return products as (typeof products[number] & Record<string, unknown>)[];
   try {
   const ids = products.map((p) => p.id);
   const ph = ids.map(() => "?").join(",");
+  const locFilter = locIds?.length ? ` AND location_id IN (${locIds.map(() => "?").join(",")})` : "";
+  const locBinds = locIds?.length ? locIds : [];
   const opening = await db
     .prepare(
       `SELECT product_id, COALESCE(SUM(original_qty),0) as opening_qty
        FROM inventory_batches
-       WHERE product_id IN (${ph}) AND (notes = 'opening' OR notes LIKE 'كمية افتتاحية%')
+       WHERE product_id IN (${ph}) AND (notes = 'opening' OR notes LIKE 'كمية افتتاحية%')${locFilter}
        GROUP BY product_id`,
     )
-    .bind(...ids)
+    .bind(...ids, ...locBinds)
     .all<{ product_id: number; opening_qty: number }>();
   const openingMoves = await db
     .prepare(
@@ -168,19 +170,19 @@ async function attachStockReport(db: AppDb, products: { id: number }[]) {
               COALESCE(SUM((ib.remaining_qty - ib.reserved_qty) * ib.unit_cost),0) as value
        FROM inventory_batches ib
        LEFT JOIN storage_locations sl ON sl.id = ib.location_id
-       WHERE ib.product_id IN (${ph})
+       WHERE ib.product_id IN (${ph})${locFilter.replace("location_id", "ib.location_id")}
        GROUP BY ib.product_id, sl.id, sl.warehouse, sl.box, sl.rack, sl.shelf, sl.drawer, sl.name`,
     )
-    .bind(...ids)
+    .bind(...ids, ...locBinds)
     .all<{ product_id: number; warehouse: string | null; box: string | null; rack: string | null; shelf: string | null; drawer: string | null; location_name: string | null; qty: number; value: number }>();
   const costs = await db
     .prepare(
       `SELECT product_id, COALESCE(SUM((remaining_qty - reserved_qty) * unit_cost),0) as cost_value
        FROM inventory_batches
-       WHERE product_id IN (${ph})
+       WHERE product_id IN (${ph})${locFilter}
        GROUP BY product_id`,
     )
-    .bind(...ids)
+    .bind(...ids, ...locBinds)
     .all<{ product_id: number; cost_value: number }>();
   const openMap = new Map<number, number>();
   for (const r of opening.results) openMap.set(r.product_id, Number(r.opening_qty) || 0);
@@ -297,6 +299,17 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
   applyEq(where, params, "p.active", p.active, true);
   const stockIds = await stockScopeIds(c.env.DB, p);
   const stockExpr = scopedStockJoin(stockIds);
+  if (stockIds) {
+    if (!stockIds.length) {
+      where.push("1=0");
+    } else {
+      const ph = stockIds.map(() => "?").join(",");
+      where.push(`(COALESCE(p.kind,'product') = 'service' OR p.location_id IN (${ph}) OR EXISTS (
+        SELECT 1 FROM inventory_batches ib WHERE ib.product_id = p.id AND ib.location_id IN (${ph})
+      ))`);
+      params.push(...stockIds, ...stockIds);
+    }
+  }
   applyRange(where, params, "p.selling_price", p.price_min, p.price_max);
   applyRange(where, params, stockExpr.availSql, p.qty_min, p.qty_max);
   if (status === "low") where.push(`p.kind != 'service' AND ${stockExpr.availSql} > 0 AND ${stockExpr.availSql} <= CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE p.min_stock END`);
@@ -332,25 +345,31 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
     p.sort === "qty_high" ? `ORDER BY ${stockExpr.availSql} DESC`
     : p.sort === "qty_low" ? `ORDER BY ${stockExpr.availSql} ASC`
     : "";
-  const count = await c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...queryBinds).first<{ n: number }>();
-  const totals = await c.env.DB
-    .prepare(
-      `SELECT COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} END),0) as qty,
-              COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} * p.selling_price END),0) as value
-       ${joinSql} ${whereSql}`,
-    )
-    .bind(...queryBinds)
-    .first<{ qty: number; value: number }>();
+  const posMode = url.searchParams.get("pos") === "1";
   const order = qtySort || sortSql(p.sort === "moved" ? "" : p.sort, PRODUCT_SORT, p.sort === "moved"
     ? `(SELECT COALESCE(SUM(ABS(sm.qty)),0) FROM stock_movements sm WHERE sm.product_id = p.id) DESC, p.id DESC`
     : "p.id DESC");
-  const { results } = await c.env.DB
+  const listQ = c.env.DB
     .prepare(`${productSelectSql(stockExpr.availSql, stockExpr.join)} ${whereSql} ${order} LIMIT ? OFFSET ?`)
     .bind(...queryBinds, pageSize, offset)
     .all();
+  const countQ = posMode
+    ? Promise.resolve({ n: 0 } as { n: number })
+    : c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...queryBinds).first<{ n: number }>();
+  const totalsQ = posMode
+    ? Promise.resolve({ qty: 0, value: 0 } as { qty: number; value: number })
+    : c.env.DB
+        .prepare(
+          `SELECT COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} END),0) as qty,
+                  COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} * p.selling_price END),0) as value
+           ${joinSql} ${whereSql}`,
+        )
+        .bind(...queryBinds)
+        .first<{ qty: number; value: number }>();
+  const [{ results }, count, totals] = await Promise.all([listQ, countQ, totalsQ]);
   const light = url.searchParams.get("full") !== "1";
-  const withModels = await attachModels(c.env.DB, results as { id: number }[]);
-  const withUnits = light ? withModels : await attachUnits(c.env.DB, withModels);
+  const withModels = posMode ? (results as { id: number }[]) : await attachModels(c.env.DB, results as { id: number }[]);
+  const withUnits = light || posMode ? withModels : await attachUnits(c.env.DB, withModels);
   const user = c.get("user");
   const showCost = user.role_slug === "admin" || user.permissions.includes("costs.view") || user.permissions.includes("products.edit");
   let priced = withUnits as Record<string, unknown>[];
@@ -371,20 +390,34 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
     }
   }
   const scoped = await applyStockScope(c.env.DB, priced, stockIds);
+  let scopeWarehouseName = "";
+  if (stockIds?.length) {
+    const rootId = Number(p.location_id || p.warehouse_id || p.locations || 0);
+    if (rootId) {
+      const root = await c.env.DB
+        .prepare("SELECT name, warehouse, kind FROM storage_locations WHERE id = ? AND deleted_at IS NULL")
+        .bind(rootId)
+        .first<{ name: string; warehouse: string | null; kind: string | null }>();
+      scopeWarehouseName = String(root?.kind === "warehouse" ? root.name || root.warehouse : root?.name || root?.warehouse || "").trim();
+    }
+  }
   const reported = light
     ? scoped.map((p) => {
       const available = Number((p as { available?: number }).available) || 0;
       const price = Number((p as { selling_price?: number }).selling_price) || 0;
-      const label = placeLabel(p as { warehouse?: string; box?: string; rack?: string; shelf?: string; drawer?: string; location_name?: string });
+      const row = p as { warehouse?: string; box?: string; rack?: string; shelf?: string; drawer?: string; location_name?: string };
+      const labeled = { ...row, warehouse: scopeWarehouseName || row.warehouse };
+      const label = placeLabel(labeled);
       return {
         ...p,
+        warehouse: labeled.warehouse,
         opening_qty: Number((p as { current_stock?: number }).current_stock) || 0,
         warehouses: label ? [{ warehouse: label, qty: available, value: 0 }] : [],
         stock_value: Math.round(available * price * 100) / 100,
         cost_value: 0,
       };
     })
-    : await attachStockReport(c.env.DB, scoped as { id: number }[]);
+    : await attachStockReport(c.env.DB, scoped as { id: number }[], stockIds);
   const data = withoutCost(user, reported as Record<string, unknown>[]);
   if (!showCost) {
     for (const row of data) delete row.cost_value;
@@ -410,9 +443,16 @@ catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create
   const q = (new URL(c.req.url).searchParams.get("q") || "").trim();
   if (!q) return c.json({ data: [] });
   const l = like(q);
+  const stockIds = await stockScopeIds(c.env.DB, listParams(new URL(c.req.url)));
+  const stockExpr = scopedStockJoin(stockIds);
+  const scopeWhere = stockIds?.length
+    ? ` AND (COALESCE(p.kind,'product') = 'service' OR p.location_id IN (${stockIds.map(() => "?").join(",")}) OR EXISTS (
+        SELECT 1 FROM inventory_batches ib WHERE ib.product_id = p.id AND ib.location_id IN (${stockIds.map(() => "?").join(",")})
+      ))`
+    : "";
   const { results } = await c.env.DB
     .prepare(
-      `${productSelect}
+      `${productSelectSql(stockExpr.availSql, stockExpr.join)}
        WHERE p.deleted_at IS NULL AND p.active = 1 AND (
          p.barcode = ? OR p.sku = ? OR p.part_number = ? OR p.extra_code1 = ? OR p.extra_code2 = ?
          OR p.name_ar LIKE ? OR p.name_en LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ? OR p.part_number LIKE ?
@@ -420,7 +460,7 @@ catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create
          OR EXISTS (SELECT 1 FROM product_units pu WHERE pu.product_id = p.id AND pu.barcode = ?)
          OR EXISTS (SELECT 1 FROM product_models pm JOIN device_models dm ON dm.id = pm.model_id
                     WHERE pm.product_id = p.id AND (dm.name LIKE ? OR dm.code LIKE ?))
-       )
+       )${scopeWhere}
        ORDER BY CASE
          WHEN p.barcode = ? OR p.sku = ? OR p.extra_code1 = ? THEN 0
          WHEN p.name_ar LIKE ? OR p.name_en LIKE ? THEN 1
@@ -429,10 +469,14 @@ catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create
        END, p.name_ar
        LIMIT 30`,
     )
-    .bind(q, q, q, q, q, l, l, l, l, l, l, l, l, l, q, l, l, q, q, q, `${q}%`, `${q}%`, `${q}%`, `${q}%`)
+    .bind(
+      ...stockExpr.binds,
+      q, q, q, q, q, l, l, l, l, l, l, l, l, l, q, l, l,
+      ...(stockIds?.length ? [...stockIds, ...stockIds] : []),
+      q, q, q, `${q}%`, `${q}%`, `${q}%`, `${q}%`,
+    )
     .all();
   const withModels = await attachModels(c.env.DB, results as { id: number }[]);
-  const stockIds = await stockScopeIds(c.env.DB, listParams(new URL(c.req.url)));
   const data = withoutCost(
     c.get("user"),
     await applyStockScope(c.env.DB, (await attachUnits(c.env.DB, withModels)) as Record<string, unknown>[], stockIds),

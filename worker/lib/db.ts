@@ -242,6 +242,10 @@ export async function ensureAppSchema(db: AppDb) {
   await run(`INSERT OR IGNORE INTO ledger_accounts (code, name_ar, name_en, type)
     VALUES ('5300', 'تالف ومفقود', 'Damaged / lost inventory', 'expense')`);
   await run("CREATE UNIQUE INDEX idx_customers_phone_uq ON customers(phone)");
+  await run("CREATE INDEX idx_batches_product_loc ON inventory_batches(product_id, location_id)");
+  await run("CREATE INDEX idx_batches_loc_product ON inventory_batches(location_id, product_id)");
+  await run("CREATE INDEX idx_products_alive ON products(deleted_at, active, id)");
+  await run("CREATE INDEX idx_invoices_location ON sales_invoices(location_id)");
   try {
     const live = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NULL").first<{ n: number }>();
     const dead = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NOT NULL").first<{ n: number }>();

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
-import { get, post } from "../lib/api";
+import { get, getCached, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { playSound } from "../lib/sounds";
 import { useProductSuggest } from "../components/ProductSuggest";
@@ -165,8 +165,9 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     let live = true;
     const t = setTimeout(() => {
       const p = new URLSearchParams();
-      p.set("pageSize", "200");
+      p.set("pageSize", "80");
       p.set("active", "1");
+      p.set("pos", "1");
       if (listId) p.set("price_list_id", String(listId));
       if (q.trim()) p.set("q", q.trim());
       if (kindFilter) p.set("kind", kindFilter);
@@ -174,7 +175,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       if (brandFilter) p.set("brand_id", String(brandFilter));
       if (catFilter) p.set("category_id", String(catFilter));
       if (warehouseId) p.set("location_id", String(warehouseId));
-      get<{ data: Product[] }>(`/api/products?${p}`).then((r) => {
+      getCached<{ data: Product[] }>(`/api/products?${p}`).then((r) => {
         if (!live) return;
         setCatalog(r.data || []);
       }).catch(() => {});

@@ -27,6 +27,15 @@ export function warehouseLocations(locations?: LocationRow[] | null) {
 
 export function appendLocationId(params: URLSearchParams, locationId?: number | string | null) {
   const id = Number(locationId || 0);
-  if (id > 0) params.set("location_id", String(id));
+  if (id > 0) {
+    params.set("location_id", String(id));
+    params.delete("locations");
+    params.delete("warehouse_id");
+    params.delete("warehouse");
+    params.delete("bay_id");
+    params.delete("shelf_id");
+    params.delete("bin_id");
+    params.delete("fork_id");
+  }
   return params;
 }

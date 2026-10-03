@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ChevronDown, Minus, MoreHorizontal, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
@@ -32,7 +33,16 @@ export default function POS() {
     printRows, printTotal, printExtra, related, waEnabled,
     loadToday, setStockTick, openHeld, cancelHeld, previewWa, submit, holdInvoice,
   } = usePOSLogic("modern");
-
+  const [catsOpen, setCatsOpen] = useState(() => {
+    try { return sessionStorage.getItem("pos_cats_open") === "1"; } catch { return false; }
+  });
+  function toggleCats() {
+    setCatsOpen((v) => {
+      const next = !v;
+      try { sessionStorage.setItem("pos_cats_open", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   return (
     <div>
@@ -125,7 +135,7 @@ export default function POS() {
               <input className={`${inputCls} w-28`} placeholder={tr("area")} value={area} onChange={(e) => setArea(e.target.value)} />
             </div>
           ) : null}
-          <div className="flex flex-wrap gap-2 overflow-x-auto px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 overflow-x-auto px-3 py-2">
             <button
               type="button"
               className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${kindFilter === "" && brandFilter === "" && typeFilter === "" && catFilter === "" ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
@@ -147,36 +157,48 @@ export default function POS() {
             >
               {tr("services")}
             </button>
-            {(lookups?.categories || []).map((c) => (
-              <button
-                key={`cat-${c.id}`}
-                type="button"
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${catFilter === c.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
-                onClick={() => setCatFilter(catFilter === c.id ? "" : c.id)}
-              >
-                {lang === "ar" ? c.name_ar : c.name_en}
-              </button>
-            ))}
-            {(lookups?.brands || []).map((b) => (
-              <button
-                key={`brand-${b.id}`}
-                type="button"
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${brandFilter === b.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
-                onClick={() => setBrandFilter(brandFilter === b.id ? "" : b.id)}
-              >
-                {lang === "ar" ? b.name_ar : b.name_en}
-              </button>
-            ))}
-            {(lookups?.part_types || []).map((t) => (
-              <button
-                key={`pt-${t.id}`}
-                type="button"
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${typeFilter === t.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
-                onClick={() => setTypeFilter(typeFilter === t.id ? "" : t.id)}
-              >
-                {lang === "ar" ? t.name_ar : t.name_en}
-              </button>
-            ))}
+            <button
+              type="button"
+              className={`inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-xs font-bold ${catsOpen || catFilter || brandFilter || typeFilter ? "bg-cyan-700 text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+              onClick={toggleCats}
+            >
+              {tr("categories")}
+              <ChevronDown size={14} className={`transition ${catsOpen ? "" : "ltr:-rotate-90 rtl:rotate-90"}`} />
+            </button>
+            {catsOpen ? (
+              <>
+                {(lookups?.categories || []).map((c) => (
+                  <button
+                    key={`cat-${c.id}`}
+                    type="button"
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${catFilter === c.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+                    onClick={() => setCatFilter(catFilter === c.id ? "" : c.id)}
+                  >
+                    {lang === "ar" ? c.name_ar : c.name_en}
+                  </button>
+                ))}
+                {(lookups?.brands || []).map((b) => (
+                  <button
+                    key={`brand-${b.id}`}
+                    type="button"
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${brandFilter === b.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+                    onClick={() => setBrandFilter(brandFilter === b.id ? "" : b.id)}
+                  >
+                    {lang === "ar" ? b.name_ar : b.name_en}
+                  </button>
+                ))}
+                {(lookups?.part_types || []).map((t) => (
+                  <button
+                    key={`pt-${t.id}`}
+                    type="button"
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${typeFilter === t.id ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
+                    onClick={() => setTypeFilter(typeFilter === t.id ? "" : t.id)}
+                  >
+                    {lang === "ar" ? t.name_ar : t.name_en}
+                  </button>
+                ))}
+              </>
+            ) : null}
           </div>
           {related.length ? (
             <div className="gx-related px-3">

@@ -1,4 +1,5 @@
 import { authHeaders, clearSessionToken } from "./session";
+import { invalidateGetCache, isFresh, peekCached, setCached } from "./query-cache";
 
 export class ApiError extends Error {
   status: number;
@@ -75,6 +76,32 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
 }
 
 export const get = <T>(path: string, init?: RequestInit) => api<T>(path, init);
-export const post = <T>(path: string, body?: unknown) => api<T>(path, { method: "POST", body: JSON.stringify(body || {}) });
-export const put = <T>(path: string, body?: unknown) => api<T>(path, { method: "PUT", body: JSON.stringify(body || {}) });
-export const del = <T>(path: string) => api<T>(path, { method: "DELETE" });
+
+export async function getCached<T>(path: string, init?: RequestInit): Promise<T> {
+  if (isFresh(path) && peekCached<T>(path) !== undefined) return peekCached<T>(path) as T;
+  const data = await api<T>(path, init);
+  setCached(path, data);
+  return data;
+}
+
+function bumpCache(path: string) {
+  if (path.includes("/products") || path.includes("/invoices") || path.includes("/inventory")) {
+    invalidateGetCache();
+  }
+}
+
+export const post = <T>(path: string, body?: unknown) =>
+  api<T>(path, { method: "POST", body: JSON.stringify(body || {}) }).then((r) => {
+    bumpCache(path);
+    return r;
+  });
+export const put = <T>(path: string, body?: unknown) =>
+  api<T>(path, { method: "PUT", body: JSON.stringify(body || {}) }).then((r) => {
+    bumpCache(path);
+    return r;
+  });
+export const del = <T>(path: string) =>
+  api<T>(path, { method: "DELETE" }).then((r) => {
+    bumpCache(path);
+    return r;
+  });

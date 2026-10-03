@@ -16,12 +16,16 @@ export function useProductSuggest(q: string, enabled = true, extra: any[] = EMPT
 
   useEffect(() => {
     if (!enabled) return;
-    const p = new URLSearchParams({ pageSize: "400", active: "1" });
+    if (extra.length) {
+      setPool([]);
+      return;
+    }
+    const p = new URLSearchParams({ pageSize: "80", active: "1", pos: "1" });
     if (warehouseId) p.set("location_id", String(warehouseId));
     get<{ data: any[] }>(`/api/products?${p}`)
       .then((r) => setPool(r.data || []))
       .catch(() => setPool([]));
-  }, [enabled, warehouseId]);
+  }, [enabled, warehouseId, extra.length]);
 
   useEffect(() => {
     setHi(0);
@@ -103,12 +107,12 @@ export function ProductSuggestList({
   const { lang, tr } = useApp();
   if (!open) return null;
   return (
-    <div className="absolute start-0 end-0 z-50 mt-1 max-h-64 overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] shadow-lg">
+    <div className="product-suggest-list absolute start-0 end-0 z-50 mt-1 max-h-64 overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-lg">
       {hits.map((p, i) => (
         <button
           key={p.id}
           type="button"
-          className={`block w-full px-3 py-2 text-start text-sm ${i === hi ? "bg-[var(--surface-2)]" : "hover:bg-[var(--surface-2)]"}`}
+          className={`block w-full px-3 py-2 text-start text-sm text-[var(--text)] ${i === hi ? "bg-[var(--surface-2)]" : "hover:bg-[var(--surface-2)]"}`}
           onMouseDown={(e) => e.preventDefault()}
           onMouseEnter={() => onHover?.(i)}
           onClick={() => onPick(p)}

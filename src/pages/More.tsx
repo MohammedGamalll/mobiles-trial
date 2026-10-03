@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
-import { get, post, put, del } from "../lib/api";
+import { get, getCached, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
@@ -16,22 +16,37 @@ import { matchScanned, playSound } from "../lib/sounds";
 import { MapPin } from "lucide-react";
 
 export function SalesList() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, warehouseId } = useApp();
   const f = useListQuery("sales", { period: "today" });
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
   const { confirmDelete, dialog } = useConfirm();
   const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
   async function load() {
-    const r = await get<{ data: any[]; totals?: any }>(`/api/invoices?${f.qs}&pageSize=50`);
-    setRows(r.data);
-    setTotals(r.totals || {});
+    const p = new URLSearchParams(f.qs);
+    p.set("pageSize", "50");
+    if (warehouseId) {
+      p.set("location_id", String(warehouseId));
+      p.delete("locations");
+      p.delete("warehouse_id");
+      p.delete("warehouse");
+      p.delete("bay_id");
+      p.delete("shelf_id");
+      p.delete("bin_id");
+      p.delete("fork_id");
+    }
+    const r = await getCached<{ data: any[]; totals?: any }>(`/api/invoices?${p}`);
+    return r;
   }
   useEffect(() => {
     let live = true;
-    load().then(() => { if (!live) return; }).catch(() => {});
+    load().then((r) => {
+      if (!live || !r) return;
+      setRows(r.data);
+      setTotals(r.totals || {});
+    }).catch(() => {});
     return () => { live = false; };
-  }, [f.qs]);
+  }, [f.qs, warehouseId]);
   return (
     <Page title={tr("sales")} action={<ExportBtn kind="invoices" query={f.qs} />}>
       <div className="mb-3 grid gap-3 md:grid-cols-4">

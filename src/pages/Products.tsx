@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
-import { get, post, put, del } from "../lib/api";
+import { get, getCached, post, put, del } from "../lib/api";
+import { peekCached } from "../lib/query-cache";
 import { authHeaders } from "../lib/session";
 import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, ExportBtn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
@@ -78,6 +79,7 @@ export default function Products() {
   const [form, setForm] = useState<any>(empty());
   const [view, setView] = useState<"list" | "board">("list");
   const [loading, setLoading] = useState(true);
+  const loadGen = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const { confirmDelete, confirm, dialog } = useConfirm();
   const act = useActionError();
@@ -94,7 +96,7 @@ export default function Products() {
       part_type_id: "",
       category_id: "",
       location_id: "",
-      warehouse: "المخزن الرئيسي",
+      warehouse: "",
       rack: "",
       shelf: "",
       drawer: "",
@@ -134,20 +136,38 @@ export default function Products() {
   }
 
   async function load() {
-    setLoading(true);
+    const gen = ++loadGen.current;
+    const p = new URLSearchParams(f.qs);
+    p.set("pageSize", "80");
+    if (!p.get("page")) p.set("page", "1");
+    if (warehouseId) {
+      p.set("location_id", String(warehouseId));
+      p.delete("locations");
+      p.delete("warehouse_id");
+      p.delete("warehouse");
+      p.delete("bay_id");
+      p.delete("shelf_id");
+      p.delete("bin_id");
+      p.delete("fork_id");
+    }
+    const path = `/api/products?${p}`;
+    const stale = peekCached<{ data: any[]; totals?: any }>(path);
+    if (stale?.data) {
+      setData(stale.data);
+      setTotals(stale.totals || {});
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      const p = new URLSearchParams(f.qs);
-      p.set("pageSize", "80");
-      if (!p.get("page")) p.set("page", "1");
-      if (warehouseId && !p.get("location_id") && !p.get("locations") && !p.get("warehouse_id")) {
-        p.set("location_id", String(warehouseId));
-      }
-      const r = await get<{ data: any[]; totals?: any }>(`/api/products?${p}`);
+      const r = await getCached<{ data: any[]; totals?: any }>(path);
+      if (gen !== loadGen.current) return;
       setData(r.data);
       setTotals(r.totals || {});
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) setLoading(false);
     }
+    if (gen !== loadGen.current) return;
     const ops = new URLSearchParams();
     if (f.values.category_id) ops.set("category_id", String(f.values.category_id));
     get<{ purchases: any[]; shipments: any[]; date: string }>(`/api/inventory/daily-ops?${ops}`)
@@ -157,7 +177,7 @@ export default function Products() {
   }
   useEffect(() => {
     let live = true;
-    load().catch(() => { if (live) { setData([]); setLoading(false); } });
+    load().then(() => { if (!live) return; }).catch(() => { if (live) { setData([]); setLoading(false); } });
     return () => { live = false; };
   }, [f.qs, warehouseId]);
 

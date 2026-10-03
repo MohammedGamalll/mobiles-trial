@@ -192,33 +192,52 @@ export async function locationFilterId(p: ListQ) {
   return numVal(p.bin_id || p.fork_id || p.shelf_id || p.bay_id || p.warehouse_id || p.location_id || p.locations);
 }
 
-export async function stockScopeIds(db: AppDb, p: ListQ | { warehouse?: string; warehouse_id?: string | number; location_id?: string | number; locations?: string | number }): Promise<number[] | null> {
-  const name = String((p as ListQ).warehouse || "").trim();
-  const id = numVal((p as ListQ).warehouse_id || (p as ListQ).location_id || (p as ListQ).locations);
-  if (!name && id == null) return null;
-  if (name) {
-    const { results } = await db
-      .prepare("SELECT id FROM storage_locations WHERE deleted_at IS NULL AND (warehouse = ? OR name = ?)")
-      .bind(name, name)
-      .all<{ id: number }>();
-    return (results || []).map((r) => r.id);
-  }
-  const loc = await db
-    .prepare("SELECT id, name, warehouse, kind, rack, box FROM storage_locations WHERE id = ? AND deleted_at IS NULL")
-    .bind(id)
-    .first<{ id: number; name: string; warehouse: string | null; kind: string | null; rack: string | null; box: string | null }>();
-  if (!loc) return [id!];
+async function warehouseTreeIds(
+  db: AppDb,
+  loc: { id: number; name: string; warehouse: string | null; kind: string | null },
+) {
   const desc = await descendantLocationIds(db, loc.id);
-  const isWarehouse = loc.kind === "warehouse" || (!loc.rack && !loc.box);
-  const wh = String(loc.warehouse || loc.name || "").trim();
-  if (isWarehouse && wh) {
-    const { results } = await db
-      .prepare("SELECT id FROM storage_locations WHERE deleted_at IS NULL AND (warehouse = ? OR name = ? OR parent_id = ? OR id = ?)")
-      .bind(wh, loc.name, loc.id, loc.id)
-      .all<{ id: number }>();
-    return [...new Set([...desc, ...(results || []).map((r) => r.id)])];
+  if (loc.kind !== "warehouse") return desc;
+  const label = String(loc.name || loc.warehouse || "").trim();
+  const extra = label
+    ? await db
+        .prepare(
+          `SELECT id FROM storage_locations
+           WHERE deleted_at IS NULL
+             AND IFNULL(kind,'') != 'warehouse'
+             AND (parent_id IS NULL OR parent_id = 0)
+             AND (warehouse = ? OR name = ?)`,
+        )
+        .bind(label, label)
+        .all<{ id: number }>()
+    : { results: [] as { id: number }[] };
+  return [...new Set([...desc, ...(extra.results || []).map((r) => r.id)])];
+}
+
+export async function stockScopeIds(db: AppDb, p: ListQ | { warehouse?: string; warehouse_id?: string | number; location_id?: string | number; locations?: string | number }): Promise<number[] | null> {
+  const raw = p as ListQ;
+  const name = String(raw.warehouse || "").trim();
+  const namedId = /^\d+$/.test(name) ? Number(name) : null;
+  const id = numVal(raw.location_id || raw.warehouse_id || raw.locations) ?? namedId;
+  if (id != null) {
+    const loc = await db
+      .prepare("SELECT id, name, warehouse, kind FROM storage_locations WHERE id = ? AND deleted_at IS NULL")
+      .bind(id)
+      .first<{ id: number; name: string; warehouse: string | null; kind: string | null }>();
+    if (!loc) return [id];
+    return warehouseTreeIds(db, loc);
   }
-  return desc;
+  if (!name) return null;
+  const root = await db
+    .prepare(
+      `SELECT id, name, warehouse, kind FROM storage_locations
+       WHERE deleted_at IS NULL AND kind = 'warehouse' AND (name = ? OR warehouse = ?)
+       ORDER BY id LIMIT 1`,
+    )
+    .bind(name, name)
+    .first<{ id: number; name: string; warehouse: string | null; kind: string | null }>();
+  if (root) return warehouseTreeIds(db, root);
+  return [];
 }
 
 export async function applyLocationCol(db: AppDb, where: string[], params: Bind[], col: string, p: ListQ) {
@@ -279,7 +298,7 @@ export async function applyProductScope(
   const brandId = numVal(p.brand_id);
   const modelId = numVal(p.model_id);
   const typeId = numVal(p.part_type_id);
-  const locId = await locationFilterId(p);
+  const locId = numVal(p.bin_id || p.fork_id || p.shelf_id || p.bay_id);
   if (!productId && !brandId && !modelId && !typeId && locId == null && !p.product_q) return;
   const inner: string[] = [`sii.invoice_id = ${invoiceIdCol}`];
   if (productId) {
@@ -352,5 +371,13 @@ export async function applyInvoiceListFilters(
   if (p.terms === "credit" || p.payment_terms === "credit") where.push("si.payment_method = 'credit'");
   if (p.terms === "cash" || p.payment_terms === "cash") where.push("si.payment_method != 'credit'");
   applyRange(where, params, "si.total", p.amount_min || p.total_min, p.amount_max || p.total_max);
+  const saleScope = await stockScopeIds(db, p);
+  if (saleScope) {
+    if (!saleScope.length) where.push("1=0");
+    else {
+      where.push(`si.location_id IN (${saleScope.map(() => "?").join(",")})`);
+      params.push(...saleScope);
+    }
+  }
   await applyProductScope(db, where, params, p);
 }

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../context";
-import { del, get, post, put } from "../lib/api";
+import { del, get, getCached, post, put } from "../lib/api";
+import { peekCached } from "../lib/query-cache";
 import { apiMessage } from "../lib/errors";
 import { playSound } from "../lib/sounds";
 
@@ -27,7 +28,7 @@ export function emptyProduct() {
     part_type_id: "" as number | "",
     category_id: "" as number | "",
     location_id: "" as number | "",
-    warehouse: "المخزن الرئيسي",
+    warehouse: "",
     supplier_id: "" as number | "",
     purchase_price: 0,
     last_purchase_price: 0,
@@ -76,6 +77,7 @@ export function useProductCatalog() {
   const [total, setTotal] = useState(0);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
+  const loadGen = useRef(0);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -87,27 +89,43 @@ export function useProductCatalog() {
     if (filters.category_id) p.set("category_id", String(filters.category_id));
     if (filters.brand_id) p.set("brand_id", String(filters.brand_id));
     if (filters.supplier_id) p.set("supplier_id", String(filters.supplier_id));
-    if (filters.location_id) p.set("location_id", String(filters.location_id));
-    else if (warehouseId) p.set("location_id", String(warehouseId));
+    if (warehouseId) {
+      p.set("location_id", String(warehouseId));
+      p.delete("warehouse");
+      p.delete("warehouse_id");
+    } else if (filters.location_id) p.set("location_id", String(filters.location_id));
     if (filters.part_type_id) p.set("part_type_id", String(filters.part_type_id));
     return p.toString();
   }, [filters, warehouseId]);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const gen = ++loadGen.current;
+    const path = `/api/products?${qs}`;
+    const stale = peekCached<{ data: any[]; total?: number }>(path);
+    if (stale?.data) {
+      setRows(stale.data);
+      setTotal(Number(stale.total) || stale.data.length);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      const r = await get<{ data: any[]; total?: number }>(`/api/products?${qs}`);
+      const r = await getCached<{ data: any[]; total?: number }>(path);
+      if (gen !== loadGen.current) return;
       setRows(r.data || []);
       setTotal(Number(r.total) || (r.data || []).length);
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) setLoading(false);
     }
   }, [qs]);
 
   useEffect(() => {
-    let live = true;
-    load().catch(() => { if (live) { setRows([]); setLoading(false); } });
-    return () => { live = false; };
+    load().catch(() => {
+      if (loadGen.current) {
+        setRows([]);
+        setLoading(false);
+      }
+    });
   }, [load, tick]);
 
   const selected = rows.find((r) => r.id === picked) || null;
