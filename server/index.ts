@@ -1,12 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawnSync } from "node:child_process";
-import { serve } from "@hono/node-server";
+import { getRequestListener } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createApiApp } from "../worker/index";
 import { openMysql } from "../worker/lib/db";
 import { loadDotEnv } from "../worker/lib/env-file";
+
+type NodeHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
@@ -18,6 +21,14 @@ const uploadDir = process.env.UPLOAD_DIR || path.join(projectRoot, "data", "uplo
 const backupDir = process.env.BACKUP_DIR || path.join(projectRoot, "data", "backups");
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(backupDir, { recursive: true });
+
+function resolvePort(fallback: number) {
+  for (const key of ["PORT", "port", "NODE_PORT", "APP_PORT"]) {
+    const n = Number(String(process.env[key] || "").trim());
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return fallback;
+}
 
 function applyMigrations() {
   const script = path.join(projectRoot, "scripts", "migrate.mjs");
@@ -63,10 +74,20 @@ async function main() {
     });
   }
 
-  const port = Number(process.env.PORT || 8787);
+  const listener = getRequestListener((req) => app.fetch(req, env));
+  const attach = (globalThis as typeof globalThis & { __motamayezAttach?: (fn: NodeHandler) => void }).__motamayezAttach;
+  if (typeof attach === "function") {
+    attach(listener);
+    return;
+  }
+
+  const port = resolvePort(8787);
   const hostname = process.env.HOST || "0.0.0.0";
-  serve({ fetch: (req) => app.fetch(req, env), port, hostname }, (info) => {
-    console.log(`المتميز listening on http://${hostname}:${info.port}`);
+  const server = createServer(listener);
+  server.listen(port, hostname, () => {
+    const addr = server.address();
+    const actual = typeof addr === "object" && addr ? addr.port : port;
+    console.log(`المتميز listening on http://${hostname}:${actual}`);
   });
 }
 

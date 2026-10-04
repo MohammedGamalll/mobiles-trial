@@ -57,11 +57,10 @@ const pkg = {
 };
 fs.writeFileSync(path.join(dest, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
 
-const boot = `"use strict";\nimport("./dist/index.js").catch((err) => {\n  console.error(err);\n  process.exit(1);\n});\n`;
-fs.writeFileSync(path.join(dest, "app.cjs"), boot);
-fs.writeFileSync(path.join(dest, "index.js"), `import "./dist/index.js";\n`);
-fs.writeFileSync(path.join(dest, "app.js"), `import "./dist/index.js";\n`);
-fs.writeFileSync(path.join(dest, "server.js"), `import "./dist/index.js";\n`);
+fs.copyFileSync(path.join(root, "app.cjs"), path.join(dest, "app.cjs"));
+fs.writeFileSync(path.join(dest, "index.js"), `import "./app.cjs";\n`);
+fs.writeFileSync(path.join(dest, "app.js"), `import "./app.cjs";\n`);
+fs.writeFileSync(path.join(dest, "server.js"), `import "./app.cjs";\n`);
 fs.writeFileSync(
   path.join(dest, "اقرأني-هوستنجر.txt"),
   `ارفع المجلد ده كتطبيق Node.js (Web App) مش ملفات ثابتة في public_html.
@@ -77,6 +76,7 @@ fs.writeFileSync(
 - أمر التشغيل / Start: npm start
 - Node: 22
 - تثبيت الحزم: npm install (من غير --omit=dev عشان Vite)
+- PORT: سيب هوستنجر تحطه لوحدها. متقفلش على 8787.
 
 متغيرات البيئة (hPanel، مش ملف جوه Git):
 MYSQL_HOST=127.0.0.1
