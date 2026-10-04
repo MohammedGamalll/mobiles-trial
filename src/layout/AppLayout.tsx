@@ -13,6 +13,7 @@ import {
   Plus,
   Star,
   Maximize2,
+  MoreVertical,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApp } from "../context";
@@ -47,6 +48,7 @@ export default function AppLayout() {
   const [menu, setMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("motamayez_sidebar") === "1");
   const [quick, setQuick] = useState(false);
+  const [more, setMore] = useState(false);
   const [favs, setFavs] = useState<FavItem[]>(() => loadFavs());
   const [recent, setRecent] = useState<FavItem[]>(() => loadRecent());
   const gps = useCourierGps();
@@ -64,6 +66,10 @@ export default function AppLayout() {
   useEffect(() => {
     if (loc.pathname === "/login") return;
     setRecent(pushRecent({ to: loc.pathname, key: pageKey }));
+    setMenu(false);
+    setMore(false);
+    setQuick(false);
+    setBell(false);
   }, [loc.pathname]);
 
   function toggleCollapse() {
@@ -89,6 +95,13 @@ export default function AppLayout() {
       window.removeEventListener("keydown", on);
     };
   }, []);
+
+  useEffect(() => {
+    document.body.style.overflow = menu ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [menu]);
 
   const Nav = ({ slim = false }: { slim?: boolean }) => (
     <nav className={`app-nav px-3 pb-8 ${classic ? "space-y-2" : "space-y-4"}`}>
@@ -167,48 +180,78 @@ export default function AppLayout() {
       </aside>
 
       {menu ? (
-        <div className="sidebar-mobile fixed inset-0 z-40 md:hidden">
+        <div className={`sidebar-mobile fixed inset-0 z-40 ${classic || pos ? "" : "md:hidden"}`}>
           <div className="absolute inset-0 bg-black/50" onClick={() => setMenu(false)} />
-          <aside className={`sidebar-scroll relative h-full w-[260px] overflow-y-auto ${classic ? "bg-white text-slate-800" : "bg-[#07111f] text-white"}`}>
-            <div className="flex items-center justify-between px-4 py-4">
-              <div className="flex items-center gap-2">
+          <aside className={`sidebar-scroll relative flex h-full max-w-full flex-col overflow-hidden ${classic ? "bg-white text-slate-800" : "bg-[#07111f] text-white"}`}>
+            <div className="flex shrink-0 items-center justify-between px-4 py-4">
+              <div className="flex min-w-0 items-center gap-2">
                 <PixelMark size={22} />
-                <span className="font-black">{tr("app")}</span>
+                <span className="truncate font-black">{tr("app")}</span>
               </div>
-              <button onClick={() => setMenu(false)}>
+              <button type="button" className="rounded-lg p-2" onClick={() => setMenu(false)} aria-label={tr("close")}>
                 <X size={18} />
               </button>
             </div>
-            <Nav />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <Nav />
+            </div>
+            <div className={`shrink-0 space-y-2 border-t px-4 py-3 ${classic ? "border-slate-200" : "border-white/10"}`}>
+              <div className="text-sm font-bold">{user?.full_name}</div>
+              <div className="text-xs capitalize text-slate-400">{user?.role_slug}</div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className={classic ? "rounded-md border border-slate-200 px-3 py-1.5 text-xs font-bold" : "rounded-lg border border-white/15 px-3 py-1.5 text-xs font-bold"} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>{lang === "ar" ? "EN" : "ع"}</button>
+                <button type="button" className={classic ? "rounded-md border border-slate-200 p-1.5" : "rounded-lg border border-white/15 p-1.5"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
+                <button
+                  type="button"
+                  className={classic ? "rounded-md border border-slate-200 p-1.5" : "rounded-lg border border-white/15 p-1.5"}
+                  onClick={async () => {
+                    await logout();
+                    nav("/login");
+                  }}
+                >
+                  <LogOut size={14} />
+                </button>
+              </div>
+            </div>
           </aside>
         </div>
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className={`topbar sticky top-0 z-30 flex items-center gap-2 border-b px-3 md:px-4 ${
+        <header className={`topbar sticky top-0 z-30 flex items-center gap-1.5 border-b px-2 md:gap-2 md:px-4 ${
           classic ? "h-12 border-[#083056] bg-[#0b2a4a] py-0 text-white" : "border-slate-200/80 bg-white/90 py-3 text-slate-800 backdrop-blur"
         }`}>
-          <button className={`${classic || pos ? "" : "md:hidden"} ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => setMenu(true)}>
+          <button type="button" className={`shrink-0 ${classic || pos ? "" : "md:hidden"} ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => setMenu(true)}>
             <Menu size={16} />
           </button>
           {classic && loc.pathname !== "/" ? <EasyHomeLink /> : pos ? <EasyHomeLink /> : null}
+          <div className="min-w-0 flex-1 truncate px-1 text-sm font-black md:hidden">{tr(pageKey)}</div>
           <button
             type="button"
-            className={`top-search relative min-w-0 flex-1 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classicDesk ? "hidden" : ""} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
+            className={`top-search relative min-w-0 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classicDesk ? "hidden" : "hidden flex-1 md:block"} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
             onClick={() => setCmd(true)}
           >
             <Search className="pointer-events-none absolute top-2.5 start-3 text-slate-400" size={16} />
-            {tr("globalSearch")}
+            <span className="top-search-label">{tr("globalSearch")}</span>
             <kbd className="pointer-events-none absolute top-1.5 end-2 hidden rounded-md border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-400 sm:inline">Ctrl+K</kbd>
           </button>
+          <button
+            type="button"
+            className={`shrink-0 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`}
+            title={tr("globalSearch")}
+            onClick={() => setCmd(true)}
+          >
+            <Search size={16} />
+          </button>
           <CommandPalette open={cmd} onOpen={() => setCmd(true)} onClose={() => setCmd(false)} />
+          <div className="hidden items-center gap-2 md:flex">
           {(lookups?.branches || []).length > 1 ? (
-            <select className={`hidden max-w-[140px] px-2 py-2 text-sm sm:block ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} title={tr("branch")}>
+            <select className={`max-w-[140px] px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} title={tr("branch")}>
               {(lookups?.branches || []).map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name : (b.name_en || b.name)}</option>)}
             </select>
           ) : null}
           {warehouseLocations(lookups?.locations).length ? (
-            <select className={`hidden max-w-[140px] px-2 py-2 text-sm sm:block ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={warehouseId || ""} onChange={(e) => setWarehouseId(Number(e.target.value) || 0)} title={tr("warehouses")}>
+            <select className={`max-w-[140px] px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={warehouseId || ""} onChange={(e) => setWarehouseId(Number(e.target.value) || 0)} title={tr("warehouses")}>
               <option value="">{tr("warehouses")}</option>
               {warehouseLocations(lookups?.locations).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
@@ -250,13 +293,14 @@ export default function AppLayout() {
           <button className={classic ? "topbar-ctrl rounded-md border px-3 py-2 text-sm font-bold" : "rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold"} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
             {tr("language")}
           </button>
+          </div>
           <div className="relative">
             <button className={`relative ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => setBell((v) => !v)}>
               <Bell size={16} />
               {unread ? <span className="absolute -top-1 -end-1 h-4 min-w-4 rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{unread}</span> : null}
             </button>
             {bell ? (
-              <div className="topbar-menu absolute end-0 mt-2 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+              <div className="topbar-menu absolute end-0 mt-2 w-[min(20rem,calc(100vw-1.25rem))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
                 <div className="flex items-center justify-between px-3 py-2 text-sm font-bold">
                   {tr("notifications")}
                   <button
@@ -292,7 +336,35 @@ export default function AppLayout() {
               </div>
             ) : null}
           </div>
-          <div className="hidden items-center gap-2 sm:flex">
+          <div className="relative md:hidden">
+            <button
+              type="button"
+              className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}
+              title={tr("more")}
+              onClick={() => { setMore((v) => !v); setBell(false); }}
+            >
+              <MoreVertical size={16} />
+            </button>
+            {more ? (
+              <div className="topbar-menu absolute end-0 z-20 mt-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-xl">
+                <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); setLang(lang === "ar" ? "en" : "ar"); }}>{tr("language")}</button>
+                <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); setTheme(theme === "dark" ? "light" : "dark"); }}>{theme === "dark" ? tr("lightMode") : tr("darkMode")}</button>
+                <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); setFavs(toggleFav({ to: loc.pathname, key: pageKey })); }}>{tr("favorites")}</button>
+                {can("sales.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); nav("/pos"); }}>{tr("pos")}</button> : null}
+                <button
+                  className="block w-full px-3 py-2 text-start text-sm text-rose-700 hover:bg-slate-50"
+                  onClick={async () => {
+                    setMore(false);
+                    await logout();
+                    nav("/login");
+                  }}
+                >
+                  {tr("logout")}
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="hidden items-center gap-2 md:flex">
             <div className="text-end text-sm">
               <div className="font-bold leading-5">{user?.full_name}</div>
               <div className="text-xs capitalize text-slate-400">{user?.role_slug}</div>
@@ -309,7 +381,7 @@ export default function AppLayout() {
           </div>
         </header>
         {gps.enabled ? (
-          <div className={`px-3 py-2 text-sm font-bold ${gps.status === "live" ? "bg-emerald-50 text-emerald-800" : gps.status === "denied" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>
+          <div className={`px-3 py-2 text-sm font-bold max-md:truncate max-md:py-1.5 max-md:text-xs ${gps.status === "live" ? "bg-emerald-50 text-emerald-800" : gps.status === "denied" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>
             {gps.err ? apiMessage(tr, { message: gps.err }) : gps.status === "live" ? tr("gpsLive") : gps.status === "skipped" ? tr("gpsNoOrders") : gps.status === "paused" ? tr("gpsPaused") : gps.status === "denied" ? tr("gpsNeedPermission") : tr("waitingGps")}
           </div>
         ) : null}

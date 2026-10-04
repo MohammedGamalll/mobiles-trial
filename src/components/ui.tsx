@@ -102,7 +102,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   const { lang } = useApp();
   return (
     <label className="block text-sm">
-      <span className="mb-1 block font-semibold text-slate-600">{fieldLabel(lang, label)}</span>
+      <span className="field-label mb-1 block font-extrabold text-[var(--text)]">{fieldLabel(lang, label)}</span>
       {children}
     </label>
   );
@@ -180,12 +180,12 @@ export function SearchPick({
         }}
       />
       {open ? (
-        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-lg">
+        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-[var(--border)] bg-white text-[#0f172a] shadow-lg dark:bg-[#151b24] dark:text-[#f8f1de]">
           {rows.map((r) => (
             <button
               key={r.id}
               type="button"
-              className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+              className="block w-full px-3 py-2 text-start text-sm font-bold hover:bg-amber-50 dark:hover:bg-white/5"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const label = labelFn(r);

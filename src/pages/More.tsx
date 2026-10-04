@@ -13,7 +13,7 @@ import { authHeaders } from "../lib/session";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { AssignCourierModal } from "../components/AssignCourierModal";
 import { matchScanned, playSound } from "../lib/sounds";
-import { MapPin } from "lucide-react";
+import { MapPin, Plus, Trash2 } from "lucide-react";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId } = useApp();
@@ -222,7 +222,7 @@ export function InventoryPage() {
       {dialog}
       <Modal open={adjOpen} title={tr("easyAdjust")} onClose={() => { setAdjOpen(false); act.clear(); }}>
         <Field label={tr("products")}>
-          <ProductPick value={adj.product_id} onChange={(id) => setAdj({ ...adj, product_id: id })} />
+          <ProductPick resetKey={adj.product_id || 0} onChange={(p) => setAdj({ ...adj, product_id: p.id })} />
         </Field>
         <Field label={tr("qty")}>
           <input className={inputCls} type="number" value={adj.qty} onChange={(e) => setAdj({ ...adj, qty: Number(e.target.value) })} />
@@ -295,7 +295,7 @@ export function PurchasesPage() {
   const [totals, setTotals] = useState<any>({});
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({ supplier_id: "", items: [] as any[] });
-  const [draft, setDraft] = useState({ product_id: "" as any, quantity: "1", unit_cost: "", costDirty: false });
+  const [draft, setDraft] = useState({ product_id: "" as any, sku: "", name: "", quantity: "1", unit_cost: "", costDirty: false });
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
@@ -305,7 +305,7 @@ export function PurchasesPage() {
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   function resetDraft() {
-    setDraft({ product_id: "", quantity: "1", unit_cost: "", costDirty: false });
+    setDraft({ product_id: "", sku: "", name: "", quantity: "1", unit_cost: "", costDirty: false });
   }
   function addDraftLine() {
     if (!draft.product_id) {
@@ -318,10 +318,26 @@ export function PurchasesPage() {
       return;
     }
     const unit_cost = Number(draft.unit_cost === "" ? 0 : draft.unit_cost);
-    setForm({ ...form, items: [...form.items, { product_id: draft.product_id, quantity: qty, unit_cost }] });
+    setForm({
+      ...form,
+      items: [...form.items, {
+        product_id: draft.product_id,
+        sku: draft.sku,
+        name: draft.name,
+        quantity: qty,
+        unit_cost,
+      }],
+    });
     resetDraft();
     act.clear();
   }
+  function updateLine(index: number, patch: Record<string, number>) {
+    setForm({
+      ...form,
+      items: form.items.map((it: any, i: number) => (i === index ? { ...it, ...patch } : it)),
+    });
+  }
+  const purchaseTotal = (form.items || []).reduce((s: number, it: any) => s + Number(it.quantity || 0) * Number(it.unit_cost || 0), 0);
   return (
     <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} /><Btn onClick={() => { act.clear(); setForm({ supplier_id: "", items: [] }); resetDraft(); setOpen(true); }}>{tr("newPurchase")}</Btn></>}>
       <ErrorNote message={act.message} />
@@ -358,6 +374,7 @@ export function PurchasesPage() {
       />
       )}
       <Modal open={open} title={tr("newPurchase")} onClose={() => { setOpen(false); act.clear(); }} wide>
+        <p className="mb-4 text-sm font-bold leading-6 text-[var(--text)]">{tr("purchaseHint")}</p>
         <Field label={tr("supplier")}>
           <SearchPick
             path="/api/suppliers"
@@ -368,36 +385,99 @@ export function PurchasesPage() {
             onPick={(row) => setForm({ ...form, supplier_id: row ? String(row.id) : "" })}
           />
         </Field>
-        {form.items.length ? (
-          <div className="table-wrap mt-3">
-            <table>
-              <thead><tr><th>{tr("items")}</th><th>{tr("qty")}</th><th>{tr("price")}</th></tr></thead>
-              <tbody>
-                {form.items.map((it: any, i: number) => (
-                  <tr key={`${it.product_id}-${i}`}>
-                    <td>{it.product_id}</td>
-                    <td>{it.quantity}</td>
-                    <td>{it.unit_cost}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
+          <div className="mb-2 text-sm font-black text-[var(--text)]">{tr("addPurchaseItem")}</div>
+          <Field label={tr("products")}>
+            <ProductPick
+              resetKey={form.items.length}
+              onChange={(p) => {
+                setDraft((d) => ({
+                  ...d,
+                  product_id: p.id,
+                  sku: p.sku || "",
+                  name: p.name || "",
+                  unit_cost: d.costDirty ? d.unit_cost : (p.cost != null ? String(p.cost) : d.unit_cost),
+                }));
+              }}
+            />
+          </Field>
+          {draft.product_id ? (
+            <div className="mt-2 rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm font-bold text-[var(--text)]">
+              {tr("pickedProduct")}: {draft.sku} — {draft.name || draft.product_id}
+            </div>
+          ) : null}
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <Field label={tr("qty")}>
+              <input
+                className={inputCls}
+                type="text"
+                inputMode="decimal"
+                value={draft.quantity}
+                onChange={(e) => setDraft({ ...draft, quantity: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addDraftLine(); } }}
+              />
+            </Field>
+            <Field label={tr("unitCost")}>
+              <input
+                className={inputCls}
+                type="text"
+                inputMode="decimal"
+                value={draft.unit_cost}
+                onChange={(e) => setDraft({ ...draft, unit_cost: e.target.value, costDirty: true })}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addDraftLine(); } }}
+              />
+            </Field>
           </div>
-        ) : null}
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <ProductPick value={draft.product_id} onChange={(id, cost) => {
-            setDraft((d) => ({
-              ...d,
-              product_id: id,
-              unit_cost: d.costDirty ? d.unit_cost : (cost != null ? String(cost) : d.unit_cost),
-            }));
-          }} />
-          <input className={inputCls} type="text" inputMode="decimal" placeholder={tr("qty")} value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />
-          <input className={inputCls} type="text" inputMode="decimal" placeholder={tr("unitCost")} value={draft.unit_cost} onChange={(e) => setDraft({ ...draft, unit_cost: e.target.value, costDirty: true })} />
+          <Btn className="mt-3 w-full" kind="soft" onClick={addDraftLine}>
+            <Plus size={16} />
+            {tr("addPurchaseItem")}
+          </Btn>
         </div>
-        <button className="mt-2 text-sm font-bold text-cyan-700" onClick={addDraftLine}>+ {tr("add")}</button>
+        <div className="mt-4">
+          <div className="mb-2 text-sm font-black text-[var(--text)]">{tr("items")} ({form.items.length})</div>
+          {form.items.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{tr("items")}</th>
+                    <th>{tr("qty")}</th>
+                    <th>{tr("unitCost")}</th>
+                    <th>{tr("total")}</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {form.items.map((it: any, i: number) => (
+                    <tr key={`${it.product_id}-${i}`}>
+                      <td className="font-bold text-[var(--text)]">{it.sku ? `${it.sku} — ${it.name || ""}` : it.name || it.product_id}</td>
+                      <td>
+                        <input className={`${inputCls} min-w-16`} type="text" inputMode="decimal" value={it.quantity} onChange={(e) => updateLine(i, { quantity: Number(e.target.value || 0) })} />
+                      </td>
+                      <td>
+                        <input className={`${inputCls} min-w-20`} type="text" inputMode="decimal" value={it.unit_cost} onChange={(e) => updateLine(i, { unit_cost: Number(e.target.value || 0) })} />
+                      </td>
+                      <td className="font-bold">{money(Number(it.quantity || 0) * Number(it.unit_cost || 0), lang)}</td>
+                      <td>
+                        <button type="button" className="rounded-lg p-1 text-rose-700" title={tr("delete")} onClick={() => setForm({ ...form, items: form.items.filter((_: any, idx: number) => idx !== i) })}>
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-4 text-sm font-bold text-[var(--text)]">{tr("noPurchaseItems")}</div>
+          )}
+        </div>
+        <div className="mt-4 flex items-center justify-between rounded-xl bg-[#0b1f33] px-3 py-3 text-sm font-black text-[#f8f1de]">
+          <span>{tr("total")}</span>
+          <span>{money(purchaseTotal, lang)}</span>
+        </div>
         <ErrorNote message={act.message} />
-        <Btn className="mt-4" onClick={async () => {
+        <Btn className="mt-4 w-full" onClick={async () => {
           if (!form.supplier_id) {
             act.fail(undefined, "errSupplierRequired");
             return;
@@ -415,18 +495,23 @@ export function PurchasesPage() {
           } catch (e) {
             act.fail(e);
           }
-        }}>{tr("save")}</Btn>
+        }}>{tr("savePurchase")}</Btn>
       </Modal>
       {dialog}
     </Page>
   );
 }
 
-function ProductPick({ value, onChange }: { value: any; onChange: (id: number, cost?: number) => void }) {
+function ProductPick({ resetKey, onChange }: { resetKey: number; onChange: (p: { id: number; sku?: string; name?: string; cost?: number }) => void }) {
   const { tr, lang } = useApp();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<any[]>([]);
   const [miss, setMiss] = useState("");
+  useEffect(() => {
+    setQ("");
+    setHits([]);
+    setMiss("");
+  }, [resetKey]);
   useEffect(() => {
     if (!q.trim()) {
       setHits([]);
@@ -438,12 +523,17 @@ function ProductPick({ value, onChange }: { value: any; onChange: (id: number, c
   function pick(p: any) {
     playSound("ok");
     setMiss("");
-    onChange(p.id, p.purchase_price);
-    setQ(p.sku);
+    onChange({
+      id: p.id,
+      sku: p.sku,
+      name: lang === "ar" ? p.name_ar : (p.name_en || p.name_ar),
+      cost: p.purchase_price,
+    });
+    setQ(`${p.sku} — ${lang === "ar" ? p.name_ar : (p.name_en || p.name_ar)}`);
     setHits([]);
   }
   return (
-    <div className="col-span-3">
+    <div className="relative">
       <input
         className={inputCls}
         placeholder={tr("searchProduct")}
@@ -462,11 +552,20 @@ function ProductPick({ value, onChange }: { value: any; onChange: (id: number, c
         }}
       />
       <ErrorNote message={miss} />
-      {hits.map((p) => (
-        <button key={p.id} className="block w-full px-2 py-1 text-start text-sm hover:bg-slate-50" onClick={() => pick(p)}>
-          {p.sku} — {lang === "ar" ? p.name_ar : p.name_en}
-        </button>
-      ))}
+      {hits.length ? (
+        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-[var(--border)] bg-white text-[#0f172a] shadow-lg dark:bg-[#151b24] dark:text-[#f8f1de]">
+          {hits.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="block w-full px-3 py-2 text-start text-sm font-bold hover:bg-amber-50 dark:hover:bg-white/5"
+              onClick={() => pick(p)}
+            >
+              {p.sku} — {lang === "ar" ? p.name_ar : (p.name_en || p.name_ar)}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
