@@ -361,7 +361,10 @@ deliveryRoutes.post("/tracking/ping", requirePerm("delivery.update", "delivery.v
   const open = await c.env.DB
     .prepare(
       `SELECT id FROM sales_invoices WHERE delivery_agent_id = ? AND type = 'delivery' AND deleted_at IS NULL
-        AND delivery_status IN (${CUSTODY_SQL}) LIMIT 1`,
+        AND (
+          delivery_status IN (${CUSTODY_SQL})
+          OR delivery_status = 'pending_delivery'
+        ) LIMIT 1`,
     )
     .bind(agentId, ...CUSTODY_STATUSES)
     .first();
@@ -395,9 +398,13 @@ deliveryRoutes.get("/tracking/live", requirePerm("delivery.view"), async (c) => 
   const trailAgentId = Number(url.searchParams.get("trail_agent_id") || 0);
   const { results: agents } = await c.env.DB
     .prepare(
-      `SELECT a.id, a.code, a.name, a.phone, a.lat, a.lng, a.last_seen_at, a.status,
+      `SELECT a.id, a.code, a.name, a.phone,
+        COALESCE(a.lat, (SELECT cl.lat FROM courier_locations cl WHERE cl.agent_id = a.id ORDER BY cl.id DESC LIMIT 1)) AS lat,
+        COALESCE(a.lng, (SELECT cl.lng FROM courier_locations cl WHERE cl.agent_id = a.id ORDER BY cl.id DESC LIMIT 1)) AS lng,
+        COALESCE(a.last_seen_at, (SELECT cl.recorded_at FROM courier_locations cl WHERE cl.agent_id = a.id ORDER BY cl.id DESC LIMIT 1)) AS last_seen_at,
+        a.status,
         (SELECT COUNT(*) FROM sales_invoices si WHERE si.delivery_agent_id = a.id AND si.type = 'delivery' AND si.deleted_at IS NULL
-          AND si.delivery_status IN (${CUSTODY_SQL})) AS open_orders
+          AND (si.delivery_status IN (${CUSTODY_SQL}) OR si.delivery_status = 'pending_delivery')) AS open_orders
        FROM delivery_agents a WHERE a.deleted_at IS NULL AND a.status = 'active' ORDER BY a.code`,
     )
     .bind(...CUSTODY_STATUSES)
@@ -414,7 +421,9 @@ deliveryRoutes.get("/tracking/live", requirePerm("delivery.view"), async (c) => 
     }>();
   const now = Date.now();
   const data = agents.map((a) => {
-    const seen = a.last_seen_at ? Date.parse(String(a.last_seen_at).replace(" ", "T") + (String(a.last_seen_at).includes("Z") ? "" : "Z")) : 0;
+    const raw = String(a.last_seen_at || "").trim();
+    const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
+    const seen = raw ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`) : 0;
     return { ...a, stale: !seen || now - seen > 90_000 };
   });
   let trail: { lat: number; lng: number; accuracy: number | null; recorded_at: string }[] = [];

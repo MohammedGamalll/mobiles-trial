@@ -4,7 +4,7 @@ import { useApp } from "../context";
 import { get, getCached, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
-import { useActionError } from "../lib/errors";
+import { apiMessage, useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
 import { PaymentModal } from "../components/PaymentModal";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
@@ -1676,7 +1676,11 @@ export function UsersPage() {
   const f = useListQuery("users");
   const [rows, setRows] = useState<any[]>([]);
   const [roles, setRoles] = useState<any>(null);
+  const [draft, setDraft] = useState<Record<number, number[]>>({});
   const [pq, setPq] = useState("");
+  const [permBusy, setPermBusy] = useState(false);
+  const [permMsg, setPermMsg] = useState("");
+  const [permErr, setPermErr] = useState("");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ id: 0, username: "", full_name: "", phone: "", role_id: 2, active: 1, password: "" });
   const { confirmDelete, dialog } = useConfirm();
@@ -1684,8 +1688,16 @@ export function UsersPage() {
     setRows((await get<{ data: any[] }>(`/api/users?${f.qs}`)).data);
   }
   useEffect(() => { loadUsers().catch(() => {}); }, [f.qs]);
+  function applyRoles(data: any) {
+    setRoles(data);
+    const next: Record<number, number[]> = {};
+    for (const role of data?.roles || []) {
+      next[role.id] = (data.role_permissions || []).filter((x: any) => x.role_id === role.id).map((x: any) => x.permission_id);
+    }
+    setDraft(next);
+  }
   useEffect(() => {
-    get("/api/roles").then(setRoles);
+    get("/api/roles").then(applyRoles);
   }, []);
   const manageRoles = can("users.manage");
   const perms = (roles?.permissions || []).filter((p: any) => !pq || `${p.code} ${p.name_ar} ${p.module}`.includes(pq));
@@ -1745,10 +1757,35 @@ export function UsersPage() {
       </Modal>
       {roles ? (
         <div className="mt-6">
-          <h3 className="font-bold">{tr("permissions")}</h3>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-bold">{tr("permissions")}</h3>
+            {manageRoles ? (
+              <Btn disabled={permBusy} onClick={async () => {
+                setPermBusy(true);
+                setPermErr("");
+                setPermMsg("");
+                try {
+                  for (const r of roles.roles || []) {
+                    const saved = (roles.role_permissions || []).filter((x: any) => x.role_id === r.id).map((x: any) => x.permission_id).sort().join(",");
+                    const next = [...(draft[r.id] || [])].sort().join(",");
+                    if (saved === next) continue;
+                    await put(`/api/roles/${r.id}/permissions`, { permission_ids: draft[r.id] || [] });
+                  }
+                  applyRoles(await get("/api/roles"));
+                  setPermMsg(tr("saved"));
+                } catch (e) {
+                  setPermErr(apiMessage(tr, e));
+                } finally {
+                  setPermBusy(false);
+                }
+              }}>{permBusy ? tr("loading") : tr("savePermissions")}</Btn>
+            ) : null}
+          </div>
           <FilterBar>
             <input className={`${inputCls} max-w-sm`} value={pq} onChange={(e) => setPq(e.target.value)} placeholder={tr("search")} />
           </FilterBar>
+          {permMsg ? <div className="mb-3 text-sm font-bold text-emerald-700">{permMsg}</div> : null}
+          <ErrorNote message={permErr} />
           {(roles.roles || []).map((r: any) => (
             <details key={r.id} className="mt-2 rounded-xl bg-white p-3">
               <summary className="cursor-pointer font-bold">{r.slug === "sales" ? tr("cashier") : r.name_ar}</summary>
@@ -1757,14 +1794,17 @@ export function UsersPage() {
                   <div className="text-xs font-bold uppercase text-slate-400">{moduleLabel(String(mod))}</div>
                   <div className="mt-1 grid gap-1 md:grid-cols-2">
                     {perms.filter((p: any) => p.module === mod).map((p: any) => {
-                      const on = (roles.role_permissions || []).some((x: any) => x.role_id === r.id && x.permission_id === p.id);
+                      const on = (draft[r.id] || []).includes(p.id);
                       return (
                         <label key={p.id} className="flex items-center gap-2 text-sm">
-                          <input type="checkbox" defaultChecked={on} disabled={!manageRoles} onChange={async (e) => {
+                          <input type="checkbox" checked={on} disabled={!manageRoles} onChange={(e) => {
                             if (!manageRoles) return;
-                            const current = (roles.role_permissions || []).filter((x: any) => x.role_id === r.id).map((x: any) => x.permission_id);
-                            const next = e.target.checked ? [...current, p.id] : current.filter((id: number) => id !== p.id);
-                            await put(`/api/roles/${r.id}/permissions`, { permission_ids: next });
+                            setDraft((d) => {
+                              const cur = new Set(d[r.id] || []);
+                              if (e.target.checked) cur.add(p.id);
+                              else cur.delete(p.id);
+                              return { ...d, [r.id]: [...cur] };
+                            });
                           }} />
                           <span>{p.name_ar}<span className="ms-1 text-xs text-slate-400">{p.code}</span></span>
                         </label>

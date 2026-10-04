@@ -49,7 +49,7 @@ export function DeliveryBoard() {
   useEffect(() => {
     if (tab !== "map") return;
     loadLive().catch(() => {});
-    const t = setInterval(() => loadLive().catch(() => {}), 20000);
+    const t = setInterval(() => loadLive().catch(() => {}), 10000);
     return () => clearInterval(t);
   }, [tab, trailAgentId]);
   useEffect(() => {
@@ -64,8 +64,10 @@ export function DeliveryBoard() {
   const markers = (live.agents || [])
     .filter((a) => a.lat && a.lng)
     .map((a, i) => {
-      const age = a.last_seen_at ? Date.now() - Date.parse(String(a.last_seen_at).replace(" ", "T") + "Z") : 9999999;
-      const stale = Boolean(a.stale) || age > 90000;
+      const raw = String(a.last_seen_at || "").trim();
+      const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
+      const seen = raw ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`) : 0;
+      const stale = Boolean(a.stale) || !seen || Date.now() - seen > 90000;
       return {
         id: a.id,
         lat: a.lat,
@@ -73,7 +75,7 @@ export function DeliveryBoard() {
         label: a.code,
         color: colors[i % colors.length],
         stale,
-        popup: `<b>${a.name}</b> (${a.code})<br/>${stale ? (lang === "ar" ? "غير متصل" : "Offline") : (lang === "ar" ? "متصل" : "Live")}<br/>${lang === "ar" ? "طلبات مفتوحة" : "Open"}: ${a.open_orders || 0}`,
+        popup: `<b>${a.name}</b> (${a.code})<br/>${stale ? tr("offline") : tr("online")}<br/>${tr("lastSeen")}: ${a.last_seen_at || "-"}<br/>${tr("openOrders")}: ${a.open_orders || 0}`,
       };
     });
   const trails = useMemo(() => {
@@ -163,6 +165,9 @@ export function DeliveryBoard() {
 
       {tab === "map" ? (
         <div className="space-y-3">
+          {!markers.length ? (
+            <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">{tr("noCourierFix")}</div>
+          ) : null}
           <OsmMap
             center={markers.find((m) => m.id === trailAgentId) || markers[0] || shop}
             shop={shop}
@@ -185,8 +190,10 @@ export function DeliveryBoard() {
                 </thead>
                 <tbody>
                   {(live.agents || []).map((a) => {
-                    const age = a.last_seen_at ? Date.now() - Date.parse(String(a.last_seen_at).replace(" ", "T") + "Z") : 9e12;
-                    const online = !a.stale && age < 90000;
+                    const raw = String(a.last_seen_at || "").trim();
+                    const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
+                    const seen = raw ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`) : 0;
+                    const online = !a.stale && seen > 0 && Date.now() - seen < 90000;
                     return (
                       <tr
                         key={a.id}
