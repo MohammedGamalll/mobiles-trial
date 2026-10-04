@@ -16,6 +16,7 @@ export function DeliveryBoard() {
   const f = useListQuery("delivery");
   const [rows, setRows] = useState<any[]>([]);
   const [live, setLive] = useState<{ agents: any[]; trail: any[] }>({ agents: [], trail: [] });
+  const [liveErr, setLiveErr] = useState("");
   const [trailAgentId, setTrailAgentId] = useState<number | null>(null);
   const [agents, setAgents] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
@@ -35,8 +36,15 @@ export function DeliveryBoard() {
   }
   async function loadLive(agentId = trailAgentId) {
     const q = agentId ? `?trail_agent_id=${agentId}` : "";
-    const r = await get<{ data: { agents: any[]; trail: any[] } }>(`/api/delivery/tracking/live${q}`);
-    setLive(r.data);
+    try {
+      const r = await get<{ data: { agents: any[]; trail: any[] } }>(`/api/delivery/tracking/live${q}`);
+      setLive(r.data);
+      setLiveErr("");
+    } catch {
+      const r = await get<{ data: { agents: any[]; trail: any[] } }>("/api/delivery/live");
+      setLive(r.data);
+      setLiveErr("");
+    }
   }
   async function loadAgents() {
     const r = await get<{ data: any[] }>("/api/delivery/agents");
@@ -48,8 +56,8 @@ export function DeliveryBoard() {
   }, [f.qs]);
   useEffect(() => {
     if (tab !== "map") return;
-    loadLive().catch(() => {});
-    const t = setInterval(() => loadLive().catch(() => {}), 10000);
+    loadLive().catch(() => setLiveErr("unreachable"));
+    const t = setInterval(() => loadLive().catch(() => setLiveErr("unreachable")), 10000);
     return () => clearInterval(t);
   }, [tab, trailAgentId]);
   useEffect(() => {
@@ -62,7 +70,8 @@ export function DeliveryBoard() {
   };
   const colors = ["#0f766e", "#1d4ed8", "#7c3aed", "#c2410c", "#be123c"];
   const markers = (live.agents || [])
-    .filter((a) => a.lat && a.lng)
+    .map((a) => ({ ...a, lat: Number(a.lat), lng: Number(a.lng) }))
+    .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lng) && (a.lat !== 0 || a.lng !== 0))
     .map((a, i) => {
       const raw = String(a.last_seen_at || "").trim();
       const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
@@ -165,7 +174,9 @@ export function DeliveryBoard() {
 
       {tab === "map" ? (
         <div className="space-y-3">
-          {!markers.length ? (
+          {liveErr ? (
+            <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-bold text-rose-800">{tr("error")}</div>
+          ) : !markers.length ? (
             <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">{tr("noCourierFix")}</div>
           ) : null}
           <OsmMap

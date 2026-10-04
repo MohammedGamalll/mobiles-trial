@@ -29,6 +29,7 @@ import { allNavItems, classicNav, matchNavTo, modernNav } from "./nav";
 import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
 import { useCourierGps } from "../hooks/useCourierGps";
+import { apiMessage } from "../lib/errors";
 
 export default function AppLayout() {
   const { tr, lang, setLang, theme, setTheme, uiLayout, user, logout, can, lookups, branchId, setBranchId, warehouseId, setWarehouseId, settings } = useApp();
@@ -309,7 +310,7 @@ export default function AppLayout() {
         </header>
         {gps.enabled ? (
           <div className={`px-3 py-2 text-sm font-bold ${gps.status === "live" ? "bg-emerald-50 text-emerald-800" : gps.status === "denied" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>
-            {gps.status === "live" ? tr("gpsLive") : gps.status === "skipped" ? tr("gpsNoOrders") : gps.status === "paused" ? tr("gpsPaused") : gps.status === "denied" ? tr("gpsNeedPermission") : tr("waitingGps")}
+            {gps.err ? apiMessage(tr, { message: gps.err }) : gps.status === "live" ? tr("gpsLive") : gps.status === "skipped" ? tr("gpsNoOrders") : gps.status === "paused" ? tr("gpsPaused") : gps.status === "denied" ? tr("gpsNeedPermission") : tr("waitingGps")}
           </div>
         ) : null}
         {classicDesk ? null : classic ? <SahlMenu /> : <ModernModules />}

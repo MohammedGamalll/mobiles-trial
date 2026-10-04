@@ -56,10 +56,12 @@ async function send(lat: number, lng: number, accuracy?: number, heading?: numbe
       accuracy,
       heading,
     });
-    if (res.skipped) emit({ err: "", status: "skipped" });
-    else emit({ err: "", status: "live", lastPing: res.at || "" });
-  } catch {
-    /* retry on next watch tick */
+    if (res.at) emit({ err: "", status: "live", lastPing: res.at });
+    else if (res.skipped) emit({ err: "", status: "skipped" });
+    else emit({ err: "", status: "live" });
+  } catch (e) {
+    const code = e && typeof e === "object" && "message" in e ? String((e as { message?: string }).message || "") : "";
+    emit({ err: code || "unreachable", status: snap.status === "live" ? "live" : "waiting" });
   }
 }
 
@@ -106,7 +108,7 @@ function syncEngine(enabled: boolean, nextInterval: number) {
 
 export function useCourierGps() {
   const { user, settings } = useApp();
-  const enabled = user?.role_slug === "delivery" && Boolean(user.delivery_agent_id);
+  const enabled = user?.role_slug === "delivery";
   const nextInterval = Math.max(10, Number(settings.gps_ping_interval_s || 20) || 20) * 1000;
   const [state, setState] = useState(snap);
 

@@ -349,14 +349,83 @@ deliveryRoutes.get("/live", requirePerm("delivery.view", "sales.view"), async (c
 
 const CUSTODY_SQL = CUSTODY_STATUSES.map(() => "?").join(",");
 
+async function resolveCourierAgentId(
+  db: AppBindings["DB"],
+  user: { id: number; role_slug: string; delivery_agent_id: number | null },
+  bodyAgentId?: number,
+) {
+  if (user.role_slug === "admin" && bodyAgentId) return Number(bodyAgentId);
+  if (user.delivery_agent_id) return Number(user.delivery_agent_id);
+  const row = await db
+    .prepare(
+      "SELECT delivery_agent_id FROM employees WHERE user_id = ? AND deleted_at IS NULL AND delivery_agent_id IS NOT NULL ORDER BY id LIMIT 1",
+    )
+    .bind(user.id)
+    .first<{ delivery_agent_id: number }>();
+  return row?.delivery_agent_id ? Number(row.delivery_agent_id) : 0;
+}
+
+function asCoord(v: unknown) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 deliveryRoutes.post("/tracking/ping", requirePerm("delivery.update", "delivery.view", "delivery.mark"), async (c) => {
   const user = c.get("user");
   const b = await c.req.json<{ lat?: number; lng?: number; accuracy?: number; heading?: number; agent_id?: number }>();
   const lat = Number(b.lat);
   const lng = Number(b.lng);
-  let agentId = user.delivery_agent_id;
-  if (user.role_slug === "admin" && b.agent_id) agentId = Number(b.agent_id);
+  const agentId = await resolveCourierAgentId(c.env.DB, user, b.agent_id);
   if (!agentId) return c.json({ error: "no_agent" }, 400);
+
+  const settings = await getSettings(c.env.DB);
+  const maxKmh = Number(settings.gps_max_speed_kmh || 120) || 120;
+  const maxAcc = Number(settings.gps_max_accuracy_m || 2500) || 2500;
+  let prev: { lat: number; lng: number; accuracy: number | null; recorded_at: string } | null = null;
+  try {
+    prev = await c.env.DB
+      .prepare("SELECT lat, lng, accuracy, recorded_at FROM courier_locations WHERE agent_id = ? ORDER BY id DESC LIMIT 1")
+      .bind(agentId)
+      .first<{ lat: number; lng: number; accuracy: number | null; recorded_at: string }>();
+  } catch {
+    const row = await c.env.DB
+      .prepare("SELECT lat, lng, last_seen_at as recorded_at FROM delivery_agents WHERE id = ?")
+      .bind(agentId)
+      .first<{ lat: number; lng: number; recorded_at: string }>();
+    prev = row?.lat != null && row?.lng != null ? { lat: Number(row.lat), lng: Number(row.lng), recorded_at: row.recorded_at, accuracy: null } : null;
+  }
+  const now = nowIso();
+  const check = pingDistanceOk(prev, { lat, lng, accuracy: b.accuracy }, Date.now(), maxKmh, maxAcc);
+  if (!check.ok && check.code !== "gps_accuracy") {
+    return c.json({ error: check.code || "gps_spoof", dist: check.dist, dt_s: check.dtS }, 400);
+  }
+
+  await c.env.DB.prepare("UPDATE delivery_agents SET lat=?, lng=?, last_seen_at=? WHERE id=?").bind(lat, lng, now, agentId).run();
+
+  const speed = check.dtS && check.dist != null ? round2(check.dist / check.dtS) : null;
+  try {
+    await c.env.DB
+      .prepare(
+        "INSERT INTO courier_locations (agent_id, lat, lng, accuracy, heading, speed_mps, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(agentId, lat, lng, b.accuracy ?? null, b.heading ?? null, speed, now)
+      .run();
+  } catch {
+    /* table may be missing until migrate */
+  }
+  try {
+    await c.env.DB
+      .prepare("INSERT INTO agent_locations (agent_id, lat, lng, accuracy, heading, speed, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(agentId, lat, lng, b.accuracy ?? null, b.heading ?? null, speed, now)
+      .run();
+  } catch {
+    /* optional trail */
+  }
+  try {
+    await c.env.DB.prepare("DELETE FROM courier_locations WHERE recorded_at < datetime('now','-7 days')").run();
+  } catch {
+    /* cleanup must not fail the ping */
+  }
 
   const open = await c.env.DB
     .prepare(
@@ -368,46 +437,19 @@ deliveryRoutes.post("/tracking/ping", requirePerm("delivery.update", "delivery.v
     )
     .bind(agentId, ...CUSTODY_STATUSES)
     .first();
-  if (!open) return c.json({ ok: true, skipped: "no_active_orders" });
-
-  const settings = await getSettings(c.env.DB);
-  const maxKmh = Number(settings.gps_max_speed_kmh || 120) || 120;
-  const maxAcc = Number(settings.gps_max_accuracy_m || 100) || 100;
-  const prev = await c.env.DB
-    .prepare("SELECT lat, lng, accuracy, recorded_at FROM courier_locations WHERE agent_id = ? ORDER BY id DESC LIMIT 1")
-    .bind(agentId)
-    .first<{ lat: number; lng: number; accuracy: number | null; recorded_at: string }>();
-  const now = nowIso();
-  const check = pingDistanceOk(prev, { lat, lng, accuracy: b.accuracy }, Date.now(), maxKmh, maxAcc);
-  if (!check.ok) return c.json({ error: check.code || "gps_spoof", dist: check.dist, dt_s: check.dtS }, 400);
-
-  const speed = check.dtS && check.dist != null ? round2(check.dist / check.dtS) : null;
-  await c.env.DB
-    .prepare(
-      "INSERT INTO courier_locations (agent_id, lat, lng, accuracy, heading, speed_mps, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(agentId, lat, lng, b.accuracy ?? null, b.heading ?? null, speed, now)
-    .run();
-  await c.env.DB.prepare("UPDATE delivery_agents SET lat=?, lng=?, last_seen_at=? WHERE id=?").bind(lat, lng, now, agentId).run();
-  await c.env.DB.prepare("DELETE FROM courier_locations WHERE recorded_at < datetime('now','-7 days')").run();
-  return c.json({ ok: true, at: now, speed_mps: speed });
+  return c.json({ ok: true, at: now, speed_mps: speed, skipped: open ? undefined : "no_active_orders" });
 });
 
-deliveryRoutes.get("/tracking/live", requirePerm("delivery.view"), async (c) => {
+deliveryRoutes.get("/tracking/live", requirePerm("delivery.view", "delivery.update", "delivery.settle", "delivery.mark"), async (c) => {
   const url = new URL(c.req.url);
   const trailAgentId = Number(url.searchParams.get("trail_agent_id") || 0);
   const { results: agents } = await c.env.DB
     .prepare(
-      `SELECT a.id, a.code, a.name, a.phone,
-        COALESCE(a.lat, (SELECT cl.lat FROM courier_locations cl WHERE cl.agent_id = a.id ORDER BY cl.id DESC LIMIT 1)) AS lat,
-        COALESCE(a.lng, (SELECT cl.lng FROM courier_locations cl WHERE cl.agent_id = a.id ORDER BY cl.id DESC LIMIT 1)) AS lng,
-        COALESCE(a.last_seen_at, (SELECT cl.recorded_at FROM courier_locations cl WHERE cl.agent_id = a.id ORDER BY cl.id DESC LIMIT 1)) AS last_seen_at,
-        a.status,
+      `SELECT a.id, a.code, a.name, a.phone, a.lat, a.lng, a.last_seen_at, a.status,
         (SELECT COUNT(*) FROM sales_invoices si WHERE si.delivery_agent_id = a.id AND si.type = 'delivery' AND si.deleted_at IS NULL
-          AND (si.delivery_status IN (${CUSTODY_SQL}) OR si.delivery_status = 'pending_delivery')) AS open_orders
-       FROM delivery_agents a WHERE a.deleted_at IS NULL AND a.status = 'active' ORDER BY a.code`,
+          AND (si.delivery_status IN ('pending_delivery','out_for_delivery','rescheduled','customer_unavailable','pending_settlement'))) AS open_orders
+       FROM delivery_agents a WHERE a.deleted_at IS NULL ORDER BY a.code`,
     )
-    .bind(...CUSTODY_STATUSES)
     .all<{
       id: number;
       code: string;
@@ -419,20 +461,59 @@ deliveryRoutes.get("/tracking/live", requirePerm("delivery.view"), async (c) => 
       status: string;
       open_orders: number;
     }>();
+
+  const lastByAgent = new Map<number, { lat: number; lng: number; recorded_at: string }>();
+  for (const table of ["courier_locations", "agent_locations"] as const) {
+    try {
+      const { results } = await c.env.DB
+        .prepare(
+          `SELECT t.agent_id, t.lat, t.lng, t.recorded_at FROM ${table} t
+            INNER JOIN (SELECT agent_id, MAX(id) AS id FROM ${table} GROUP BY agent_id) x ON x.id = t.id`,
+        )
+        .all<{ agent_id: number; lat: number; lng: number; recorded_at: string }>();
+      for (const row of results) {
+        if (!lastByAgent.has(Number(row.agent_id))) {
+          lastByAgent.set(Number(row.agent_id), {
+            lat: Number(row.lat),
+            lng: Number(row.lng),
+            recorded_at: String(row.recorded_at || ""),
+          });
+        }
+      }
+    } catch {
+      /* table optional */
+    }
+  }
+
   const now = Date.now();
   const data = agents.map((a) => {
-    const raw = String(a.last_seen_at || "").trim();
-    const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
-    const seen = raw ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`) : 0;
-    return { ...a, stale: !seen || now - seen > 90_000 };
+    const fallback = lastByAgent.get(Number(a.id));
+    const lat = asCoord(a.lat) ?? asCoord(fallback?.lat);
+    const lng = asCoord(a.lng) ?? asCoord(fallback?.lng);
+    const lastSeen = String(a.last_seen_at || fallback?.recorded_at || "").trim();
+    const iso = lastSeen.includes("T") ? lastSeen : lastSeen.replace(" ", "T");
+    const seen = lastSeen ? Date.parse(/Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`) : 0;
+    return { ...a, lat, lng, last_seen_at: lastSeen || a.last_seen_at, stale: !seen || now - seen > 90_000 };
   });
   let trail: { lat: number; lng: number; accuracy: number | null; recorded_at: string }[] = [];
   if (trailAgentId) {
-    const r = await c.env.DB
-      .prepare("SELECT lat, lng, accuracy, recorded_at FROM courier_locations WHERE agent_id = ? ORDER BY id DESC LIMIT 50")
-      .bind(trailAgentId)
-      .all<{ lat: number; lng: number; accuracy: number | null; recorded_at: string }>();
-    trail = r.results.reverse();
+    for (const sql of [
+      "SELECT lat, lng, accuracy, recorded_at FROM courier_locations WHERE agent_id = ? ORDER BY id DESC LIMIT 50",
+      "SELECT lat, lng, accuracy, recorded_at FROM agent_locations WHERE agent_id = ? ORDER BY id DESC LIMIT 50",
+    ]) {
+      try {
+        const r = await c.env.DB
+          .prepare(sql)
+          .bind(trailAgentId)
+          .all<{ lat: number; lng: number; accuracy: number | null; recorded_at: string }>();
+        if (r.results.length) {
+          trail = r.results.reverse();
+          break;
+        }
+      } catch {
+        /* trail optional */
+      }
+    }
   }
   return c.json({ data: { agents: data, trail } });
 });

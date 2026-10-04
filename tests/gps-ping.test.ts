@@ -27,9 +27,14 @@ test("8km in 20s is spoof", () => {
   assert.equal(r.code, "gps_spoof");
 });
 
-test("bad accuracy and invalid coords reject", () => {
+test("first ping with typical phone accuracy is accepted", () => {
+  const r = pingDistanceOk(null, { lat: 30, lng: 31, accuracy: 150 }, Date.now());
+  assert.equal(r.ok, true);
+});
+
+test("invalid coords and absurd accuracy reject", () => {
   assert.equal(pingDistanceOk(null, { lat: 91, lng: 31 }, Date.now()).code, "gps_required");
-  assert.equal(pingDistanceOk(null, { lat: 30, lng: 31, accuracy: 150 }, Date.now()).code, "gps_accuracy");
+  assert.equal(pingDistanceOk(null, { lat: 30, lng: 31, accuracy: 8000 }, Date.now()).code, "gps_accuracy");
 });
 
 test("haversine is roughly 111km per degree latitude", () => {

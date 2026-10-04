@@ -26,7 +26,7 @@ export function pingDistanceOk(
   if (!Number.isFinite(next.lat) || !Number.isFinite(next.lng)) return { ok: false, code: "gps_required" };
   if (Math.abs(next.lat) > 90 || Math.abs(next.lng) > 180) return { ok: false, code: "gps_required" };
   const acc = Number(next.accuracy);
-  if (Number.isFinite(acc) && acc > maxAccuracyM) return { ok: false, code: "gps_accuracy" };
+  if (Number.isFinite(acc) && acc > Math.max(maxAccuracyM, 2500)) return { ok: false, code: "gps_accuracy" };
   if (!prev) return { ok: true };
   const prevMs = Date.parse(String(prev.recorded_at).replace(" ", "T") + (String(prev.recorded_at).includes("Z") ? "" : "Z"));
   const dtS = Math.max(1, Number.isFinite(prevMs) ? (nowMs - prevMs) / 1000 : 20);

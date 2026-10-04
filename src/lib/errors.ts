@@ -58,6 +58,7 @@ const ERR_KEYS: Record<string, Msg> = {
   gps_required: "gpsUnavailable",
   gps_accuracy: "errGpsAccuracy",
   gps_spoof: "errGpsSpoof",
+  no_agent: "errNoCourierLink",
   forbidden: "noAccess",
   parent_missing: "errParentMissing",
   parent_required: "errParentRequired",
