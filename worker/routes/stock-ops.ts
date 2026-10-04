@@ -93,7 +93,7 @@ stockOpsRoutes.post("/locations", requirePerm("locations.manage"), async (c) => 
   if (kind === "aisle" && !parentId) return c.json({ error: "parent_required" }, 400);
   let parentPath = "";
   let warehouse = b.warehouse || "";
-  if (kind === "warehouse" && !warehouse) warehouse = b.name.trim();
+  if (kind === "warehouse") warehouse = (b.name || warehouse || "").trim();
   if (parentId) {
     const parent = await locationById(c.env.DB, parentId);
     if (!parent) return c.json({ error: "parent_missing" }, 400);

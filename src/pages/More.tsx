@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, getCached, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
+import { mergeWarehouseCards } from "../lib/warehouses";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
 import { apiMessage, useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
@@ -153,8 +154,8 @@ export function InventoryPage() {
       </div>
       {(sum.by_warehouse || []).length ? (
         <div className="mb-4 grid gap-3 md:grid-cols-2">
-          {sum.by_warehouse.map((w: any, i: number) => (
-            <Stat key={i} label={w.name || tr("warehouses")} value={`${money(w.stock_value, lang)} · ${num(w.units, lang)}`} />
+          {mergeWarehouseCards(sum.by_warehouse).map((w) => (
+            <Stat key={w.name} label={w.name || tr("warehouses")} value={`${money(w.stock_value, lang)} · ${num(w.units, lang)}`} />
           ))}
         </div>
       ) : null}

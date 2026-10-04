@@ -4,6 +4,7 @@ import { requirePerm } from "../lib/auth";
 import { applyDate, applyEq, applyLocationCol, applyRange, applySearch, listParams } from "../lib/filters";
 import { availableBatches, logMovement, maybeStockAlerts, planAllocation, restockToBatch, weightedCost } from "../lib/stock";
 import { postPurchaseJournal, tryLedger } from "../lib/ledger";
+import { mergeWarehouseStats } from "../lib/warehouse";
 
 export const inventoryRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -79,12 +80,12 @@ inventoryRoutes.get("/summary", requirePerm("inventory.view"), async (c) => {
     c.env.DB.prepare(`SELECT COUNT(*) as n FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) <= 0`),
     c.env.DB.prepare(`SELECT COALESCE(SUM(reserved_stock),0) as n FROM products WHERE deleted_at IS NULL`),
     c.env.DB.prepare(
-      `SELECT COALESCE(sl.warehouse, 'بدون مخزن') as name,
+      `SELECT COALESCE(sl.warehouse, sl.name, 'بدون مخزن') as name,
               COALESCE(SUM(ib.remaining_qty * ib.unit_cost),0) as stock_value,
               COALESCE(SUM(ib.remaining_qty),0) as units
        FROM inventory_batches ib
        LEFT JOIN storage_locations sl ON sl.id = ib.location_id
-       GROUP BY sl.warehouse`,
+       GROUP BY sl.warehouse, sl.name`,
     ),
   ]);
   return c.json({
@@ -93,7 +94,7 @@ inventoryRoutes.get("/summary", requirePerm("inventory.view"), async (c) => {
     low: (low.results[0] as { n: number }).n,
     out: (out.results[0] as { n: number }).n,
     reserved: (reserved.results[0] as { n: number }).n,
-    by_warehouse: warehouses.results,
+    by_warehouse: mergeWarehouseStats(warehouses.results as { name?: string; stock_value?: number; units?: number }[]),
   });
 });
 

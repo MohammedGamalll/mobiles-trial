@@ -1,5 +1,5 @@
 import { useApp } from "../context";
-import { locationLabel } from "../lib/warehouses";
+import { canonWarehouseName, locationLabel } from "../lib/warehouses";
 import { inputCls } from "./ui";
 
 export function LocationSelect({
@@ -47,8 +47,8 @@ export function LocationSelect({
 export function warehouseNames(locations?: { name: string; kind?: string; warehouse?: string }[]) {
   const set = new Set<string>(["المخزن الرئيسي"]);
   for (const l of locations || []) {
-    if (l.kind === "warehouse" && l.name) set.add(l.name);
-    if (l.warehouse) set.add(l.warehouse);
+    if (l.kind === "warehouse" && l.name) set.add(canonWarehouseName(l.name));
+    if (l.warehouse) set.add(canonWarehouseName(l.warehouse));
   }
   return [...set];
 }
