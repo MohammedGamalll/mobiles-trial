@@ -128,11 +128,15 @@ export async function applyIssue(db: AppDb, alloc: Allocation[], productId: numb
 
 export async function releaseReserve(db: AppDb, alloc: Allocation[], productId: number) {
   const stmts = alloc.map((a) =>
-    db.prepare("UPDATE inventory_batches SET reserved_qty = MAX(reserved_qty - ?, 0) WHERE id = ?").bind(a.qty, a.batch_id),
+    db
+      .prepare("UPDATE inventory_batches SET reserved_qty = CASE WHEN reserved_qty > ? THEN reserved_qty - ? ELSE 0 END WHERE id = ?")
+      .bind(a.qty, a.qty, a.batch_id),
   );
   const total = alloc.reduce((s, a) => s + a.qty, 0);
   stmts.push(
-    db.prepare("UPDATE products SET reserved_stock = MAX(reserved_stock - ?, 0), updated_at = datetime('now') WHERE id = ?").bind(total, productId),
+    db
+      .prepare("UPDATE products SET reserved_stock = CASE WHEN reserved_stock > ? THEN reserved_stock - ? ELSE 0 END, updated_at = datetime('now') WHERE id = ?")
+      .bind(total, total, productId),
   );
   await db.batch(stmts);
 }

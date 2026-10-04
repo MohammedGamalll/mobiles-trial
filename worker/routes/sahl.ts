@@ -161,7 +161,7 @@ sahlRoutes.post("/cheques/:id/collect", requirePerm("cheques.manage", "payments.
         c.env.DB.prepare("UPDATE sales_invoices SET paid = ?, remaining = ? WHERE id = ?").bind(round2(inv.paid + amount), round2(Math.max(0, inv.remaining - amount)), ch.invoice_id),
       ]);
       if (inv.customer_id) {
-        await c.env.DB.prepare("UPDATE customers SET current_balance = MAX(current_balance - ?, 0) WHERE id = ?").bind(amount, inv.customer_id).run();
+        await c.env.DB.prepare("UPDATE customers SET current_balance = CASE WHEN current_balance > ? THEN current_balance - ? ELSE 0 END WHERE id = ?").bind(amount, amount, inv.customer_id).run();
       }
       const payRow = await c.env.DB.prepare("SELECT id FROM payments WHERE invoice_id = ? ORDER BY id DESC LIMIT 1").bind(ch.invoice_id).first<{ id: number }>();
       if (payRow) {
