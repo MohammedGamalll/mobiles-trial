@@ -119,7 +119,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [waOpen, setWaOpen] = useState(false);
   const [waPreview, setWaPreview] = useState<any>(null);
   const [waMsg, setWaMsg] = useState("");
-  const [printSnap, setPrintSnap] = useState<{ items: Line[]; total: number; extra: number } | null>(null);
+  const [printSnap, setPrintSnap] = useState<any | null>(null);
   const [brandFilter, setBrandFilter] = useState<number | "">("");
   const [catFilter, setCatFilter] = useState<number | "">("");
   const [picked, setPicked] = useState<number | null>(null);
@@ -397,7 +397,37 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const creditNeedCustomer = method === "credit" && !customer && !quoteMode;
   const printRows = printSnap?.items || cart;
   const printTotal = printSnap?.total ?? total;
-  const printExtra = printSnap?.extra ?? Number(extraAmount || 0);
+  const printExtra = Number(printSnap?.extra_amount ?? printSnap?.extra ?? extraAmount ?? 0);
+  const agentRow = (lookups?.delivery_agents || []).find((a) => a.id === agentId);
+  const salesRow = (lookups?.delivery_agents || []).find((a) => a.id === salesAgentId);
+  const printInvoice = printSnap || {
+    number: doneInv?.number,
+    date: doneInv?.date || invDate,
+    type,
+    items: cart,
+    subtotal,
+    discount: discAmt,
+    tax_amount: taxAmount,
+    tax_rate: taxOn ? taxRate : 0,
+    extra_amount: Number(extraAmount || 0),
+    total,
+    paid: splitPaid || paid,
+    remaining,
+    notes,
+    payment_method: method,
+    customer_name: customer?.name || walkIn || customerQ,
+    customer_phone: customer?.phone || newCust.phone,
+    customer_whatsapp: customer?.whatsapp || customer?.phone || newCust.phone,
+    address: address || customer?.address,
+    area: area || customer?.area,
+    city: (customer as { city?: string } | null)?.city,
+    delivery_agent_name: agentRow?.name,
+    delivery_agent_code: agentRow?.code,
+    delivery_agent_phone: (agentRow as { phone?: string } | undefined)?.phone,
+    expected_delivery_time: time,
+    sales_agent_name: salesRow?.name,
+    sales_agent_code: salesRow?.code,
+  };
   const cartModelNames = new Set(cart.flatMap((l) => (l.models || []).map((m) => m.name)));
   const related = visible.filter((p) => !cart.some((c) => c.id === p.id) && (p.models || []).some((m) => cartModelNames.has(m.name))).slice(0, 8);
   const waEnabled = settings.whatsapp_enabled !== "0";
@@ -525,7 +555,23 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         return;
       }
       playSound("done");
-      setPrintSnap({ items: cart, total, extra: Number(extraAmount || 0) });
+      setPrintSnap(res.data || {
+        items: cart,
+        total,
+        extra_amount: Number(extraAmount || 0),
+        subtotal,
+        discount: discAmt,
+        tax_amount: taxAmount,
+        type,
+        customer_name: customer?.name || walkIn || customerQ,
+        customer_phone: customer?.phone || newCust.phone,
+        customer_whatsapp: customer?.whatsapp || customer?.phone || newCust.phone,
+        address: address || customer?.address,
+        area: area || customer?.area,
+        city: (customer as { city?: string } | null)?.city,
+        notes,
+        payment_method: payMethod,
+      });
       setDoneInv(res.data);
       setStockTick((n) => n + 1);
       await loadToday().catch(() => {});
@@ -742,7 +788,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     searchRef, customerRef, qtyRef, priceRef, extraRef, custBlurRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
     subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer,
-    printRows, printTotal, printExtra, related, waEnabled, cartQty,
+    printRows, printTotal, printExtra, printInvoice, related, waEnabled, cartQty,
     loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, previewWa, submit, holdInvoice,
   };
 }

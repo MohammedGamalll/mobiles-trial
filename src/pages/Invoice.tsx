@@ -3,8 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, inputCls } from "../components/ui";
+import { InvoicePrint } from "../components/InvoicePrint";
 import { useConfirm } from "../components/Confirm";
 import { PaymentModal } from "../components/PaymentModal";
 import { AssignCourierModal } from "../components/AssignCourierModal";
@@ -111,88 +111,14 @@ export default function Invoice() {
       </div>
 
       <div className="print-sheet rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-3xl font-black">{tr("app")}</div>
-            <div className="text-sm text-slate-500">{settings.store_name_ar || settings.store_name}</div>
-            <div className="text-sm text-slate-500">{settings.store_address}</div>
-            <div className="text-sm text-slate-500">{settings.store_phone}</div>
+        <InvoicePrint inv={inv} screen />
+        {inv.customer_whatsapp ? (
+          <div className="no-print mt-3 text-sm">
+            <a className="font-bold text-emerald-700" href={`https://wa.me/${String(inv.customer_whatsapp).replace(/\D/g, "").replace(/^0/, "20")}`} target="_blank" rel="noreferrer">
+              [{tr("whatsapp")}]
+            </a>
           </div>
-          <div className="text-end">
-            <div className="text-lg font-black">{inv.number}</div>
-            <div className="text-sm">{inv.date}</div>
-            <span className={statusClass(inv.status)}>{statusLabel(inv.status, lang)}</span>
-          </div>
-        </div>
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <div>
-            <div className="text-xs font-bold text-slate-400">{tr("customer")}</div>
-            <div className="font-bold">{inv.customer_name || tr("walkIn")}</div>
-            {inv.customer_phone ? (
-              <div className="text-sm">
-                {inv.customer_phone}{" "}
-                {inv.customer_whatsapp ? (
-                  <a className="font-bold text-emerald-700" href={`https://wa.me/${String(inv.customer_whatsapp).replace(/\D/g, "").replace(/^0/, "20")}`} target="_blank" rel="noreferrer">
-                    [{tr("whatsapp")}]
-                  </a>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="text-sm text-slate-500">{inv.address}</div>
-            {inv.sales_agent_name ? <div className="mt-2 text-sm">{tr("salesAgent")}: <b>{inv.sales_agent_name}</b> {inv.sales_agent_code ? `(${inv.sales_agent_code})` : ""}</div> : null}
-          </div>
-          {inv.type === "delivery" ? (
-            <div className="rounded-xl bg-slate-50 p-3">
-              <div className="text-xs font-bold text-slate-400">{tr("deliveryInfo")}</div>
-              <div>{tr("agent")}: <b>{inv.delivery_agent_name}</b></div>
-              <div>{tr("agentCode")}: <b>{inv.delivery_agent_code}</b></div>
-              {inv.delivery_agent_phone ? <div>{tr("phone")}: {inv.delivery_agent_phone}</div> : null}
-              {inv.expected_delivery_time ? <div>{tr("expectedTime")}: {inv.expected_delivery_time}</div> : null}
-              <div>{tr("address")}: {inv.address}</div>
-            </div>
-          ) : null}
-        </div>
-        <div className="table-wrap mt-6">
-          <table>
-            <thead>
-              <tr>
-                <th>{tr("items")}</th>
-                <th>{tr("qty")}</th>
-                <th>{tr("unitPrice")}</th>
-                <th>{tr("discount")}</th>
-                <th>{tr("total")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(inv.items || []).map((i: any) => (
-                <tr key={i.id}>
-                  <td>
-                    <div className="font-semibold">{i.product_name}</div>
-                    <div className="text-xs text-slate-400">{i.sku} {i.product_kind === "service" || i.item_kind === "service" ? `· ${tr("kindService")}` : ""}</div>
-                  </td>
-                  <td>{i.quantity}{i.unit_name ? ` ${i.unit_name}` : ""}{i.delivered_qty ? ` / ${tr("deliveredQty")} ${i.delivered_qty}` : ""}{i.returned_qty ? ` / ${tr("returnedQty")} ${i.returned_qty}` : ""}</td>
-                  <td>{money(i.unit_price, lang)}</td>
-                  <td>{money(i.discount, lang)}</td>
-                  <td className="font-bold">{money(i.total, lang)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-4 ms-auto max-w-xs space-y-1 text-sm">
-          <div className="flex justify-between"><span>{tr("subtotal")}</span><b>{money(inv.subtotal, lang)}</b></div>
-          <div className="flex justify-between"><span>{tr("discount")}</span><b>{money(inv.discount, lang)}</b></div>
-          {inv.tax_amount ? <div className="flex justify-between"><span>{tr("tax")} {inv.tax_rate ? `(${inv.tax_rate}%)` : ""}</span><b>{money(inv.tax_amount, lang)}</b></div> : null}
-          {Number(inv.extra_amount) ? <div className="flex justify-between"><span>{tr("extraAmount")}</span><b>{money(inv.extra_amount, lang)}</b></div> : null}
-          <div className="flex justify-between text-base"><span>{tr("total")}</span><b>{money(inv.total, lang)}</b></div>
-          <div className="flex justify-between"><span>{tr("paid")}</span><b>{money(inv.paid, lang)}</b></div>
-          <div className="flex justify-between"><span>{tr("remaining")}</span><b>{money(inv.remaining, lang)}</b></div>
-          <div className="flex justify-between text-xs text-slate-400"><span>{tr("payMethod")}</span><span>{inv.payment_method}</span></div>
-          {(inv.payments || []).map((p: any) => (
-            <div key={p.id} className="flex justify-between text-xs text-slate-500"><span>{p.method}</span><span>{money(p.amount, lang)}</span></div>
-          ))}
-        </div>
-        <div className="mt-8 text-center text-sm text-slate-400">{settings.invoice_footer || tr("thanks")}</div>
+        ) : null}
       </div>
 
       {can("payments.create") && inv.remaining > 0 ? (

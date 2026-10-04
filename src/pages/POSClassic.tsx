@@ -17,7 +17,8 @@ import {
 import { get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Field, Modal, inputCls } from "../components/ui";
+import { InvoicePrint } from "../components/InvoicePrint";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
 import { ProductSuggestList } from "../components/ProductSuggest";
@@ -53,7 +54,7 @@ export default function POSClassic() {
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
-    printRows, printTotal, printExtra, waEnabled, cartQty, showGoods, partyHits, applyParty, saveAccount,
+    printRows, printInvoice, waEnabled, cartQty, showGoods, partyHits, applyParty, saveAccount,
     loadToday, loadHeldList, openHeld, cancelHeld, previewWa, submit, holdInvoice,
     forceGoods, setForceGoods, setStockTick,
   } = pos;
@@ -67,7 +68,7 @@ export default function POSClassic() {
   const rtl = lang === "ar";
   const Collapse = rtl ? ChevronRight : ChevronLeft;
   const Expand = rtl ? ChevronLeft : ChevronRight;
-  const nameOf = (p: Product) => (lang === "ar" ? p.name_ar : p.name_en) || p.name_ar;
+  const nameOf = (p: Product & { product_name?: string }) => p.product_name || (lang === "ar" ? p.name_ar : p.name_en) || p.name_ar;
   const kindLabel = (p: Product) => (p.kind === "service" ? tr("services") : tr("products"));
   const clockLabel = clock.toLocaleTimeString(lang === "ar" ? "en-US" : "en-GB", { hour: "numeric", minute: "2-digit" });
   const dateLabel = invDate.split("-").reverse().join("/");
@@ -93,33 +94,9 @@ export default function POSClassic() {
 
   return (
     <div className="pos-classic">
-      <PrintLetterhead title={quoteMode ? tr("quoteMode") : tr("pos")} />
-      <div className="print-only table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{tr("items")}</th>
-              <th>{tr("qty")}</th>
-              <th>{tr("unitPrice")}</th>
-              <th>{tr("total")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {printRows.map((l) => (
-              <tr key={`${l.id}-${l.unit_name}`}>
-                <td>{nameOf(l)}{l.unit_name ? ` · ${l.unit_name}` : ""}</td>
-                <td>{l.qty}</td>
-                <td>{money(l.unit_price, lang)}</td>
-                <td>{money(l.qty * l.unit_price - l.discount, lang)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="mt-4 text-end font-black">{tr("total")}: {money(printTotal, lang)}</div>
-        {Number(printExtra) ? <div className="text-end text-sm">{tr("extraAmount")}: {money(printExtra, lang)}</div> : null}
-      </div>
+      <InvoicePrint inv={printInvoice} title={quoteMode ? tr("quoteMode") : tr("invoice")} />
       <div className="print-only barcode-sheet">
-        {printRows.map((l) => (
+        {printRows.map((l: any) => (
           <Barcode key={`${l.id}-bc`} value={l.barcode || l.sku} label={nameOf(l)} price={money(l.unit_price, lang)} />
         ))}
       </div>
