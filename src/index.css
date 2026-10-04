@@ -2305,7 +2305,20 @@ html[data-ui="modern"] .login-gold {
 .inv-print-table th {
   background: #0f172a;
   color: #fff;
-  font-weight: 800;
+  font-weight: 900 !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.page-loading-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  background: #0f766e;
+  animation: page-loading-pulse 0.9s ease-in-out infinite;
+}
+@keyframes page-loading-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
 }
 .inv-print-table td.is-n,
 .inv-print-table th.is-n {
@@ -2362,6 +2375,13 @@ html[data-ui="modern"] .login-gold {
 }
 @media print {
   .inv-print { display: block !important; }
+  .inv-print-table th {
+    background: #0f172a !important;
+    color: #fff !important;
+    font-weight: 900 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
   html.print-thermal .inv-print-meta.is-split {
     grid-template-columns: 1fr;
   }

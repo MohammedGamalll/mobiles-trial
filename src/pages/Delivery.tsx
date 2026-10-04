@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PageLoading, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { OsmMap } from "../components/OsmMap";
@@ -22,10 +22,16 @@ export function DeliveryBoard() {
   const [form, setForm] = useState({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 });
   const { confirmDelete, dialog } = useConfirm();
   const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
+  const [loading, setLoading] = useState(false);
 
   async function loadOrders() {
-    const r = await get<{ data: any[] }>(`/api/delivery/orders?${f.qs}`);
-    setRows(r.data);
+    setLoading(true);
+    try {
+      const r = await get<{ data: any[] }>(`/api/delivery/orders?${f.qs}`);
+      setRows(r.data);
+    } finally {
+      setLoading(false);
+    }
   }
   async function loadLive(agentId = trailAgentId) {
     const q = agentId ? `?trail_agent_id=${agentId}` : "";
@@ -107,11 +113,11 @@ export function DeliveryBoard() {
       {tab === "orders" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "delivered", "customer_refused", "damaged", "rescheduled", "customer_unavailable", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "delivered", "customer_refused", "returned_to_warehouse", "damaged", "rescheduled", "customer_unavailable", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
             { key: "agent_id", label: "agent", type: "select", quick: true, lookup: "delivery_agents" },
             { key: "area", label: "area", type: "text" },
           ]} />
-          {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+          {loading ? <PageLoading /> : !rows.length ? <EmptyFilterState onClear={f.clear} /> : (
           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
             <div className="table-wrap">
               <table>
@@ -139,7 +145,7 @@ export function DeliveryBoard() {
                       <td>{money(r.total, lang)}</td>
                       <td><span className={statusClass(r.delivery_status)}>{statusLabel(r.delivery_status, lang)}</span></td>
                       <td>
-                        {r.delivery_status === "pending_delivery" && can("delivery.update") ? (
+                        {can("delivery.update") && !r.settled_at && !["delivered", "customer_refused", "returned_to_warehouse", "damaged", "cancelled"].includes(String(r.delivery_status || "")) ? (
                           <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setAssignInv({ id: r.id, number: r.number })}>
                             {tr("assignCourier")}
                           </button>

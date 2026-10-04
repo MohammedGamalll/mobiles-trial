@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { Btn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { OsmMap } from "../components/OsmMap";
@@ -576,8 +576,14 @@ export function LeavesPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ employee_id: "", type: "annual", date_from: new Date().toISOString().slice(0, 10), date_to: new Date().toISOString().slice(0, 10), reason: "" });
   const { confirmDelete, dialog } = useConfirm();
+  const [loading, setLoading] = useState(false);
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/hr/leaves?${f.qs}`)).data || []);
+    setLoading(true);
+    try {
+      setRows((await get<{ data: any[] }>(`/api/hr/leaves?${f.qs}`)).data || []);
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   useEffect(() => {
@@ -611,6 +617,7 @@ export function LeavesPage() {
                 <th>{tr("leaveType")}</th>
                 <th>{tr("date")}</th>
                 <th>{tr("days")}</th>
+                <th>{tr("notes")}</th>
                 <th>{tr("status")}</th>
                 <th></th>
               </tr>
@@ -622,6 +629,7 @@ export function LeavesPage() {
                   <td>{statusLabel(r.type, lang)}</td>
                   <td>{r.date_from} → {r.date_to}</td>
                   <td>{r.days}</td>
+                  <td className="max-w-xs whitespace-normal text-sm">{r.reason || r.notes || "—"}</td>
                   <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
                   <td>
                     <span className="flex flex-wrap gap-2">
@@ -638,7 +646,7 @@ export function LeavesPage() {
                   </td>
                 </tr>
               ))}
-              {!rows.length ? <tr><td colSpan={6} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
+              {loading ? <tr><td colSpan={7}><PageLoading /></td></tr> : !rows.length ? <tr><td colSpan={7} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -677,20 +685,27 @@ export function LeavesPage() {
 }
 
 export function AdvancesPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
   const f = useListQuery("advances", { month: new Date().toISOString().slice(0, 7) });
   const [rows, setRows] = useState<any[]>([]);
   const [ots, setOts] = useState<any[]>([]);
   const [emps, setEmps] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [otOpen, setOtOpen] = useState(false);
-  const [form, setForm] = useState({ employee_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [form, setForm] = useState({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
   const [ot, setOt] = useState({ employee_id: "", hours: 1, date: new Date().toISOString().slice(0, 10), notes: "" });
   const { confirmDelete, dialog } = useConfirm();
+  const [loading, setLoading] = useState(false);
   const month = f.values.month || new Date().toISOString().slice(0, 7);
+  const agents = (lookups?.delivery_agents || []).filter((a: any) => a.status !== "inactive");
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/hr/advances?${f.qs}`)).data || []);
-    setOts((await get<{ data: any[] }>(`/api/hr/overtime?month=${month}`)).data || []);
+    setLoading(true);
+    try {
+      setRows((await get<{ data: any[] }>(`/api/hr/advances?${f.qs}`)).data || []);
+      setOts((await get<{ data: any[] }>(`/api/hr/overtime?month=${month}`)).data || []);
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
   useEffect(() => {
@@ -744,7 +759,7 @@ export function AdvancesPage() {
                   </td>
                 </tr>
               ))}
-              {!rows.length ? <tr><td colSpan={6} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
+              {loading ? <tr><td colSpan={6}><PageLoading /></td></tr> : !rows.length ? <tr><td colSpan={6} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -784,17 +799,31 @@ export function AdvancesPage() {
       <Modal open={open} title={tr("newAdvance")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("employees")}>
-            <select className={inputCls} value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })}>
+            <select className={inputCls} value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value, delivery_agent_id: "" })}>
               <option value="">-</option>
-              {emps.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+              {emps.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.code})</option>)}
+            </select>
+          </Field>
+          <Field label={tr("couriers")}>
+            <select className={inputCls} value={form.delivery_agent_id} onChange={(e) => setForm({ ...form, delivery_agent_id: e.target.value, employee_id: "" })}>
+              <option value="">-</option>
+              {agents.map((a: any) => <option key={a.id} value={a.id}>{a.name} ({a.code})</option>)}
             </select>
           </Field>
           <Field label={tr("amount")}><input className={inputCls} type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>
           <Field label={tr("date")}><input className={inputCls} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
           <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
           <Btn onClick={async () => {
-            await post("/api/hr/advances", { ...form, employee_id: Number(form.employee_id), month });
+            await post("/api/hr/advances", {
+              employee_id: form.employee_id ? Number(form.employee_id) : undefined,
+              delivery_agent_id: form.delivery_agent_id ? Number(form.delivery_agent_id) : undefined,
+              amount: form.amount,
+              date: form.date,
+              notes: form.notes,
+              month,
+            });
             setOpen(false);
+            setForm({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
             load();
           }}>{tr("save")}</Btn>
         </div>

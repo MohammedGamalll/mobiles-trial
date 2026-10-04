@@ -6,13 +6,14 @@ import { applyIssue, logMovement, maybeStockAlerts, releaseReserve, type Allocat
 export const ESCROW_STATUSES = ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"] as const;
 export const CUSTODY_STATUSES = ["out_for_delivery", "rescheduled", "customer_unavailable"] as const;
 
-export type SettlementOutcome = "delivered" | "rejected" | "damaged";
+export type SettlementOutcome = "delivered" | "rejected" | "damaged" | "returned";
 export type ChargeTo = "courier" | "customer" | "company";
 
 export function normalizeOutcome(raw: string): SettlementOutcome | null {
   const s = String(raw || "").toLowerCase();
   if (["delivered", "full_delivery"].includes(s)) return "delivered";
   if (["rejected", "refused", "full_return", "fully_returned", "customer_refused"].includes(s)) return "rejected";
+  if (["returned", "return_to_stock", "returned_to_warehouse", "back_to_stock"].includes(s)) return "returned";
   if (["damaged", "lost", "damage"].includes(s)) return "damaged";
   return null;
 }
@@ -28,6 +29,7 @@ export function isCustodyStatus(status: string) {
 export function settlementStatuses(outcome: SettlementOutcome) {
   if (outcome === "delivered") return { status: "completed", delivery_status: "delivered" };
   if (outcome === "rejected") return { status: "cancelled", delivery_status: "customer_refused" };
+  if (outcome === "returned") return { status: "cancelled", delivery_status: "returned_to_warehouse" };
   return { status: "completed", delivery_status: "damaged" };
 }
 
@@ -132,7 +134,12 @@ export async function settleInvoice(
   const { inv, items, batches } = loaded;
   if (inv.type !== "delivery") throw new Error("not_delivery");
   if (inv.settled_at || inv.stock_committed_at || inv.finance_committed_at) throw new Error("already_settled");
-  if (!isCustodyStatus(inv.status) && !isCustodyStatus(inv.delivery_status || "")) throw new Error("not_in_custody");
+  const pendingWithAgent =
+    !!inv.delivery_agent_id &&
+    (inv.status === "pending_delivery" || inv.delivery_status === "pending_delivery");
+  if (!isCustodyStatus(inv.status) && !isCustodyStatus(inv.delivery_status || "") && !pendingWithAgent) {
+    throw new Error("not_in_custody");
+  }
   if (Number(inv.delivery_agent_id || 0) !== Number(opts.agentId)) throw new Error("wrong_agent");
 
   const now = nowIso();
@@ -142,11 +149,29 @@ export async function settleInvoice(
   let costTotal = round2(Number(inv.cost_total) || 0);
   const chargeTo: ChargeTo = opts.chargeTo || "company";
 
-  if (opts.outcome === "rejected") {
+  if (opts.outcome === "rejected" || opts.outcome === "returned") {
     for (const item of items) {
       if (item.item_kind === "service") continue;
       const alloc = allocFor(item.id, batches);
-      if (alloc.length) await releaseReserve(db, alloc, item.product_id);
+      if (alloc.length) {
+        await releaseReserve(db, alloc, item.product_id);
+        if (opts.outcome === "returned") {
+          for (const a of alloc) {
+            await logMovement(db, {
+              productId: item.product_id,
+              batchId: a.batch_id,
+              type: "return_in",
+              qty: a.qty,
+              unitCost: a.unit_cost,
+              referenceType: "delivery",
+              referenceId: inv.id,
+              notes: `Return ${inv.number}`,
+              userId: opts.userId,
+              toLocationId: a.location_id ?? null,
+            });
+          }
+        }
+      }
       await db.prepare("UPDATE sales_invoice_items SET delivered_qty = 0, returned_qty = ? WHERE id = ?").bind(item.quantity, item.id).run();
     }
     await db.prepare("UPDATE product_serials SET status='in_stock', invoice_id=NULL, invoice_item_id=NULL WHERE invoice_id=? AND status='reserved'").bind(inv.id).run();

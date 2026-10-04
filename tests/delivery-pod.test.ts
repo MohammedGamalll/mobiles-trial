@@ -16,6 +16,8 @@ test("normalizeOutcome maps POD aliases", () => {
   assert.equal(normalizeOutcome("refused"), "rejected");
   assert.equal(normalizeOutcome("lost"), "damaged");
   assert.equal(normalizeOutcome("damaged"), "damaged");
+  assert.equal(normalizeOutcome("returned"), "returned");
+  assert.equal(normalizeOutcome("returned_to_warehouse"), "returned");
   assert.equal(normalizeOutcome("partial"), null);
 });
 
@@ -31,6 +33,7 @@ test("settlement statuses match POD outcomes", () => {
   assert.deepEqual(settlementStatuses("delivered"), { status: "completed", delivery_status: "delivered" });
   assert.deepEqual(settlementStatuses("rejected"), { status: "cancelled", delivery_status: "customer_refused" });
   assert.deepEqual(settlementStatuses("damaged"), { status: "completed", delivery_status: "damaged" });
+  assert.deepEqual(settlementStatuses("returned"), { status: "cancelled", delivery_status: "returned_to_warehouse" });
 });
 
 test("splitCollected never over-collects", () => {

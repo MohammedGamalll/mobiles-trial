@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { Btn, Field, Modal, PrintBtn, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { useConfirm } from "../components/Confirm";
 import { PaymentModal } from "../components/PaymentModal";
@@ -30,6 +30,7 @@ export default function Invoice() {
   const [resultErr, setResultErr] = useState("");
   const [payAmt, setPayAmt] = useState(0);
   const [payOpen, setPayOpen] = useState(false);
+  const [resultBusy, setResultBusy] = useState(false);
 
   async function reload() {
     const r = await get<{ data: any }>(`/api/invoices/${id}`);
@@ -41,7 +42,7 @@ export default function Invoice() {
     reload().catch(() => {});
   }, [id]);
 
-  if (!inv) return <div>{tr("loading")}</div>;
+  if (!inv) return <PageLoading />;
   const waEnabled = settings.whatsapp_enabled !== "0";
   const inCustody = ["out_for_delivery", "rescheduled", "customer_unavailable"].includes(inv.delivery_status);
 
@@ -72,12 +73,12 @@ export default function Invoice() {
           <PrintBtn thermal />
           {inv.type === "delivery" && can("delivery.update") && !["cancelled"].includes(inv.status) && !inv.settled_at ? (
             <>
-              {inv.delivery_status === "pending_delivery" ? (
+              {!["delivered", "customer_refused", "returned_to_warehouse", "damaged"].includes(String(inv.delivery_status || "")) ? (
                 <Btn kind="ghost" onClick={() => setAssignOpen(true)}>
                   {tr("assignCourier")}
                 </Btn>
               ) : null}
-              {inCustody ? (
+              {inCustody || inv.delivery_status === "pending_delivery" || inv.delivery_agent_id ? (
                 <>
                   <Link className="ui-btn inline-flex items-center justify-center gap-2 rounded-xl bg-teal-50 px-3.5 py-2 text-sm font-bold text-teal-800 hover:bg-teal-100" to={`/delivery/settle${inv.delivery_agent_id ? `?agent=${inv.delivery_agent_id}` : ""}`}>
                     {tr("settleCourier")}
@@ -171,6 +172,7 @@ export default function Invoice() {
           <select className={inputCls} value={resultType} onChange={(e) => setResultType(e.target.value)}>
             <option value="delivered">{tr("outcomeDelivered")}</option>
             <option value="rejected">{tr("outcomeRejected")}</option>
+            <option value="returned">{tr("outcomeReturned")}</option>
             <option value="damaged">{tr("outcomeDamaged")}</option>
           </select>
         </Field>
@@ -191,11 +193,13 @@ export default function Invoice() {
         <Field label={tr("notes")}>
           <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
-        {resultErr ? <div className="mt-2 text-sm text-rose-600">{resultErr}</div> : null}
+        <ErrorNote message={resultErr} />
         <div className="mt-3">
           <Btn
+            disabled={resultBusy}
             onClick={async () => {
               try {
+                setResultBusy(true);
                 setResultErr("");
                 await post(`/api/delivery/orders/${id}/result`, {
                   result_type: resultType,
@@ -208,10 +212,12 @@ export default function Invoice() {
                 reload();
               } catch (e) {
                 setResultErr(apiMessage(tr, e));
+              } finally {
+                setResultBusy(false);
               }
             }}
           >
-            {tr("save")}
+            {resultBusy ? tr("loading") : tr("save")}
           </Btn>
         </div>
       </Modal>

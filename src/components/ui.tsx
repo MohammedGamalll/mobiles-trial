@@ -49,8 +49,18 @@ export function Modal(props: {
 export function ErrorNote({ message }: { message?: string }) {
   if (!message) return null;
   return (
-    <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold leading-6 text-rose-700">
+    <div role="alert" className="error-banner mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold leading-6 text-rose-700">
       {message}
+    </div>
+  );
+}
+
+export function PageLoading({ label }: { label?: string }) {
+  const { tr } = useApp();
+  return (
+    <div className="page-loading flex items-center justify-center gap-2 px-4 py-10 text-sm font-bold text-slate-500">
+      <span className="page-loading-dot" />
+      {label || tr("loading")}
     </div>
   );
 }

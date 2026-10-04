@@ -680,17 +680,48 @@ hrRoutes.get("/advances", requirePerm("advances.manage", "hr.payroll", "hr.view"
   return c.json({ data: results });
 });
 
+async function ensureCourierEmployee(db: AppDb, agentId: number) {
+  const existing = await db
+    .prepare("SELECT id FROM employees WHERE delivery_agent_id = ? AND deleted_at IS NULL ORDER BY id LIMIT 1")
+    .bind(agentId)
+    .first<{ id: number }>();
+  if (existing) return existing.id;
+  const agent = await db
+    .prepare("SELECT id, name, code, phone FROM delivery_agents WHERE id = ? AND deleted_at IS NULL")
+    .bind(agentId)
+    .first<{ id: number; name: string; code: string; phone: string | null }>();
+  if (!agent) throw new Error("agent_not_found");
+  let code = `DA-${agent.code || agent.id}`;
+  const clash = await db.prepare("SELECT id FROM employees WHERE code = ? AND deleted_at IS NULL").bind(code).first();
+  if (clash) code = `DA-${agent.id}-${String(Date.now()).slice(-4)}`;
+  const r = await db
+    .prepare(
+      `INSERT INTO employees (code, name, phone, job_title, department, hire_date, status, work_type, delivery_agent_id, basic_salary, allowances)
+       VALUES (?, ?, ?, 'مندوب', 'توصيل', ?, 'active', 'field', ?, 0, 0)`,
+    )
+    .bind(code, agent.name, agent.phone || null, todayIso(), agent.id)
+    .run();
+  return r.meta.last_row_id;
+}
+
 hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (c) => {
-  const b = await c.req.json<{ employee_id: number; amount: number; date?: string; month?: string; notes?: string }>();
-  if (!b.employee_id || !b.amount) return c.json({ error: "missing" }, 400);
+  const b = await c.req.json<{ employee_id?: number; delivery_agent_id?: number; amount: number; date?: string; month?: string; notes?: string }>();
+  let employeeId = Number(b.employee_id || 0);
+  try {
+    if (!employeeId && b.delivery_agent_id) employeeId = await ensureCourierEmployee(c.env.DB, Number(b.delivery_agent_id));
+  } catch (e) {
+    const msg = String((e as Error)?.message || "error");
+    return c.json({ error: msg }, msg === "agent_not_found" ? 404 : 400);
+  }
+  if (!employeeId || !b.amount) return c.json({ error: "missing" }, 400);
   const date = b.date || todayIso();
   const month = b.month || date.slice(0, 7);
   const r = await c.env.DB
     .prepare("INSERT INTO salary_advances (employee_id, amount, date, month, status, notes, created_by) VALUES (?, ?, ?, ?, 'open', ?, ?)")
-    .bind(b.employee_id, round2(b.amount), date, month, b.notes || null, c.get("user").id)
+    .bind(employeeId, round2(b.amount), date, month, b.notes || null, c.get("user").id)
     .run();
   await audit(c.env.DB, c.get("user"), "create_advance", "advance", r.meta.last_row_id, String(b.amount));
-  return c.json({ id: r.meta.last_row_id }, 201);
+  return c.json({ id: r.meta.last_row_id, employee_id: employeeId }, 201);
 });
 
 hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll"), async (c) => {

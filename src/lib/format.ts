@@ -39,7 +39,7 @@ export function statusClass(status?: string | null) {
   if (["pending_delivery", "rescheduled", "draft", "open", "submitted", "held", "quote", "order", "planned", "accrued", "pending", "partial", "unpaid_sale"].includes(s)) return "badge bg-amber-100 text-amber-800";
   if (["rejected"].includes(s)) return "badge bg-rose-100 text-rose-800";
   if (["low"].includes(s)) return "badge bg-orange-100 text-orange-800";
-  if (["cancelled", "fully_returned", "customer_refused", "out", "void", "bounced"].includes(s)) return "badge bg-rose-100 text-rose-800";
+  if (["cancelled", "fully_returned", "customer_refused", "returned_to_warehouse", "out", "void", "bounced"].includes(s)) return "badge bg-rose-100 text-rose-800";
   if (["partially_delivered", "partially_returned", "customer_unavailable"].includes(s)) return "badge bg-sky-100 text-sky-800";
   return "badge bg-slate-100 text-slate-700";
 }
@@ -56,6 +56,7 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     partially_returned: { ar: "مرتجع جزئي", en: "Partially returned" },
     fully_returned: { ar: "مرتجع بالكامل", en: "Fully returned" },
     customer_refused: { ar: "مرفوض من العميل", en: "Customer refused" },
+    returned_to_warehouse: { ar: "مرتجع للمخزن", en: "Returned to warehouse" },
     customer_unavailable: { ar: "العميل غير متاح", en: "Unavailable" },
     rescheduled: { ar: "إعادة جدولة", en: "Rescheduled" },
     cancelled: { ar: "ملغاة", en: "Cancelled" },

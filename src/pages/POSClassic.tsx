@@ -94,7 +94,9 @@ export default function POSClassic() {
 
   return (
     <div className="pos-classic">
-      <InvoicePrint inv={printInvoice} title={quoteMode ? tr("quoteMode") : tr("invoice")} />
+      <div className="print-sheet print-only">
+        <InvoicePrint inv={printInvoice} title={quoteMode ? tr("quoteMode") : tr("invoice")} />
+      </div>
       <div className="print-only barcode-sheet">
         {printRows.map((l: any) => (
           <Barcode key={`${l.id}-bc`} value={l.barcode || l.sku} label={nameOf(l)} price={money(l.unit_price, lang)} />
@@ -690,8 +692,11 @@ export default function POSClassic() {
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className={statusClass(Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0 ? "unpaid_sale" : doneInv.status)}>{statusLabel(Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0 ? "unpaid_sale" : doneInv.status, lang)}</span>
             </div>
+            <div className="print-sheet max-h-[50vh] overflow-auto rounded-2xl border border-slate-100 bg-white p-4">
+              <InvoicePrint inv={printInvoice.number ? printInvoice : { ...printInvoice, ...doneInv }} screen title={quoteMode ? tr("quoteMode") : tr("invoice")} />
+            </div>
             <div className="flex flex-wrap gap-2">
-              <Btn onClick={() => { nav(`/sales/${doneInv.id}`); setTimeout(() => window.print(), 400); }}>{tr("print")}</Btn>
+              <Btn onClick={() => window.print()}>{tr("print")}</Btn>
               {waEnabled && can("whatsapp.send") ? <Btn kind="soft" onClick={() => void previewWa(doneInv.id)}>{tr("sendWhatsapp")}</Btn> : null}
               <Btn kind="ghost" onClick={() => setDoneOpen(false)}>{tr("continueSale")}</Btn>
             </div>

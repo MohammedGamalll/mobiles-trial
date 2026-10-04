@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../context";
 import { post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { Btn, Field, Modal, inputCls } from "./ui";
+import { Btn, ErrorNote, Field, Modal, inputCls } from "./ui";
 
 export function AssignCourierModal({
   open,
@@ -58,7 +58,7 @@ export function AssignCourierModal({
           ))}
         </select>
       </Field>
-      {err ? <div className="mt-2 text-sm text-rose-600">{err}</div> : null}
+      <ErrorNote message={err} />
       <div className="mt-3 flex gap-2">
         <Btn disabled={busy || !agentId} onClick={() => void submit()}>{tr("save")}</Btn>
         <Btn kind="ghost" onClick={onClose}>{tr("cancel")}</Btn>

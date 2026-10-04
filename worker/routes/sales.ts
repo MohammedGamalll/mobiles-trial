@@ -334,8 +334,9 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     if (cred) return c.json({ error: cred }, 400);
   }
   const payState = remaining <= 0 ? "completed" : "partial";
-  const status = b.order ? "order" : b.quote ? "quote" : hold ? "held" : type === "delivery" ? "pending_delivery" : payState;
-  const deliveryStatus = hold ? null : type === "delivery" ? "pending_delivery" : null;
+  const assignedNow = type === "delivery" && !!agent?.id && !hold && !b.order && !b.quote;
+  const status = b.order ? "order" : b.quote ? "quote" : hold ? "held" : type === "delivery" ? (assignedNow ? "out_for_delivery" : "pending_delivery") : payState;
+  const deliveryStatus = hold ? null : type === "delivery" ? (assignedNow ? "out_for_delivery" : "pending_delivery") : null;
   let invoiceId = 0;
   let number = "";
   try {

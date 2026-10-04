@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, getCached, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
-import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
 import { PaymentModal } from "../components/PaymentModal";
@@ -22,6 +22,7 @@ export function SalesList() {
   const [totals, setTotals] = useState<any>({});
   const { confirmDelete, dialog } = useConfirm();
   const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
   async function load() {
     const p = new URLSearchParams(f.qs);
     p.set("pageSize", "50");
@@ -40,11 +41,12 @@ export function SalesList() {
   }
   useEffect(() => {
     let live = true;
+    setLoading(true);
     load().then((r) => {
       if (!live || !r) return;
       setRows(r.data);
       setTotals(r.totals || {});
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [f.qs, warehouseId]);
   return (
@@ -79,7 +81,7 @@ export function SalesList() {
           { value: "name_az", label: tr("nameAZ") },
         ]}
       />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      {loading ? <PageLoading /> : !rows.length ? <EmptyFilterState onClear={f.clear} /> : (
       <Table
         cols={[tr("invoiceNo"), tr("customer"), tr("date"), tr("total"), tr("remaining"), tr("status"), ""]}
         rows={rows.map((r) => {
@@ -92,7 +94,7 @@ export function SalesList() {
           money(r.remaining, lang),
           <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
           <div className="flex flex-wrap items-center gap-2">
-            {r.status === "pending_delivery" && can("delivery.update") ? (
+            {r.type === "delivery" && !r.settled_at && !["cancelled", "completed", "fully_returned"].includes(r.status) && can("delivery.update") ? (
               <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setAssignInv({ id: r.id, number: r.number })}>
                 {tr("assignCourier")}
               </button>

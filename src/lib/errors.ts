@@ -49,6 +49,9 @@ const ERR_KEYS: Record<string, Msg> = {
   not_assignable: "errNotAssignable",
   agent_not_found: "errAgentNotFound",
   not_in_custody: "errNotInCustody",
+  wrong_agent: "errWrongAgent",
+  not_delivery: "errNotDelivery",
+  bad_outcome: "errBadOutcome",
   no_courier_employee: "errNoCourierEmployee",
   gps_required: "gpsUnavailable",
   gps_accuracy: "errGpsAccuracy",
@@ -63,13 +66,12 @@ const ERR_KEYS: Record<string, Msg> = {
 };
 
 export function apiMessage(tr: (key: Msg) => string, err: unknown): string {
+  const payload = err instanceof ApiError ? err.payload as { error?: string; message?: string } | null : null;
   const code = err instanceof ApiError ? err.message : String((err as Error)?.message || "");
-  const key = ERR_KEYS[code];
+  const key = ERR_KEYS[code] || (payload?.error ? ERR_KEYS[payload.error] : undefined);
   if (key) return tr(key);
-  if (code && code !== "error" && !/^HTTP \d+/.test(code) && !code.includes(" ")) {
-    const mapped = ERR_KEYS[code];
-    if (mapped) return tr(mapped);
-  }
+  const raw = String(payload?.message || payload?.error || code || "").trim();
+  if (raw && raw !== "error" && !/^HTTP \d+/.test(raw)) return raw;
   return tr("error");
 }
 

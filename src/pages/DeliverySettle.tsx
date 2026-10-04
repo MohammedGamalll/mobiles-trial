@@ -3,10 +3,10 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, PageLoading, inputCls } from "../components/ui";
 import { apiMessage } from "../lib/errors";
 
-const CUSTODY = new Set(["out_for_delivery", "rescheduled", "customer_unavailable"]);
+const CUSTODY = new Set(["out_for_delivery", "rescheduled", "customer_unavailable", "pending_delivery"]);
 
 type Row = {
   id: number;
@@ -18,7 +18,7 @@ type Row = {
 };
 
 type Draft = {
-  outcome: "delivered" | "rejected" | "damaged";
+  outcome: "delivered" | "rejected" | "damaged" | "returned";
   collected: number;
   charge_to: "courier" | "customer" | "company";
 };
@@ -33,6 +33,7 @@ export default function DeliverySettle() {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   function patch(id: number, part: Partial<Draft>) {
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...part } }));
@@ -43,22 +44,28 @@ export default function DeliverySettle() {
     setOk("");
     if (!agentId) {
       setRows([]);
+      setLoading(false);
       return;
     }
-    const r = await get<{ data: Row[] }>(`/api/delivery/orders?agent_id=${agentId}`);
-    const list = (r.data || []).filter((x) => CUSTODY.has(String(x.delivery_status || "")));
-    setRows(list);
-    setDrafts((prev) => {
-      const next: Record<number, Draft> = {};
-      for (const inv of list) {
-        next[inv.id] = prev[inv.id] || {
-          outcome: "delivered",
-          collected: Number(inv.remaining) || Number(inv.total) || 0,
-          charge_to: "courier",
-        };
-      }
-      return next;
-    });
+    setLoading(true);
+    try {
+      const r = await get<{ data: Row[] }>(`/api/delivery/orders?agent_id=${agentId}`);
+      const list = (r.data || []).filter((x) => CUSTODY.has(String(x.delivery_status || "")));
+      setRows(list);
+      setDrafts((prev) => {
+        const next: Record<number, Draft> = {};
+        for (const inv of list) {
+          next[inv.id] = prev[inv.id] || {
+            outcome: "delivered",
+            collected: Number(inv.remaining) || Number(inv.total) || 0,
+            charge_to: "courier",
+          };
+        }
+        return next;
+      });
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -124,9 +131,9 @@ export default function DeliverySettle() {
           </select>
         </Field>
       </div>
-      {err ? <div className="mb-3 text-sm text-rose-600">{err}</div> : null}
+      <ErrorNote message={err} />
       {ok ? <div className="mb-3 text-sm text-emerald-700">{ok}</div> : null}
-      {!rows.length ? (
+      {loading ? <PageLoading /> : !rows.length ? (
         <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center text-slate-400">{tr("noData")}</div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
@@ -155,6 +162,7 @@ export default function DeliverySettle() {
                         <select className={inputCls} value={d.outcome} onChange={(e) => patch(inv.id, { outcome: e.target.value as Draft["outcome"] })}>
                           <option value="delivered">{tr("outcomeDelivered")}</option>
                           <option value="rejected">{tr("outcomeRejected")}</option>
+                          <option value="returned">{tr("outcomeReturned")}</option>
                           <option value="damaged">{tr("outcomeDamaged")}</option>
                         </select>
                       </td>
@@ -179,7 +187,7 @@ export default function DeliverySettle() {
         </div>
       )}
       <div className="mt-4">
-        <Btn disabled={!canSubmit} onClick={() => void submit()}>{tr("submitSettlement")}</Btn>
+        <Btn disabled={!canSubmit || loading} onClick={() => void submit()}>{busy ? tr("loading") : tr("submitSettlement")}</Btn>
       </div>
     </div>
   );
