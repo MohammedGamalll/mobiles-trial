@@ -105,7 +105,7 @@ export function DeliveryBoard() {
               {tr("settleCourier")}
             </Link>
           ) : null}
-          {user?.delivery_agent_id ? (
+          {can("delivery.view", "delivery.mark") ? (
             <Link className="rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-800" to="/delivery/track">
               {tr("liveTrack")}
             </Link>

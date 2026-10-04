@@ -89,7 +89,7 @@ function AppRoutes() {
         <Route path="sales/:id" element={<PermGuard perm="sales.view"><Invoice /></PermGuard>} />
         <Route path="delivery" element={<PermGuard perm="delivery.update"><DeliveryBoard /></PermGuard>} />
         <Route path="delivery/settle" element={<PermGuard perm="delivery.settle"><DeliverySettle /></PermGuard>} />
-        <Route path="delivery/track" element={<PermGuard perm="delivery.mark"><CourierTrack /></PermGuard>} />
+        <Route path="delivery/track" element={<PermGuard perm={["delivery.mark", "delivery.view"]}><CourierTrack /></PermGuard>} />
         <Route path="settings" element={<PermGuard perm="settings.edit"><SettingsPage /></PermGuard>} />
         <Route path="reps" element={<RepsPage />} />
         <Route path="reps/visits" element={<VisitsPage />} />

@@ -65,7 +65,7 @@ export const modernNav: NavGroup[] = [
       { to: "/courier", key: "myOrders", icon: Truck, perm: "delivery.mark", agentOnly: true },
       { to: "/delivery", key: "delivery", icon: Truck, perm: "delivery.update" },
       { to: "/delivery/settle", key: "settleCourier", icon: ClipboardCheck, perm: "delivery.settle" },
-      { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.mark", agentOnly: true },
+      { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.view" },
     ],
   },
   {
