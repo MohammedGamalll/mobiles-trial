@@ -3,8 +3,8 @@ import { nextNumber, nowIso, round2, todayIso } from "./helpers";
 import { postDamageJournal, postSaleJournal } from "./ledger";
 import { applyIssue, logMovement, maybeStockAlerts, releaseReserve, type Allocation } from "./stock";
 
-export const ESCROW_STATUSES = ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"] as const;
-export const CUSTODY_STATUSES = ["out_for_delivery", "rescheduled", "customer_unavailable"] as const;
+export const ESCROW_STATUSES = ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"] as const;
+export const CUSTODY_STATUSES = ["out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"] as const;
 
 export type SettlementOutcome = "delivered" | "rejected" | "damaged" | "returned";
 export type ChargeTo = "courier" | "customer" | "company";

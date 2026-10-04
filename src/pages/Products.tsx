@@ -585,7 +585,7 @@ export default function Products() {
               <option value={1}>{tr("yes")}</option>
             </select>
           </Field>
-          {["purchase_price", "selling_price", "wholesale_price", "min_selling_price", "min_stock", "price_2", "price_3", "price_4", "discount_pct", "opening_qty"].map((k) => (
+          {["purchase_price", "selling_price", "wholesale_price", "min_selling_price", "min_stock", "price_2", "price_3", "price_4", "discount_pct", "opening_qty"].filter((k) => k !== "purchase_price" || can("costs.view")).map((k) => (
             <Field key={k} label={k}>
               <input className={inputCls} type="number" value={form[k]} onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })} />
             </Field>

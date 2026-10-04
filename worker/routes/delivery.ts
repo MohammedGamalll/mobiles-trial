@@ -3,12 +3,12 @@ import { audit, getSettings, notify, nowIso, round2, todayIso, type AppBindings,
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { applyDate, applyEq, applySearch, listParams } from "../lib/filters";
-import { CUSTODY_STATUSES, normalizeOutcome, settleInvoice, type ChargeTo } from "../lib/delivery-pod";
+import { CUSTODY_STATUSES, isCustodyStatus, normalizeOutcome, settleInvoice, type ChargeTo } from "../lib/delivery-pod";
 import { pingDistanceOk } from "../lib/geo";
 
 export const deliveryRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
-deliveryRoutes.get("/orders", requirePerm("delivery.view", "sales.view"), async (c) => {
+deliveryRoutes.get("/orders", requirePerm("delivery.view", "sales.view", "delivery.mark"), async (c) => {
   const p = listParams(new URL(c.req.url));
   const user = c.get("user");
   const where = ["si.deleted_at IS NULL", "si.type = 'delivery'"];
@@ -89,12 +89,48 @@ deliveryRoutes.post("/orders/:id/assign", requirePerm("delivery.update"), async 
   return c.json({ ok: true, delivery_agent_id: agent.id, status: "out_for_delivery" });
 });
 
+deliveryRoutes.post("/orders/:id/mark-delivered", requirePerm("delivery.mark"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const user = c.get("user");
+  const inv = await c.env.DB
+    .prepare("SELECT id, type, status, delivery_status, delivery_agent_id, settled_at, number FROM sales_invoices WHERE id = ? AND deleted_at IS NULL")
+    .bind(id)
+    .first<{
+      id: number;
+      type: string;
+      status: string;
+      delivery_status: string | null;
+      delivery_agent_id: number | null;
+      settled_at: string | null;
+      number: string;
+    }>();
+  if (!inv || inv.type !== "delivery") return c.json({ error: "not_found" }, 404);
+  if (inv.settled_at) return c.json({ error: "already_settled" }, 400);
+  if (inv.delivery_status === "pending_settlement") return c.json({ error: "already_marked" }, 400);
+  if (user.role_slug === "delivery") {
+    if (!user.delivery_agent_id || Number(inv.delivery_agent_id || 0) !== Number(user.delivery_agent_id)) {
+      return c.json({ error: "wrong_agent" }, 403);
+    }
+  }
+  const pendingWithAgent = !!inv.delivery_agent_id && (inv.status === "pending_delivery" || inv.delivery_status === "pending_delivery");
+  if (!isCustodyStatus(inv.status) && !isCustodyStatus(inv.delivery_status || "") && !pendingWithAgent) {
+    return c.json({ error: "not_in_custody" }, 400);
+  }
+  await c.env.DB
+    .prepare("UPDATE sales_invoices SET delivery_status = 'pending_settlement' WHERE id = ?")
+    .bind(id)
+    .run();
+  await audit(c.env.DB, user, "delivery_mark", "invoice", id, inv.number);
+  return c.json({ ok: true, delivery_status: "pending_settlement" });
+});
+
 function settleHttpError(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
   const map: Record<string, [number, string]> = {
     not_found: [404, "not_found"],
     not_delivery: [400, "not_delivery"],
     already_settled: [400, "already_settled"],
+    already_marked: [400, "already_marked"],
     not_in_custody: [400, "not_in_custody"],
     wrong_agent: [400, "wrong_agent"],
     no_courier_employee: [400, "no_courier_employee"],
@@ -105,7 +141,7 @@ function settleHttpError(err: unknown) {
   return map[msg] || [500, msg];
 }
 
-deliveryRoutes.post("/settle", requirePerm("delivery.update"), async (c) => {
+deliveryRoutes.post("/settle", requirePerm("delivery.settle"), async (c) => {
   const b = await c.req.json<{
     delivery_agent_id?: number;
     courier_id?: number;
@@ -173,7 +209,7 @@ deliveryRoutes.post("/settle", requirePerm("delivery.update"), async (c) => {
   }
 });
 
-deliveryRoutes.post("/orders/:id/result", requirePerm("delivery.update"), async (c) => {
+deliveryRoutes.post("/orders/:id/result", requirePerm("delivery.settle"), async (c) => {
   const id = Number(c.req.param("id"));
   const b = await c.req.json<{
     result_type: string;
@@ -277,7 +313,7 @@ deliveryRoutes.delete("/agents/:id", requirePerm("settings.edit", "hr.manage"), 
   return c.json({ ok: true });
 });
 
-deliveryRoutes.post("/location", requirePerm("delivery.update", "delivery.view"), async (c) => {
+deliveryRoutes.post("/location", requirePerm("delivery.update", "delivery.view", "delivery.mark"), async (c) => {
   const user = c.get("user");
   const b = await c.req.json<{ lat: number; lng: number; accuracy?: number; heading?: number; speed?: number; agent_id?: number }>();
   if (b.lat == null || b.lng == null) return c.json({ error: "gps_required" }, 400);
@@ -313,7 +349,7 @@ deliveryRoutes.get("/live", requirePerm("delivery.view", "sales.view"), async (c
 
 const CUSTODY_SQL = CUSTODY_STATUSES.map(() => "?").join(",");
 
-deliveryRoutes.post("/tracking/ping", requirePerm("delivery.update", "delivery.view"), async (c) => {
+deliveryRoutes.post("/tracking/ping", requirePerm("delivery.update", "delivery.view", "delivery.mark"), async (c) => {
   const user = c.get("user");
   const b = await c.req.json<{ lat?: number; lng?: number; accuracy?: number; heading?: number; agent_id?: number }>();
   const lat = Number(b.lat);

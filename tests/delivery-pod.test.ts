@@ -26,6 +26,8 @@ test("escrow vs custody statuses", () => {
   assert.equal(isEscrowStatus("out_for_delivery"), true);
   assert.equal(isCustodyStatus("pending_delivery"), false);
   assert.equal(isCustodyStatus("out_for_delivery"), true);
+  assert.equal(isCustodyStatus("pending_settlement"), true);
+  assert.equal(isEscrowStatus("pending_settlement"), true);
   assert.equal(isEscrowStatus("completed"), false);
 });
 

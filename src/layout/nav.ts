@@ -62,9 +62,10 @@ export const modernNav: NavGroup[] = [
   {
     label: "delivery",
     items: [
-      { to: "/delivery", key: "delivery", icon: Truck, perm: "delivery.view" },
-      { to: "/delivery/settle", key: "settleCourier", icon: ClipboardCheck, perm: "delivery.update" },
-      { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.update", agentOnly: true },
+      { to: "/courier", key: "myOrders", icon: Truck, perm: "delivery.mark", agentOnly: true },
+      { to: "/delivery", key: "delivery", icon: Truck, perm: "delivery.update" },
+      { to: "/delivery/settle", key: "settleCourier", icon: ClipboardCheck, perm: "delivery.settle" },
+      { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.mark", agentOnly: true },
     ],
   },
   {
@@ -130,7 +131,7 @@ export const modernNav: NavGroup[] = [
       { to: "/users", key: "users", icon: Shield, perm: "users.view" },
       { to: "/audit", key: "audit", icon: ScrollText, perm: "audit.view" },
       { to: "/audit?tab=approvals", key: "approvals", icon: ClipboardList, perm: "approvals.view" },
-      { to: "/settings", key: "settings", icon: Settings, perm: "settings.view" },
+      { to: "/settings", key: "settings", icon: Settings, perm: "settings.edit" },
     ],
   },
 ];

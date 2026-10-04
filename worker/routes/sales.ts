@@ -315,6 +315,9 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   const settings = await getSettings(c.env.DB);
   const taxRate = b.tax_rate != null ? Number(b.tax_rate) : settings.tax_enabled === "1" ? Number(settings.tax_rate || 0) : 0;
   const extra = round2(Number(b.extra_amount || 0));
+  if (Number(b.discount || 0) > 0 && user.role_slug !== "admin" && !user.permissions.includes("sales.discount")) {
+    return c.json({ error: "no_discount" }, 403);
+  }
   const totals = invoiceTotals(subtotal, lineDiscount, b.discount || 0, taxRate);
   const discount = totals.discount;
   const taxAmount = totals.tax;

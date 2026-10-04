@@ -4,6 +4,7 @@ import { useApp } from "../context";
 import { t } from "../i18n";
 import { get, ApiError } from "../lib/api";
 import { Btn, PixelMark, inputCls } from "../components/ui";
+import { homePath } from "../lib/home";
 
 const REMEMBER_KEY = "motamayez_remember";
 const USER_KEY = "motamayez_login_user";
@@ -71,7 +72,7 @@ export default function Login() {
           setBusy(true);
           setErr("");
           try {
-            await login(username, password, remember);
+            const logged = await login(username, password, remember);
             if (remember) {
               localStorage.setItem(REMEMBER_KEY, "1");
               localStorage.setItem(USER_KEY, username);
@@ -79,7 +80,7 @@ export default function Login() {
               localStorage.removeItem(REMEMBER_KEY);
               localStorage.removeItem(USER_KEY);
             }
-            nav("/");
+            nav(homePath(logged));
           } catch (error) {
             setErr(tr(loginErrKey(error)));
           } finally {

@@ -46,6 +46,12 @@ export function Modal(props: {
   return <Drawer {...props} />;
 }
 
+export function Can({ perm, children }: { perm: string | string[]; children: ReactNode }) {
+  const { can } = useApp();
+  const ok = Array.isArray(perm) ? can(...perm) : can(perm);
+  return ok ? <>{children}</> : null;
+}
+
 export function ErrorNote({ message }: { message?: string }) {
   if (!message) return null;
   return (
@@ -250,7 +256,8 @@ export function Empty({ text }: { text: string }) {
 }
 
 export function ExportBtn({ kind, query = "", className = "" }: { kind: string; query?: string; className?: string }) {
-  const { tr } = useApp();
+  const { tr, can } = useApp();
+  if (!can("reports.export")) return null;
   return (
     <Btn
       kind="ghost"

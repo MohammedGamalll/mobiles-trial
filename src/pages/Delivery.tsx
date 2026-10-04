@@ -113,7 +113,7 @@ export function DeliveryBoard() {
       {tab === "orders" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "delivered", "customer_refused", "returned_to_warehouse", "damaged", "rescheduled", "customer_unavailable", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "pending_settlement", "delivered", "customer_refused", "returned_to_warehouse", "damaged", "rescheduled", "customer_unavailable", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
             { key: "agent_id", label: "agent", type: "select", quick: true, lookup: "delivery_agents" },
             { key: "area", label: "area", type: "text" },
           ]} />

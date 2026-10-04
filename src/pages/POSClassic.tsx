@@ -550,6 +550,8 @@ export default function POSClassic() {
                 <option value="normal">{tr("posSell")}</option>
               </select>
             </label>
+            {can("sales.discount") ? (
+            <>
             <label>
               <span>{tr("posDiscPct")}</span>
               <input
@@ -566,6 +568,8 @@ export default function POSClassic() {
                 onChange={(e) => { setDiscMode("egp"); setDiscount(Number(e.target.value) || 0); }}
               />
             </label>
+            </>
+            ) : null}
             <div className="pos-classic-green-total">{money(total, lang)}</div>
           </div>
 
@@ -576,7 +580,7 @@ export default function POSClassic() {
             <button type="button" onClick={clearCart}><X size={12} /> {tr("posDeleteInvoice")}</button>
             <button type="button" onClick={() => setExtrasOpen(true)}>{tr("posEditPrices")}</button>
             <button type="button" onClick={() => window.print()}><Printer size={12} /> {tr("posPrintBarcode")}</button>
-            <button type="button" onClick={() => nav("/settings")}><Settings size={12} /> {tr("settings")}</button>
+            {can("settings.edit") ? <button type="button" onClick={() => nav("/settings")}><Settings size={12} /> {tr("settings")}</button> : null}
             <button type="button" onClick={() => nav("/")}>{tr("posClose")}</button>
             <span className="pos-classic-black-gap" />
             <button type="button" disabled={busy || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>

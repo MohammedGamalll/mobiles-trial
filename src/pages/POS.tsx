@@ -378,6 +378,7 @@ export default function POS() {
               <span>{tr("subtotal")}</span>
               <span className="font-bold">{money(subtotal, lang)}</span>
             </div>
+            {can("sales.discount") ? (
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold">{tr("discount")}</span>
               <input className={`${inputCls} w-20`} type="number" value={discount} onChange={(e) => setDiscount(Number(e.target.value))} />
@@ -385,6 +386,7 @@ export default function POS() {
               <button type="button" className={`rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "pct" ? "bg-[var(--ink)] text-white" : "border"}`} onClick={() => setDiscMode("pct")}>%</button>
               <span className="ms-auto text-xs text-slate-500">{money(discAmt, lang)}</span>
             </div>
+            ) : null}
             {type === "delivery" ? (
               <div className="flex items-center justify-between text-sm">
                 <span>{tr("deliveryFee")}</span>

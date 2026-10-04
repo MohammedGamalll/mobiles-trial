@@ -542,7 +542,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         payments: pays.filter((p) => p.amount > 0),
         tax_rate: taxOn ? taxRate : 0,
         price_list_id: listId || customer?.price_list_id || null,
-        discount: discAmt,
+        discount: can("sales.discount") ? discAmt : 0,
         due_date: payMethod === "credit" ? (due || invDate || null) : (due || null),
         notes,
         items: cartItems(),

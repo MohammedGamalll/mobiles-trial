@@ -1476,7 +1476,7 @@ export function SettingsPage() {
           onPick={(lat, lng) => setForm({ ...form, workplace_lat: String(lat), workplace_lng: String(lng) })}
         />
       </div>
-      <Btn className="mt-4" onClick={async () => { await put("/api/settings", form); refreshSettings(); }}>{tr("save")}</Btn>
+      {can("settings.edit") ? <Btn className="mt-4" onClick={async () => { await put("/api/settings", form); refreshSettings(); }}>{tr("save")}</Btn> : null}
       {can("import.manage") ? (
         <div className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <h3 className="mb-2 font-bold">{tr("importCsv")}</h3>
@@ -1664,7 +1664,7 @@ export function SettingsPage() {
         <div key={t.code} className="mt-3 rounded-xl bg-white p-3">
           <div className="font-bold">{t.code}</div>
           <textarea className={`${inputCls} mt-2 min-h-32`} value={lang === "ar" ? t.body_ar : t.body_en} onChange={(e) => setTemplates(templates.map((x) => x.code === t.code ? { ...x, [lang === "ar" ? "body_ar" : "body_en"]: e.target.value } : x))} />
-          <Btn kind="ghost" className="mt-2" onClick={async () => { await put(`/api/settings/whatsapp-templates/${t.code}`, t); }}>{tr("save")}</Btn>
+          {can("settings.edit") ? <Btn kind="ghost" className="mt-2" onClick={async () => { await put(`/api/settings/whatsapp-templates/${t.code}`, t); }}>{tr("save")}</Btn> : null}
         </div>
       ))}
     </Page>
@@ -1687,8 +1687,23 @@ export function UsersPage() {
   useEffect(() => {
     get("/api/roles").then(setRoles);
   }, []);
+  const manageRoles = can("users.manage");
   const perms = (roles?.permissions || []).filter((p: any) => !pq || `${p.code} ${p.name_ar} ${p.module}`.includes(pq));
-  const modules = [...new Set(perms.map((p: any) => p.module))];
+  const moduleOrder = ["sales", "delivery", "inventory", "finance", "reports", "hr", "settings", "users"];
+  const moduleLabel = (mod: string) => {
+    if (mod === "sales") return tr("permGroupSales");
+    if (mod === "delivery") return tr("permGroupDelivery");
+    if (mod === "inventory") return tr("permGroupProducts");
+    if (mod === "finance" || mod === "reports") return tr("permGroupFinance");
+    if (mod === "hr") return tr("permGroupHr");
+    if (mod === "settings" || mod === "users") return tr("permGroupSettings");
+    return String(mod);
+  };
+  const modules = [...new Set(perms.map((p: any) => p.module))].sort((a, b) => {
+    const ia = moduleOrder.indexOf(String(a));
+    const ib = moduleOrder.indexOf(String(b));
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
   return (
     <Page title={tr("users")}>
       <SmartFilter f={f} date={false} fields={[
@@ -1697,7 +1712,7 @@ export function UsersPage() {
       <Table cols={[tr("username"), tr("name"), tr("role"), tr("status"), ""]} rows={rows.map((u) => [
         u.username,
         u.full_name,
-        u.role_name_ar,
+        u.role_slug === "sales" ? tr("cashier") : u.role_name_ar,
         u.active ? tr("active") : tr("inactive"),
         can("users.manage") ? (
           <ActionBtns
@@ -1715,7 +1730,7 @@ export function UsersPage() {
           <Field label={tr("phone")}><input className={inputCls} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
           <Field label={tr("role")}>
             <select className={inputCls} value={form.role_id} onChange={(e) => setForm({ ...form, role_id: Number(e.target.value) })}>
-              {(roles?.roles || []).map((r: any) => <option key={r.id} value={r.id}>{r.name_ar}</option>)}
+              {(roles?.roles || []).map((r: any) => <option key={r.id} value={r.id}>{r.slug === "sales" ? tr("cashier") : r.name_ar}</option>)}
             </select>
           </Field>
           <Field label={tr("newPassword")}><input className={inputCls} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
@@ -1736,16 +1751,17 @@ export function UsersPage() {
           </FilterBar>
           {(roles.roles || []).map((r: any) => (
             <details key={r.id} className="mt-2 rounded-xl bg-white p-3">
-              <summary className="cursor-pointer font-bold">{r.name_ar}</summary>
+              <summary className="cursor-pointer font-bold">{r.slug === "sales" ? tr("cashier") : r.name_ar}</summary>
               {modules.map((mod) => (
                 <div key={String(mod)} className="mt-3">
-                  <div className="text-xs font-bold uppercase text-slate-400">{String(mod)}</div>
+                  <div className="text-xs font-bold uppercase text-slate-400">{moduleLabel(String(mod))}</div>
                   <div className="mt-1 grid gap-1 md:grid-cols-2">
                     {perms.filter((p: any) => p.module === mod).map((p: any) => {
                       const on = (roles.role_permissions || []).some((x: any) => x.role_id === r.id && x.permission_id === p.id);
                       return (
                         <label key={p.id} className="flex items-center gap-2 text-sm">
-                          <input type="checkbox" defaultChecked={on} onChange={async (e) => {
+                          <input type="checkbox" defaultChecked={on} disabled={!manageRoles} onChange={async (e) => {
+                            if (!manageRoles) return;
                             const current = (roles.role_permissions || []).filter((x: any) => x.role_id === r.id).map((x: any) => x.permission_id);
                             const next = e.target.checked ? [...current, p.id] : current.filter((id: number) => id !== p.id);
                             await put(`/api/roles/${r.id}/permissions`, { permission_ids: next });

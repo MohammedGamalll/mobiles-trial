@@ -6,7 +6,7 @@ import { money, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, Field, PageLoading, inputCls } from "../components/ui";
 import { apiMessage } from "../lib/errors";
 
-const CUSTODY = new Set(["out_for_delivery", "rescheduled", "customer_unavailable", "pending_delivery"]);
+const CUSTODY = new Set(["out_for_delivery", "rescheduled", "customer_unavailable", "pending_delivery", "pending_settlement"]);
 
 type Row = {
   id: number;

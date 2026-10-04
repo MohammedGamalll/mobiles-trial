@@ -46,7 +46,7 @@ type Ctx = {
   loading: boolean;
   lookups: Lookups | null;
   refreshLookups: () => Promise<void>;
-  login: (username: string, password: string, remember?: boolean) => Promise<void>;
+  login: (username: string, password: string, remember?: boolean) => Promise<User>;
   logout: () => Promise<void>;
   can: (...codes: string[]) => boolean;
   settings: Record<string, string>;
@@ -203,6 +203,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         await refreshLookups();
         await refreshSettings();
+        return res.user;
       },
       logout: async () => {
         try {
@@ -219,7 +220,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       can: (...codes) => {
         if (!user) return false;
         if (user.role_slug === "admin") return true;
-        return codes.some((c) => user.permissions?.includes(c));
+        const aliases: Record<string, string> = {
+          "invoice.delete": "sales.cancel",
+          "product.edit": "products.edit",
+        };
+        return codes.some((c) => {
+          const real = aliases[c] || c;
+          return Boolean(user.permissions?.includes(real) || user.permissions?.includes(c));
+        });
       },
     }),
     [lang, theme, uiLayout, user, loading, lookups, settings, branchId, warehouseId],

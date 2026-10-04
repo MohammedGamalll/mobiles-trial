@@ -48,6 +48,8 @@ const ERR_KEYS: Record<string, Msg> = {
   already_settled: "errAlreadySettled",
   not_assignable: "errNotAssignable",
   agent_not_found: "errAgentNotFound",
+  already_marked: "alreadyMarked",
+  no_discount: "noDiscount",
   not_in_custody: "errNotInCustody",
   wrong_agent: "errWrongAgent",
   not_delivery: "errNotDelivery",

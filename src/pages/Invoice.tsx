@@ -71,14 +71,14 @@ export default function Invoice() {
           ) : null}
           <PrintBtn />
           <PrintBtn thermal />
-          {inv.type === "delivery" && can("delivery.update") && !["cancelled"].includes(inv.status) && !inv.settled_at ? (
+          {inv.type === "delivery" && !["cancelled"].includes(inv.status) && !inv.settled_at ? (
             <>
-              {!["delivered", "customer_refused", "returned_to_warehouse", "damaged"].includes(String(inv.delivery_status || "")) ? (
+              {can("delivery.update") && !["delivered", "customer_refused", "returned_to_warehouse", "damaged", "pending_settlement"].includes(String(inv.delivery_status || "")) ? (
                 <Btn kind="ghost" onClick={() => setAssignOpen(true)}>
                   {tr("assignCourier")}
                 </Btn>
               ) : null}
-              {inCustody || inv.delivery_status === "pending_delivery" || inv.delivery_agent_id ? (
+              {can("delivery.settle") && (inCustody || inv.delivery_status === "pending_delivery" || inv.delivery_status === "pending_settlement" || inv.delivery_agent_id) ? (
                 <>
                   <Link className="ui-btn inline-flex items-center justify-center gap-2 rounded-xl bg-teal-50 px-3.5 py-2 text-sm font-bold text-teal-800 hover:bg-teal-100" to={`/delivery/settle${inv.delivery_agent_id ? `?agent=${inv.delivery_agent_id}` : ""}`}>
                     {tr("settleCourier")}

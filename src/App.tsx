@@ -37,6 +37,8 @@ import { LocationsPage, TransferDetail, TransfersPage, StocktakeDetail, Stocktak
 import { RepsPage, RepDetail, VisitsPage, TargetsPage, CommissionsPage } from "./pages/Reps";
 import { CashAccountsPage, ChartPage, JournalPage, VouchersPage } from "./pages/Ledger";
 import { SerialsPage, ChequesPage, InstallmentsPage } from "./pages/Sahl";
+import CourierDashboard from "./pages/CourierDashboard";
+import { homePath } from "./lib/home";
 
 function Guard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useApp();
@@ -46,9 +48,9 @@ function Guard({ children }: { children: React.ReactNode }) {
 }
 
 function PermGuard({ perm, children }: { perm: string | string[]; children: React.ReactNode }) {
-  const { can } = useApp();
+  const { can, user } = useApp();
   const ok = Array.isArray(perm) ? can(...perm) : can(perm);
-  if (!ok) return <Navigate to="/" replace />;
+  if (!ok) return <Navigate to={homePath(user)} replace />;
   return <>{children}</>;
 }
 
@@ -71,7 +73,7 @@ function AppRoutes() {
   const { user, tr } = useApp();
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={user ? <Navigate to={homePath(user)} replace /> : <Login />} />
       <Route
         path="/"
         element={
@@ -80,13 +82,15 @@ function AppRoutes() {
           </Guard>
         }
       >
-        <Route index element={<Dashboard />} />
+        <Route index element={user?.role_slug === "delivery" ? <Navigate to="/courier" replace /> : <Dashboard />} />
+        <Route path="courier" element={<PermGuard perm="delivery.mark"><CourierDashboard /></PermGuard>} />
         <Route path="pos" element={<PermGuard perm="sales.create"><POSGate /></PermGuard>} />
         <Route path="sales" element={<PermGuard perm="sales.view"><SalesList /></PermGuard>} />
-        <Route path="sales/:id" element={<PermGuard perm={["sales.view", "delivery.view"]}><Invoice /></PermGuard>} />
-        <Route path="delivery" element={<DeliveryBoard />} />
-        <Route path="delivery/settle" element={<PermGuard perm="delivery.update"><DeliverySettle /></PermGuard>} />
-        <Route path="delivery/track" element={<CourierTrack />} />
+        <Route path="sales/:id" element={<PermGuard perm="sales.view"><Invoice /></PermGuard>} />
+        <Route path="delivery" element={<PermGuard perm="delivery.update"><DeliveryBoard /></PermGuard>} />
+        <Route path="delivery/settle" element={<PermGuard perm="delivery.settle"><DeliverySettle /></PermGuard>} />
+        <Route path="delivery/track" element={<PermGuard perm="delivery.mark"><CourierTrack /></PermGuard>} />
+        <Route path="settings" element={<PermGuard perm="settings.edit"><SettingsPage /></PermGuard>} />
         <Route path="reps" element={<RepsPage />} />
         <Route path="reps/visits" element={<VisitsPage />} />
         <Route path="reps/targets" element={<TargetsPage />} />
@@ -129,7 +133,6 @@ function AppRoutes() {
         <Route path="ledger/journal" element={<JournalPage />} />
         <Route path="ledger/vouchers" element={<VouchersPage />} />
         <Route path="reports" element={<ReportsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="audit" element={<AuditPage />} />
       </Route>
