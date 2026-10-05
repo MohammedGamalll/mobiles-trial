@@ -24,11 +24,11 @@ export function Drawer({
   if (!open) return null;
   return (
     <div className="drawer-root fixed inset-0 z-50 no-print">
-      <div className="absolute inset-0 bg-ink/50 backdrop-blur-[2px]" onClick={onClose} />
-      <aside className={`drawer-panel absolute inset-y-0 end-0 flex h-full flex-col bg-[var(--surface)] shadow-2xl ${xl ? "w-full max-w-4xl" : wide ? "w-full max-w-xl" : "w-full max-w-md"}`}>
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <aside className={`drawer-panel absolute inset-y-0 end-0 flex h-full flex-col border-s border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-2xl ${xl ? "w-full max-w-4xl" : wide ? "w-full max-w-xl" : "w-full max-w-md"}`}>
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h3 className="text-base font-bold">{title}</h3>
-          <button className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100" onClick={onClose}>
+          <button className="rounded-lg px-2 py-1 text-[var(--muted)] hover:bg-[var(--surface-2)]" onClick={onClose}>
             ✕
           </button>
         </div>
@@ -214,12 +214,12 @@ export function SearchPick({
         }}
       />
       {open ? (
-        <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-[var(--border)] bg-white text-[#0f172a] shadow-lg dark:bg-[#151b24] dark:text-[#f8f1de]">
+        <div className="absolute z-50 mt-2 max-h-56 min-w-[200px] w-max overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl">
           {rows.map((r) => (
             <button
               key={r.id}
               type="button"
-              className="block w-full px-3 py-2 text-start text-sm font-bold hover:bg-amber-50 dark:hover:bg-white/5"
+              className="block w-full px-3 py-2 text-start text-sm font-bold hover:bg-[var(--surface-2)]"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const label = labelFn(r);
@@ -255,13 +255,13 @@ export function Btn({
   className?: string;
 }) {
   const map = {
-    primary: "bg-[var(--ink)] text-white hover:opacity-90 hover:text-white",
-    ghost: "bg-[var(--surface)] border border-[var(--border)] text-[#0b1f33] hover:bg-[#efe4cc] hover:text-[#0b1f33] dark:text-[#f8f1de] dark:hover:bg-[#223044] dark:hover:text-[#f8f1de]",
+    primary: "bg-[var(--btn)] text-[var(--btn-fg)] hover:bg-[var(--btn-hover)] hover:text-[var(--btn-fg)]",
+    ghost: "bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]",
     danger: "bg-rose-600 text-white hover:bg-rose-700 hover:text-white",
     soft: "bg-teal-50 text-teal-800 hover:bg-teal-200 hover:text-teal-950 dark:bg-teal-900/40 dark:text-teal-100 dark:hover:bg-[#134e4a] dark:hover:text-white",
   };
   return (
-    <button type={type} disabled={disabled} onClick={onClick} className={`ui-btn inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold disabled:opacity-50 ${map[kind]} ${className}`}>
+    <button type={type} disabled={disabled} onClick={onClick} className={`ui-btn inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold transition-all duration-300 ease-in-out disabled:opacity-50 ${map[kind]} ${className}`}>
       {children}
     </button>
   );

@@ -316,12 +316,12 @@ function PurchaseProductPick({ warehouseId, onPick }: { warehouseId?: number | s
       />
       <ErrorNote message={miss} />
       {hits.length ? (
-        <div className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-[var(--border)] bg-white text-[#0f172a] shadow-lg dark:bg-[#151b24] dark:text-[#f8f1de]">
+        <div className="absolute z-50 mt-2 max-h-64 min-w-[200px] w-max overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl">
           {hits.map((p) => (
             <button
               key={p.id}
               type="button"
-              className="block w-full px-3 py-2 text-start text-sm hover:bg-amber-50 dark:hover:bg-white/5"
+              className="block w-full px-3 py-2 text-start text-sm hover:bg-[var(--surface-2)]"
               onClick={() => pick(p)}
             >
               <div className="font-black">{p.sku} — {loc(lang, p.name_ar, p.name_en)}</div>

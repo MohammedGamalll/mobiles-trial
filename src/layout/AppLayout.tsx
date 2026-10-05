@@ -122,7 +122,7 @@ export default function AppLayout() {
         if (!visible.length) return null;
         return (
           <div key={g.label}>
-            {slim ? null : <div className={`mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? "text-slate-400" : "text-slate-500"}`}>{tr(g.label)}</div>}
+            {slim ? null : <div className={`mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? "text-slate-400" : "text-[var(--muted)]"}`}>{tr(g.label)}</div>}
             <div className={classic ? "space-y-0" : "space-y-0.5"}>
               {visible.map((i) => {
                 const Icon = i.icon;
@@ -156,37 +156,37 @@ export default function AppLayout() {
       <aside className={`${classic || pos ? "hidden" : "hidden md:flex md:flex-col"} app-sidebar sidebar-scroll sticky top-0 h-screen shrink-0 overflow-y-auto transition-[width] ${
         classic
           ? `border-e border-slate-200 bg-white text-slate-800 ${collapsed ? "w-[68px]" : "w-[220px]"}`
-          : `bg-gradient-to-b from-[#071018] via-[#0b1f33] to-[#123047] text-white ${collapsed ? "w-[76px]" : "w-[248px]"}`
+          : `bg-[var(--surface)] text-[var(--text)] border-e border-[var(--border)] ${collapsed ? "w-[76px]" : "w-[248px]"}`
       }`}>
         <div className={`flex items-center gap-3 ${classic ? "border-b border-slate-100 py-3" : "py-5"} ${collapsed ? "justify-center px-2" : "px-5"}`}>
           <PixelMark size={collapsed ? 22 : 28} />
           {collapsed ? null : (
             <div>
               <div className={`font-black tracking-wide ${classic ? "text-base text-[#0b2a4a]" : "text-lg"}`}>{tr("app")}</div>
-              {classic ? null : <div className="text-[10px] leading-4 text-slate-400">{tr("tagline")}</div>}
+              {classic ? null : <div className="text-[10px] leading-4 text-[var(--muted)]">{tr("tagline")}</div>}
             </div>
           )}
         </div>
         <div className="flex-1 overflow-y-auto">
           {!classic && !collapsed && favs.length ? (
             <div className="px-3 pb-3">
-              <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{tr("favorites")}</div>
+              <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">{tr("favorites")}</div>
               {favs.map((f) => (
-                <NavLink key={f.to} to={f.to} className="block rounded-xl px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5">{tr(f.key as Msg)}</NavLink>
+                <NavLink key={f.to} to={f.to} className="block rounded-xl px-3 py-1.5 text-sm text-[var(--muted)] hover:bg-[var(--surface-2)]">{tr(f.key as Msg)}</NavLink>
               ))}
             </div>
           ) : null}
           {!classic && !collapsed && recent.length ? (
             <div className="px-3 pb-3">
-              <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{tr("recentItems")}</div>
+              <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">{tr("recentItems")}</div>
               {recent.slice(0, 4).map((f) => (
-                <NavLink key={f.to} to={f.to} className="block rounded-xl px-3 py-1.5 text-sm text-slate-400 hover:bg-white/5">{tr(f.key as Msg)}</NavLink>
+                <NavLink key={f.to} to={f.to} className="block rounded-xl px-3 py-1.5 text-sm text-[var(--muted)] hover:bg-[var(--surface-2)]">{tr(f.key as Msg)}</NavLink>
               ))}
             </div>
           ) : null}
           <Nav slim={collapsed} />
         </div>
-        <button className={`m-3 p-2 ${classic ? "rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50" : "rounded-xl border border-white/10 text-slate-300 hover:bg-white/5"}`} title={collapsed ? tr("expand") : tr("collapse")} onClick={toggleCollapse}>
+        <button className={`m-3 p-2 ${classic ? "rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50" : "rounded-xl border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)]"}`} title={collapsed ? tr("expand") : tr("collapse")} onClick={toggleCollapse}>
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
       </aside>
@@ -194,7 +194,7 @@ export default function AppLayout() {
       {menuShown ? (
         <div className={`sidebar-mobile ${menu ? "is-open" : ""} ${classic || pos ? "" : "md:hidden"}`}>
           <div className="sidebar-mobile-backdrop" onClick={closeMenu} />
-          <aside className={`sidebar-mobile-panel sidebar-scroll ${classic ? "bg-white text-slate-800" : "bg-[#07111f] text-white"}`}>
+          <aside className={`sidebar-mobile-panel sidebar-scroll ${classic ? "bg-white text-slate-800" : "bg-[var(--surface)] text-[var(--text)]"}`}>
             <div className="flex shrink-0 items-center justify-between px-4 py-4">
               <div className="flex min-w-0 items-center gap-2">
                 <PixelMark size={22} />
@@ -207,15 +207,15 @@ export default function AppLayout() {
             <div className="min-h-0 flex-1 overflow-y-auto">
               <Nav />
             </div>
-            <div className={`shrink-0 space-y-2 border-t px-4 py-3 ${classic ? "border-slate-200" : "border-white/10"}`}>
+            <div className={`shrink-0 space-y-2 border-t px-4 py-3 ${classic ? "border-slate-200" : "border-[var(--border)]"}`}>
               <div className="text-sm font-bold">{user?.full_name}</div>
               <div className="text-xs capitalize text-slate-400">{user?.role_slug}</div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" className={classic ? "rounded-md border border-slate-200 px-3 py-1.5 text-xs font-bold" : "rounded-lg border border-white/15 px-3 py-1.5 text-xs font-bold"} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>{lang === "ar" ? "EN" : "ع"}</button>
-                <button type="button" className={classic ? "rounded-md border border-slate-200 p-1.5" : "rounded-lg border border-white/15 p-1.5"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
+                <button type="button" className={classic ? "rounded-md border border-slate-200 px-3 py-1.5 text-xs font-bold" : "rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-bold"} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>{lang === "ar" ? "EN" : "ع"}</button>
+                <button type="button" className={classic ? "rounded-md border border-slate-200 p-1.5" : "rounded-lg border border-[var(--border)] p-1.5"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
                 <button
                   type="button"
-                  className={classic ? "rounded-md border border-slate-200 p-1.5" : "rounded-lg border border-white/15 p-1.5"}
+                  className={classic ? "rounded-md border border-slate-200 p-1.5" : "rounded-lg border border-[var(--border)] p-1.5"}
                   onClick={async () => {
                     await logout();
                     nav("/login");
@@ -231,16 +231,16 @@ export default function AppLayout() {
 
       <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${pos ? "overflow-hidden" : ""}`}>
         <header className={`topbar sticky top-0 z-30 flex items-center gap-1.5 overflow-visible border-b px-2 md:gap-2 md:px-4 ${
-          classic ? "h-12 border-[#083056] bg-[#0b2a4a] py-0 text-white" : "border-slate-200/80 bg-white/90 py-3 text-slate-800 backdrop-blur"
+          classic ? "h-12 border-[#083056] bg-[#0b2a4a] py-0 text-white" : "border-[var(--border)] bg-[var(--surface)] py-3 text-[var(--text)]"
         }`}>
-          <button type="button" className={`shrink-0 ${classic || pos ? "" : "md:hidden"} ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={openMenu}>
+          <button type="button" className={`shrink-0 ${classic || pos ? "" : "md:hidden"} ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2"}`} onClick={openMenu}>
             <Menu size={16} />
           </button>
           {classic && loc.pathname !== "/" ? <EasyHomeLink /> : pos ? <EasyHomeLink /> : null}
           <div className="min-w-0 flex-1 truncate px-1 text-sm font-black md:hidden">{tr(pageKey)}</div>
           <button
             type="button"
-            className={`top-search relative min-w-0 py-2 pe-3 ps-9 text-start text-sm text-slate-400 ${classicDesk ? "hidden" : "hidden flex-1 md:block"} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-slate-200 bg-slate-50"}`}
+            className={`top-search relative min-w-0 py-2 pe-3 ps-9 text-start text-sm text-[var(--muted)] ${classicDesk ? "hidden" : "hidden flex-1 md:block"} ${classic ? "rounded-md border border-transparent bg-white" : "rounded-xl border border-[var(--border)] bg-[var(--surface-2)]"}`}
             onClick={() => setCmd(true)}
           >
             <Search className="pointer-events-none absolute top-2.5 start-3 text-slate-400" size={16} />
@@ -249,7 +249,7 @@ export default function AppLayout() {
           </button>
           <button
             type="button"
-            className={`shrink-0 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`}
+            className={`shrink-0 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2"}`}
             title={tr("globalSearch")}
             onClick={() => { setMore(false); setBell(false); setCmd(true); }}
           >
@@ -257,7 +257,7 @@ export default function AppLayout() {
           </button>
           <div className={`items-center gap-2 ${pos ? "hidden" : "hidden md:flex"}`}>
           {(lookups?.branches || []).length > 1 ? (
-            <select className={`max-w-[140px] px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} title={tr("branch")}>
+            <select className={`max-w-[140px] px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-[var(--border)] bg-[var(--surface)]"}`} value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} title={tr("branch")}>
               {(lookups?.branches || []).map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name : (b.name_en || b.name)}</option>)}
             </select>
           ) : null}
@@ -265,14 +265,14 @@ export default function AppLayout() {
             <div className="relative">
               <button
                 type="button"
-                className={`topbar-select max-w-[160px] truncate px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200"}`}
+                className={`topbar-select max-w-[160px] truncate px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-[var(--border)]"}`}
                 title={tr("warehouses")}
                 onClick={() => { setWareOpen((v) => !v); setQuick(false); }}
               >
                 {warehouseLocations(lookups?.locations).find((l) => l.id === warehouseId)?.name || tr("warehouses")}
               </button>
               {wareOpen ? (
-                <div className="topbar-menu absolute end-0 z-[80] mt-2 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl dark:bg-[var(--surface)] dark:text-[var(--text)]">
+                <div className="topbar-menu absolute end-0 z-50 mt-2 max-h-64 min-w-[200px] w-max overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl">
                   <button type="button" className="block w-full px-3 py-2 text-start text-sm font-bold text-slate-900 hover:bg-slate-100 dark:text-[var(--text)] dark:hover:bg-white/10" onClick={() => { setWarehouseId(0); setWareOpen(false); }}>{tr("warehouses")}</button>
                   {warehouseLocations(lookups?.locations).map((l) => (
                     <button key={l.id} type="button" className={`block w-full px-3 py-2 text-start text-sm font-bold text-slate-900 hover:bg-slate-100 dark:text-[var(--text)] dark:hover:bg-white/10 ${warehouseId === l.id ? "bg-slate-100 dark:bg-white/10" : ""}`} onClick={() => { setWarehouseId(l.id); setWareOpen(false); }}>{l.name}</button>
@@ -282,11 +282,11 @@ export default function AppLayout() {
             </div>
           ) : null}
           <div className="relative">
-            <button className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2 text-slate-600"} title={tr("quickAdd")} onClick={() => setQuick((v) => !v)}>
+            <button className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2 text-[var(--muted)]"} title={tr("quickAdd")} onClick={() => setQuick((v) => !v)}>
               <Plus size={16} />
             </button>
             {quick ? (
-              <div className="topbar-menu absolute end-0 z-[80] mt-2 w-48 overflow-visible rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl dark:bg-[var(--surface)] dark:text-[var(--text)]">
+              <div className="topbar-menu absolute end-0 z-50 mt-2 min-w-[200px] w-max overflow-visible rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl">
                 {can("sales.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/pos"); }}>{tr("pos")}</button> : null}
                 {can("purchases.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/purchases/new"); }}>{tr("purchases")}</button> : null}
                 {can("customers.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/customers"); }}>{tr("customers")}</button> : null}
@@ -299,33 +299,33 @@ export default function AppLayout() {
               </div>
             ) : null}
           </div>
-          <button className={`${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border p-2"} ${isFav(loc.pathname) ? "border-amber-300 text-amber-500" : classic ? "" : "border-slate-200 text-slate-600"}`} title={tr("favorites")} onClick={() => setFavs(toggleFav({ to: loc.pathname, key: pageKey }))}>
+          <button className={`${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border p-2"} ${isFav(loc.pathname) ? "border-amber-300 text-amber-500" : classic ? "" : "border-[var(--border)] text-[var(--muted)]"}`} title={tr("favorites")} onClick={() => setFavs(toggleFav({ to: loc.pathname, key: pageKey }))}>
             <Star size={16} fill={isFav(loc.pathname) ? "currentColor" : "none"} />
           </button>
-          <button className={`hidden sm:inline-flex ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2 text-slate-600"}`} title={tr("print")} onClick={() => window.print()}>
+          <button className={`hidden sm:inline-flex ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2 text-[var(--muted)]"}`} title={tr("print")} onClick={() => window.print()}>
             <Printer size={16} />
           </button>
-          <button className={`hidden sm:inline-flex ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2 text-slate-600"}`} title={tr("fullscreen")} onClick={() => {
+          <button className={`hidden sm:inline-flex ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2 text-[var(--muted)]"}`} title={tr("fullscreen")} onClick={() => {
             if (document.fullscreenElement) document.exitFullscreen();
             else document.documentElement.requestFullscreen().catch(() => {});
           }}>
             <Maximize2 size={16} />
           </button>
           <ThemeSwitcher />
-          <button className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2 text-slate-600"} title={theme === "dark" ? tr("lightMode") : tr("darkMode")} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          <button className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2 text-[var(--muted)]"} title={theme === "dark" ? tr("lightMode") : tr("darkMode")} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-          <button className={classic ? "topbar-ctrl rounded-md border px-3 py-2 text-sm font-bold" : "rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold"} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
+          <button className={classic ? "topbar-ctrl rounded-md border px-3 py-2 text-sm font-bold" : "rounded-xl border border-[var(--border)] px-3 py-2 text-sm font-bold"} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
             {tr("language")}
           </button>
           </div>
           <div className="relative">
-            <button className={`relative ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => { setBell((v) => !v); void inbox.load(); }}>
+            <button className={`relative ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2"}`} onClick={() => { setBell((v) => !v); void inbox.load(); }}>
               <Bell size={16} />
               {unread ? <span className="absolute -top-1 -end-1 h-4 min-w-4 rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{unread}</span> : null}
             </button>
             {bell ? (
-              <div className="topbar-menu fixed end-2 top-14 z-[80] mt-0 w-[min(20rem,calc(100vw-1.25rem))] overflow-visible rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl dark:bg-[var(--surface)] dark:text-[var(--text)]">
+              <div className="topbar-menu absolute end-0 z-50 mt-2 min-w-[200px] w-max overflow-visible rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl">
                 <div className="flex items-center justify-between px-3 py-2 text-sm font-bold">
                   {tr("notifications")}
                   <button className="text-xs text-cyan-700" onClick={() => void inbox.markAllRead()}>
@@ -367,7 +367,7 @@ export default function AppLayout() {
           </div>
           <button
             type="button"
-            className={`relative z-40 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`}
+            className={`relative z-40 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2"}`}
             title={tr("more")}
             onClick={() => {
               setBell(false);
@@ -388,7 +388,7 @@ export default function AppLayout() {
               <div className="text-xs capitalize text-slate-400">{user?.role_slug}</div>
             </div>
             <button
-              className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}
+              className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-[var(--border)] p-2"}
               onClick={async () => {
                 await logout();
                 nav("/login");
@@ -412,7 +412,7 @@ export default function AppLayout() {
       {more ? (
         <div className="fixed inset-0 z-[70] md:hidden">
           <button type="button" className="absolute inset-0 bg-black/45" aria-label={tr("close")} onPointerDown={() => setMore(false)} />
-          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-white p-3 pb-[max(1rem,env(safe-area-inset-bottom))] text-slate-900 shadow-2xl">
+          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-[var(--surface)] p-3 pb-[max(1rem,env(safe-area-inset-bottom))] text-[var(--text)] shadow-2xl">
             <div className="mb-2 flex items-center justify-between px-1">
               <div className="text-sm font-black">{tr("more")}</div>
               <button type="button" className="rounded-lg p-2" onClick={() => setMore(false)} aria-label={tr("close")}>
