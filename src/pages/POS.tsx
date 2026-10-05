@@ -513,7 +513,7 @@ export default function POS() {
           />
         ) : null}
         <aside
-          className={`pos-cart-panel flex h-full min-h-0 w-full flex-col overflow-hidden overscroll-none border-s border-slate-200 bg-[var(--surface)] lg:w-96 lg:min-w-[350px] lg:max-w-sm lg:shrink-0 lg:flex-none ${cartOpen ? "is-open" : ""}`}
+          className={`pos-cart-panel flex h-full flex-1 min-h-0 w-full flex-col overflow-hidden overscroll-none border-s border-slate-200 bg-[var(--surface)] lg:w-96 lg:min-w-[350px] lg:max-w-sm lg:shrink-0 lg:flex-none ${cartOpen ? "is-open" : ""}`}
         >
           <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2 lg:hidden">
             <div className="text-sm font-black">{tr("posCurrentCart")}</div>
@@ -712,289 +712,303 @@ export default function POS() {
           <div className="pos-cart-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
             <div className="flex min-h-full flex-col">
               <div className="flex-1 p-3">
-            {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 py-8 text-slate-400">
-                <ShoppingBag size={36} />
-                <div className="text-sm font-bold">{tr("cartEmpty")}</div>
-                <div className="text-xs">{tr("emptyCart")}</div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {cart.map((l, i) => (
-                  <div
-                    key={`${l.id}-${l.unit_name}-${i}`}
-                    className={`rounded-xl border px-3 py-2 ${sel === i ? "border-[var(--ink)]" : "border-slate-200"}`}
-                    onClick={() => setSel(i)}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-bold">
-                          {lang === "ar" ? l.name_ar : l.name_en}
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          {l.sku}
-                          {l.unit_name ? ` · ${l.unit_name}` : ""}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="text-rose-500"
-                        onClick={() =>
-                          setCart((c) => c.filter((_, j) => j !== i))
-                        }
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                    {l.track_serial ? (
-                      <input
-                        className={`${inputCls} mt-1`}
-                        placeholder={tr("serials")}
-                        value={l.serials.join(",")}
-                        onChange={(e) =>
-                          setCart((c) =>
-                            c.map((x, j) =>
-                              j === i
-                                ? {
-                                    ...x,
-                                    serials: e.target.value
-                                      .split(/[,]+/)
-                                      .map((s) => s.trim())
-                                      .filter(Boolean),
-                                  }
-                                : x,
-                            ),
-                          )
-                        }
-                      />
-                    ) : null}
-                    <div className="mt-2 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          className="rounded-lg border p-1"
-                          onClick={() =>
-                            setCart((c) =>
-                              c.map((x, j) => {
-                                if (j !== i) return x;
-                                const qty = Math.max(1, x.qty - 1);
-                                return {
-                                  ...x,
-                                  qty,
-                                  discount: offerDisc(x.id, qty, x.unit_price),
-                                };
-                              }),
-                            )
-                          }
-                        >
-                          <Minus size={12} />
-                        </button>
-                        <span className="w-8 text-center text-sm font-black">
-                          {l.qty}
-                        </span>
-                        <button
-                          type="button"
-                          className="rounded-lg border p-1"
-                          onClick={() =>
-                            setCart((c) =>
-                              c.map((x, j) => {
-                                if (j !== i) return x;
-                                const cap =
-                                  x.kind === "service" || x.non_stock
-                                    ? 9999
-                                    : Math.max(1, Number(x.available) || 1);
-                                const qty = Math.min(x.qty + 1, cap);
-                                return {
-                                  ...x,
-                                  qty,
-                                  discount: offerDisc(x.id, qty, x.unit_price),
-                                };
-                              }),
-                            )
-                          }
-                        >
-                          <Plus size={12} />
-                        </button>
-                      </div>
-                      <input
-                        className={`${inputCls} w-24 py-1 text-end`}
-                        type="number"
-                        min={canBelowMin ? 0 : Number(l.min_selling_price || 0)}
-                        value={l.unit_price}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const price = Number(e.target.value);
-                          setCart((c) =>
-                            c.map((x, j) =>
-                              j === i
-                                ? {
-                                    ...x,
-                                    unit_price: Number.isFinite(price)
-                                      ? price
-                                      : 0,
-                                    discount: offerDisc(
-                                      x.id,
-                                      x.qty,
-                                      Number.isFinite(price) ? price : 0,
-                                    ),
-                                  }
-                                : x,
-                            ),
-                          );
-                        }}
-                        onBlur={() => setLinePrice(i, Number(l.unit_price))}
-                        title={
-                          l.min_selling_price
-                            ? `${tr("posColMinPrice")}: ${l.min_selling_price}`
-                            : tr("sellingPrice")
-                        }
-                      />
-                      <div className="text-sm font-black">
-                        {money(l.qty * l.unit_price - l.discount, lang)}
-                      </div>
-                    </div>
+                {cart.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-2 py-8 text-slate-400">
+                    <ShoppingBag size={36} />
+                    <div className="text-sm font-bold">{tr("cartEmpty")}</div>
+                    <div className="text-xs">{tr("emptyCart")}</div>
                   </div>
-                ))}
+                ) : (
+                  <div className="space-y-2">
+                    {cart.map((l, i) => (
+                      <div
+                        key={`${l.id}-${l.unit_name}-${i}`}
+                        className={`rounded-xl border px-3 py-2 ${sel === i ? "border-[var(--ink)]" : "border-slate-200"}`}
+                        onClick={() => setSel(i)}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-bold">
+                              {lang === "ar" ? l.name_ar : l.name_en}
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              {l.sku}
+                              {l.unit_name ? ` · ${l.unit_name}` : ""}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-rose-500"
+                            onClick={() =>
+                              setCart((c) => c.filter((_, j) => j !== i))
+                            }
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                        {l.track_serial ? (
+                          <input
+                            className={`${inputCls} mt-1`}
+                            placeholder={tr("serials")}
+                            value={l.serials.join(",")}
+                            onChange={(e) =>
+                              setCart((c) =>
+                                c.map((x, j) =>
+                                  j === i
+                                    ? {
+                                        ...x,
+                                        serials: e.target.value
+                                          .split(/[,]+/)
+                                          .map((s) => s.trim())
+                                          .filter(Boolean),
+                                      }
+                                    : x,
+                                ),
+                              )
+                            }
+                          />
+                        ) : null}
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              className="rounded-lg border p-1"
+                              onClick={() =>
+                                setCart((c) =>
+                                  c.map((x, j) => {
+                                    if (j !== i) return x;
+                                    const qty = Math.max(1, x.qty - 1);
+                                    return {
+                                      ...x,
+                                      qty,
+                                      discount: offerDisc(
+                                        x.id,
+                                        qty,
+                                        x.unit_price,
+                                      ),
+                                    };
+                                  }),
+                                )
+                              }
+                            >
+                              <Minus size={12} />
+                            </button>
+                            <span className="w-8 text-center text-sm font-black">
+                              {l.qty}
+                            </span>
+                            <button
+                              type="button"
+                              className="rounded-lg border p-1"
+                              onClick={() =>
+                                setCart((c) =>
+                                  c.map((x, j) => {
+                                    if (j !== i) return x;
+                                    const cap =
+                                      x.kind === "service" || x.non_stock
+                                        ? 9999
+                                        : Math.max(1, Number(x.available) || 1);
+                                    const qty = Math.min(x.qty + 1, cap);
+                                    return {
+                                      ...x,
+                                      qty,
+                                      discount: offerDisc(
+                                        x.id,
+                                        qty,
+                                        x.unit_price,
+                                      ),
+                                    };
+                                  }),
+                                )
+                              }
+                            >
+                              <Plus size={12} />
+                            </button>
+                          </div>
+                          <input
+                            className={`${inputCls} w-24 py-1 text-end`}
+                            type="number"
+                            min={
+                              canBelowMin ? 0 : Number(l.min_selling_price || 0)
+                            }
+                            value={l.unit_price}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              const price = Number(e.target.value);
+                              setCart((c) =>
+                                c.map((x, j) =>
+                                  j === i
+                                    ? {
+                                        ...x,
+                                        unit_price: Number.isFinite(price)
+                                          ? price
+                                          : 0,
+                                        discount: offerDisc(
+                                          x.id,
+                                          x.qty,
+                                          Number.isFinite(price) ? price : 0,
+                                        ),
+                                      }
+                                    : x,
+                                ),
+                              );
+                            }}
+                            onBlur={() => setLinePrice(i, Number(l.unit_price))}
+                            title={
+                              l.min_selling_price
+                                ? `${tr("posColMinPrice")}: ${l.min_selling_price}`
+                                : tr("sellingPrice")
+                            }
+                          />
+                          <div className="text-sm font-black">
+                            {money(l.qty * l.unit_price - l.discount, lang)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+              <div className="mt-auto shrink-0 space-y-2 border-t border-slate-200 bg-[var(--surface)] p-3">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span>{tr("subtotal")}</span>
+                  <span className="font-bold">{money(subtotal, lang)}</span>
+                </div>
+                {can("sales.discount") ? (
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    <span className="shrink-0 text-xs font-bold">
+                      {tr("discount")}
+                    </span>
+                    <input
+                      tabIndex={5}
+                      className={`${inputCls} w-20 min-w-0 shrink-0`}
+                      type="number"
+                      value={discount}
+                      onChange={(e) => setDiscount(Number(e.target.value))}
+                    />
+                    <button
+                      type="button"
+                      className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "egp" ? "bg-[var(--ink)] text-white" : "border"}`}
+                      onClick={() => setDiscMode("egp")}
+                    >
+                      {tr("discountEgp")}
+                    </button>
+                    <button
+                      type="button"
+                      className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "pct" ? "bg-[var(--ink)] text-white" : "border"}`}
+                      onClick={() => setDiscMode("pct")}
+                    >
+                      %
+                    </button>
+                    <span className="ms-auto shrink-0 text-xs text-slate-500">
+                      {money(discAmt, lang)}
+                    </span>
+                  </div>
+                ) : null}
+                {type === "delivery" ? (
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span>{tr("deliveryFee")}</span>
+                    <span className="font-bold">
+                      {money(Number(extraAmount || 0), lang)}
+                    </span>
+                  </div>
+                ) : null}
+                {taxOn ? (
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span>{tr("taxAmount")}</span>
+                    <span>{money(taxAmount, lang)}</span>
+                  </div>
+                ) : null}
+                <div className="flex items-end justify-between gap-2">
+                  <span className="text-sm font-bold">{tr("total")}</span>
+                  <span className="text-2xl font-black">
+                    {money(total, lang)}
+                  </span>
+                </div>
+                <div className="flex w-full gap-2">
+                  <button
+                    type="button"
+                    tabIndex={6}
+                    className={`min-w-0 flex-1 whitespace-nowrap rounded-xl py-1.5 text-xs font-bold ${payMethod === "cash" ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`}
+                    onClick={() => setMethod("cash")}
+                  >
+                    {tr("posPayCash")}{" "}
+                    <kbd className="ms-1 rounded border border-white/30 px-1 text-[10px] font-normal">
+                      6
+                    </kbd>
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={7}
+                    className={`min-w-0 flex-1 whitespace-nowrap rounded-xl py-1.5 text-xs font-bold ${payMethod === "credit" ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`}
+                    onClick={() => setMethod("credit")}
+                  >
+                    {tr("posPayCredit")}{" "}
+                    <kbd className="ms-1 rounded border border-slate-200 px-1 text-[10px] font-normal">
+                      7
+                    </kbd>
+                  </button>
+                </div>
+                <label className="flex w-full items-center justify-between gap-2 text-xs">
+                  <span className="shrink-0">{tr("invoiceDate")}</span>
+                  <input
+                    className={`${inputCls} min-w-0 flex-1`}
+                    type="date"
+                    value={invDate}
+                    onChange={(e) => {
+                      setInvDate(e.target.value);
+                      if (method === "credit") setDue(e.target.value);
+                    }}
+                  />
+                </label>
+                {method === "credit" ? (
+                  <label className="flex w-full items-center justify-between gap-2 text-xs">
+                    <span className="shrink-0">{tr("dueDate")}</span>
+                    <input
+                      className={`${inputCls} min-w-0 flex-1`}
+                      type="date"
+                      value={due}
+                      onChange={(e) => setDue(e.target.value)}
+                    />
+                  </label>
+                ) : null}
+                {err ? (
+                  <div className="text-sm text-rose-600">{err}</div>
+                ) : null}
+                <div className="grid w-full grid-cols-1 gap-2">
+                  <Btn
+                    kind="ghost"
+                    className="w-full whitespace-nowrap"
+                    disabled={busy || !cart.length}
+                    onClick={holdInvoice}
+                  >
+                    {tr("posHold")}
+                  </Btn>
+                  <Btn
+                    className="gx-confirm w-full whitespace-nowrap"
+                    disabled={
+                      busy ||
+                      !cart.length ||
+                      !can("sales.create") ||
+                      creditNeedCustomer
+                    }
+                    onClick={() => submit({ print: true })}
+                  >
+                    {quoteMode ? tr("quoteMode") : tr("confirmSale")}
+                  </Btn>
+                  <Btn
+                    className="gx-quiet w-full whitespace-nowrap"
+                    disabled={
+                      busy ||
+                      !cart.length ||
+                      !can("sales.create") ||
+                      creditNeedCustomer
+                    }
+                    onClick={() => submit()}
+                  >
+                    {tr("saleWithoutPrint")}
+                  </Btn>
+                </div>
               </div>
-          <div className="mt-auto shrink-0 space-y-2 border-t border-slate-200 bg-[var(--surface)] p-3">
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span>{tr("subtotal")}</span>
-              <span className="font-bold">{money(subtotal, lang)}</span>
-            </div>
-            {can("sales.discount") ? (
-              <div className="flex w-full flex-wrap items-center gap-2">
-                <span className="shrink-0 text-xs font-bold">
-                  {tr("discount")}
-                </span>
-                <input
-                  tabIndex={5}
-                  className={`${inputCls} w-20 min-w-0 shrink-0`}
-                  type="number"
-                  value={discount}
-                  onChange={(e) => setDiscount(Number(e.target.value))}
-                />
-                <button
-                  type="button"
-                  className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "egp" ? "bg-[var(--ink)] text-white" : "border"}`}
-                  onClick={() => setDiscMode("egp")}
-                >
-                  {tr("discountEgp")}
-                </button>
-                <button
-                  type="button"
-                  className={`shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-bold ${discMode === "pct" ? "bg-[var(--ink)] text-white" : "border"}`}
-                  onClick={() => setDiscMode("pct")}
-                >
-                  %
-                </button>
-                <span className="ms-auto shrink-0 text-xs text-slate-500">
-                  {money(discAmt, lang)}
-                </span>
-              </div>
-            ) : null}
-            {type === "delivery" ? (
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <span>{tr("deliveryFee")}</span>
-                <span className="font-bold">
-                  {money(Number(extraAmount || 0), lang)}
-                </span>
-              </div>
-            ) : null}
-            {taxOn ? (
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <span>{tr("taxAmount")}</span>
-                <span>{money(taxAmount, lang)}</span>
-              </div>
-            ) : null}
-            <div className="flex items-end justify-between gap-2">
-              <span className="text-sm font-bold">{tr("total")}</span>
-              <span className="text-2xl font-black">{money(total, lang)}</span>
-            </div>
-            <div className="flex w-full gap-2">
-              <button
-                type="button"
-                tabIndex={6}
-                className={`min-w-0 flex-1 whitespace-nowrap rounded-xl py-1.5 text-xs font-bold ${payMethod === "cash" ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`}
-                onClick={() => setMethod("cash")}
-              >
-                {tr("posPayCash")}{" "}
-                <kbd className="ms-1 rounded border border-white/30 px-1 text-[10px] font-normal">
-                  6
-                </kbd>
-              </button>
-              <button
-                type="button"
-                tabIndex={7}
-                className={`min-w-0 flex-1 whitespace-nowrap rounded-xl py-1.5 text-xs font-bold ${payMethod === "credit" ? "bg-[var(--ink)] text-white" : "border border-slate-200"}`}
-                onClick={() => setMethod("credit")}
-              >
-                {tr("posPayCredit")}{" "}
-                <kbd className="ms-1 rounded border border-slate-200 px-1 text-[10px] font-normal">
-                  7
-                </kbd>
-              </button>
-            </div>
-            <label className="flex w-full items-center justify-between gap-2 text-xs">
-              <span className="shrink-0">{tr("invoiceDate")}</span>
-              <input
-                className={`${inputCls} min-w-0 flex-1`}
-                type="date"
-                value={invDate}
-                onChange={(e) => {
-                  setInvDate(e.target.value);
-                  if (method === "credit") setDue(e.target.value);
-                }}
-              />
-            </label>
-            {method === "credit" ? (
-              <label className="flex w-full items-center justify-between gap-2 text-xs">
-                <span className="shrink-0">{tr("dueDate")}</span>
-                <input
-                  className={`${inputCls} min-w-0 flex-1`}
-                  type="date"
-                  value={due}
-                  onChange={(e) => setDue(e.target.value)}
-                />
-              </label>
-            ) : null}
-            {err ? <div className="text-sm text-rose-600">{err}</div> : null}
-            <div className="grid w-full grid-cols-1 gap-2">
-              <Btn
-                kind="ghost"
-                className="w-full whitespace-nowrap"
-                disabled={busy || !cart.length}
-                onClick={holdInvoice}
-              >
-                {tr("posHold")}
-              </Btn>
-              <Btn
-                className="gx-confirm w-full whitespace-nowrap"
-                disabled={
-                  busy ||
-                  !cart.length ||
-                  !can("sales.create") ||
-                  creditNeedCustomer
-                }
-                onClick={() => submit({ print: true })}
-              >
-                {quoteMode ? tr("quoteMode") : tr("confirmSale")}
-              </Btn>
-              <Btn
-                className="gx-quiet w-full whitespace-nowrap"
-                disabled={
-                  busy ||
-                  !cart.length ||
-                  !can("sales.create") ||
-                  creditNeedCustomer
-                }
-                onClick={() => submit()}
-              >
-                {tr("saleWithoutPrint")}
-              </Btn>
-            </div>
-          </div>
             </div>
           </div>
         </aside>
