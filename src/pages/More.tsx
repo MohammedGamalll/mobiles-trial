@@ -1,20 +1,24 @@
-import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, getCached, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
 import { mergeWarehouseCards } from "../lib/warehouses";
-import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, SearchPick, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls, printPage } from "../components/ui";
 import { apiMessage, useActionError } from "../lib/errors";
 import { OsmMap } from "../components/OsmMap";
 import { PaymentModal } from "../components/PaymentModal";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
-import { authHeaders } from "../lib/session";
 import { ActionBtns, useConfirm } from "../components/Confirm";
-import { AssignCourierModal } from "../components/AssignCourierModal";
 import { matchScanned, playSound } from "../lib/sounds";
-import { MapPin, Plus, Trash2 } from "lucide-react";
+import { MapPin } from "lucide-react";
+import {
+  PosHeaderFilter,
+  applyPosHeaderFilters,
+  uniqueFilterValues,
+} from "../components/PosHeaderFilter";
+import type { Product } from "../hooks/usePOSLogic";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId } = useApp();
@@ -22,7 +26,6 @@ export function SalesList() {
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
   const { confirmDelete, dialog } = useConfirm();
-  const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   async function load() {
     const p = new URLSearchParams(f.qs);
@@ -95,11 +98,6 @@ export function SalesList() {
           money(r.remaining, lang),
           <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
           <div className="flex flex-wrap items-center gap-2">
-            {r.type === "delivery" && !r.settled_at && !["cancelled", "completed", "fully_returned"].includes(r.status) && can("delivery.update") ? (
-              <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setAssignInv({ id: r.id, number: r.number })}>
-                {tr("assignCourier")}
-              </button>
-            ) : null}
             <ActionBtns
               canEdit={can("sales.edit")}
               onEdit={() => { window.location.href = `/sales/${r.id}`; }}
@@ -111,19 +109,63 @@ export function SalesList() {
         })}
       />
       )}
-      <AssignCourierModal
-        open={Boolean(assignInv)}
-        invoice={assignInv}
-        onClose={() => setAssignInv(null)}
-        onDone={() => { load().catch(() => {}); }}
-      />
       {dialog}
     </Page>
   );
 }
 
+function lookupLabel(row: { name_ar?: string; name_en?: string; name?: string } | undefined, lang: string) {
+  if (!row) return "";
+  return (lang === "ar" ? row.name_ar : row.name_en) || row.name_ar || row.name_en || row.name || "";
+}
+
+function idForLabel(rows: any[] | undefined, label: string, lang: string) {
+  if (!label) return "";
+  const hit = (rows || []).find((r) => lookupLabel(r, lang) === label);
+  return hit ? String(hit.id) : "";
+}
+
+function labelForId(rows: any[] | undefined, id: string | number | undefined, lang: string) {
+  if (id == null || String(id) === "") return "";
+  return lookupLabel((rows || []).find((r) => String(r.id) === String(id)), lang);
+}
+
+function InvKpi({
+  label,
+  cost,
+  retail,
+  qty,
+  accent = "cyan",
+}: {
+  label: string;
+  cost: string;
+  retail: string;
+  qty: string;
+  accent?: "cyan" | "indigo" | "emerald" | "amber" | "rose";
+}) {
+  const { tr } = useApp();
+  const bar = {
+    cyan: "from-cyan-400 to-sky-500",
+    indigo: "from-indigo-400 to-violet-500",
+    emerald: "from-emerald-400 to-teal-500",
+    amber: "from-amber-400 to-orange-500",
+    rose: "from-rose-400 to-pink-500",
+  }[accent];
+  return (
+    <div className="stat-card relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
+      <div className={`stat-bar absolute inset-x-0 top-0 h-1 bg-gradient-to-l ${bar}`} />
+      <div className="text-xs font-bold text-slate-500">{label}</div>
+      <div className="mt-2 space-y-1 text-sm font-extrabold leading-6 tracking-tight sm:text-base">
+        <div>{tr("invValueCost")}: {cost}</div>
+        <div>{tr("invValueRetail")}: {retail}</div>
+        <div>{tr("qty")}: {qty} {tr("pieceUnit")}</div>
+      </div>
+    </div>
+  );
+}
+
 export function InventoryPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, warehouseId, lookups } = useApp();
   const f = useListQuery("inventory");
   const m = useListQuery("movements");
   const [rows, setRows] = useState<any[]>([]);
@@ -131,43 +173,94 @@ export function InventoryPage() {
   const [moves, setMoves] = useState<any[]>([]);
   const [adjOpen, setAdjOpen] = useState(false);
   const [adj, setAdj] = useState<any>({ product_id: "", qty: 1, reason: "" });
+  const [headerFilters, setHeaderFilters] = useState<Record<string, string>>({});
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
-  function reload() {
-    get("/api/inventory/summary").then(setSum).catch(() => {});
-    get<{ data: any[] }>(`/api/products?${f.qs}&pageSize=80`).then((r) => setRows(r.data)).catch(() => {});
-    get<{ data: any[] }>(`/api/inventory/movements?${m.qs}&pageSize=20`).then((r) => setMoves(r.data)).catch(() => {});
+  const setHeaderFilter = (col: string, v: string) => setHeaderFilters((prev) => ({ ...prev, [col]: v }));
+  const pickPrice = (p: Product) => Number(p.selling_price) || 0;
+  const nQty = (v: unknown) => Math.max(Number(v) || 0, 0);
+
+  function listFilterQuery(extra: Record<string, string> = {}) {
+    const p = new URLSearchParams(f.qs);
+    p.delete("page");
+    p.delete("pageSize");
+    if (warehouseId) {
+      p.set("location_id", String(warehouseId));
+      p.delete("locations");
+      p.delete("warehouse_id");
+      p.delete("warehouse");
+      p.delete("bay_id");
+      p.delete("shelf_id");
+      p.delete("bin_id");
+      p.delete("fork_id");
+    }
+    Object.entries(extra).forEach(([k, v]) => { if (v) p.set(k, v); });
+    return p.toString();
   }
-  useEffect(() => { reload(); }, [f.qs, m.qs]);
+
+  function reload() {
+    const qs = listFilterQuery();
+    get(`/api/inventory/summary?${qs}`).then(setSum).catch(() => {});
+    get<{ data: any[] }>(`/api/products?${listFilterQuery({ pageSize: "80" })}`).then((r) => setRows(r.data || [])).catch(() => {});
+    get<{ data: any[] }>(`/api/inventory/movements?${m.qs}&pageSize=20`).then((r) => setMoves(r.data || [])).catch(() => {});
+  }
+  useEffect(() => { reload(); }, [f.qs, m.qs, warehouseId]);
+
+  async function printFiltered() {
+    const r = await getCached<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
+    setRows(r.data || []);
+    requestAnimationFrame(() => printPage());
+  }
+
+  const catalogRows = useMemo(
+    () => applyPosHeaderFilters(rows as Product[], headerFilters, lang, pickPrice),
+    [rows, headerFilters, lang],
+  );
+  const statusFilterOpts = [
+    { value: "in", label: tr("stockIn") },
+    { value: "low", label: tr("stockLow") },
+    { value: "out", label: tr("stockOut") },
+    { value: "dead", label: tr("deadStock") },
+  ];
+  const brandOptions = [...new Set((lookups?.brands || []).map((r) => lookupLabel(r, lang)).filter(Boolean))].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
+  const modelOptions = [...new Set(
+    (lookups?.models || [])
+      .filter((mod) => !f.values.brand_id || String((mod as any).brand_id) === String(f.values.brand_id))
+      .map((r) => lookupLabel(r, lang))
+      .filter(Boolean),
+  )].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
+
   return (
-    <Page title={tr("inventory")} action={
-      <>
-        {can("inventory.adjust") ? <Btn onClick={() => { setAdj({ product_id: "", qty: 1, reason: "" }); act.clear(); setAdjOpen(true); }}>{tr("easyAdjust")}</Btn> : null}
-        <ExportBtn kind="inventory" query={f.qs} />
-      </>
-    }>
+    <Page title={tr("inventory")} print={false}>
       <div className="mb-4 grid gap-3 md:grid-cols-4">
-        <Stat label={tr("stockValue")} value={money(sum.stock_value, lang)} />
-        <Stat label={tr("lowStock")} value={num(sum.low, lang)} />
-        <Stat label={tr("outOfStock")} value={num(sum.out, lang)} />
-        <Stat label={tr("reserved")} value={num(sum.reserved, lang)} />
+        <InvKpi label={tr("stockValue")} cost={money(sum.stock_value, lang)} retail={money(sum.stock_retail, lang)} qty={num(nQty(sum.units), lang)} />
+        <InvKpi label={tr("lowStock")} cost={money(sum.low_value, lang)} retail={money(sum.low_retail, lang)} qty={num(nQty(sum.low_units ?? sum.low), lang)} accent="amber" />
+        <InvKpi label={tr("outOfStock")} cost={money(sum.out_value, lang)} retail={money(sum.out_retail, lang)} qty={num(nQty(sum.out), lang)} accent="rose" />
+        <InvKpi label={tr("reserved")} cost={money(sum.reserved_value, lang)} retail={money(sum.reserved_retail, lang)} qty={num(nQty(sum.reserved), lang)} accent="indigo" />
       </div>
       {(sum.by_warehouse || []).length ? (
         <div className="mb-4 grid gap-3 md:grid-cols-2">
           {mergeWarehouseCards(sum.by_warehouse).map((w) => (
-            <Stat key={w.name} label={w.name || tr("warehouses")} value={`${money(w.stock_value, lang)} · ${num(w.units, lang)}`} />
+            <InvKpi key={w.name} label={w.name || tr("warehouses")} cost={money(w.stock_value, lang)} retail={money(w.retail_value, lang)} qty={num(nQty(w.units), lang)} />
           ))}
         </div>
       ) : null}
       <SmartFilter
         f={f}
         date={false}
+        extra={
+          <>
+            {can("inventory.adjust") ? <Btn onClick={() => { setAdj({ product_id: "", qty: 1, reason: "" }); act.clear(); setAdjOpen(true); }}>{tr("easyAdjust")}</Btn> : null}
+            <ExportBtn kind="inventory" query={listFilterQuery()} />
+            <PrintBtn onClick={printFiltered} />
+          </>
+        }
         fields={[
-          { key: "brand_id", label: "brand", type: "select", quick: true, lookup: "brands" },
-          { key: "model_id", label: "model", type: "select", quick: true, lookup: "models" },
+          { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
+          { key: "model_id", label: "model", type: "select", lookup: "models" },
           { key: "category_id", label: "categories", type: "select", lookup: "categories" },
           { key: "locations", label: "warehouse", type: "locations" },
-          { key: "status", label: "status", type: "select", quick: true, options: [
+          { key: "status", label: "status", type: "select", options: [
             { value: "in", label: tr("stockIn") },
             { value: "low", label: tr("stockLow") },
             { value: "out", label: tr("stockOut") },
@@ -177,25 +270,53 @@ export function InventoryPage() {
         ]}
       />
       {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
-      <Table
-        cols={[tr("name"), tr("sku"), tr("available"), tr("reserved"), tr("minStock"), tr("sellingPrice"), tr("location"), tr("status"), ""]}
-        rows={rows.map((p) => [
-          lang === "ar" ? p.name_ar : p.name_en,
-          p.sku,
-          p.available,
-          p.reserved_stock,
-          p.min_stock,
-          money(p.selling_price, lang),
-          p.location_name,
-          <span className={statusClass(p.stock_status)}>{statusLabel(p.stock_status, lang)}</span>,
-          <ActionBtns
-            canEdit={can("products.edit")}
-            canDelete={can("products.delete")}
-            onEdit={() => { window.location.href = `/products/${p.id}`; }}
-            onDelete={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); get<{ data: any[] }>(`/api/products?${f.qs}&pageSize=80`).then((r) => setRows(r.data)).catch(() => {}); })}
-          />,
-        ])}
-      />
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <PosHeaderFilter column="name" label={tr("name")} values={uniqueFilterValues(rows as Product[], "name", lang, pickPrice)} value={headerFilters.name || ""} onChange={(v) => setHeaderFilter("name", v)} />
+                <PosHeaderFilter column="sku" label={tr("sku")} values={uniqueFilterValues(rows as Product[], "sku", lang, pickPrice)} value={headerFilters.sku || ""} onChange={(v) => setHeaderFilter("sku", v)} />
+                <PosHeaderFilter column="status" label={tr("available")} values={statusFilterOpts.map((s) => s.label)} value={statusFilterOpts.find((s) => s.value === f.values.status)?.label || ""} onChange={(v) => f.set("status", statusFilterOpts.find((s) => s.label === v)?.value || "")} />
+                <PosHeaderFilter column="reserved" label={tr("reserved")} values={uniqueFilterValues(rows as Product[], "reserved", lang, pickPrice)} value={headerFilters.reserved || ""} onChange={(v) => setHeaderFilter("reserved", v)} />
+                <PosHeaderFilter column="minStock" label={tr("minStock")} values={uniqueFilterValues(rows as Product[], "minStock", lang, pickPrice)} value={headerFilters.minStock || ""} onChange={(v) => setHeaderFilter("minStock", v)} />
+                <PosHeaderFilter column="selling" label={tr("sellingPrice")} values={uniqueFilterValues(rows as Product[], "selling", lang, pickPrice)} value={headerFilters.selling || ""} onChange={(v) => setHeaderFilter("selling", v)} />
+                <PosHeaderFilter column="location" label={tr("location")} values={uniqueFilterValues(rows as Product[], "location", lang, pickPrice)} value={headerFilters.location || ""} onChange={(v) => setHeaderFilter("location", v)} />
+                <PosHeaderFilter column="brand" label={tr("brand")} values={brandOptions} value={labelForId(lookups?.brands, f.values.brand_id, lang)} onChange={(v) => f.setMany({ brand_id: idForLabel(lookups?.brands, v, lang), model_id: "" })} />
+                <PosHeaderFilter column="model" label={tr("model")} values={modelOptions} value={labelForId(lookups?.models, f.values.model_id, lang)} onChange={(v) => f.set("model_id", idForLabel(lookups?.models, v, lang))} />
+                <PosHeaderFilter column="statusBadge" label={tr("status")} values={statusFilterOpts.map((s) => s.label)} value={statusFilterOpts.find((s) => s.value === f.values.status)?.label || ""} onChange={(v) => f.set("status", statusFilterOpts.find((s) => s.label === v)?.value || "")} />
+                <th className="no-print"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalogRows.map((p) => (
+                <tr key={p.id}>
+                  <td className="font-semibold">{lang === "ar" ? p.name_ar : p.name_en}</td>
+                  <td>{p.sku}</td>
+                  <td><span className={statusClass((p as any).stock_status)}>{num(nQty(p.available), lang)}</span></td>
+                  <td>{num(nQty(p.reserved_stock), lang)}</td>
+                  <td>{num(nQty((p as any).min_stock), lang)}</td>
+                  <td>{money(p.selling_price, lang)}</td>
+                  <td className="text-xs">{p.location_name}</td>
+                  <td>{lang === "ar" ? p.brand_ar : p.brand_en}</td>
+                  <td className="max-w-40 truncate">{(p.models || []).map((mod: any) => mod.name || mod).filter(Boolean).join(", ")}</td>
+                  <td><span className={statusClass((p as any).stock_status)}>{statusLabel((p as any).stock_status, lang)}</span></td>
+                  <td className="no-print">
+                    <div className="flex flex-wrap gap-2">
+                      {can("products.edit") ? (
+                        <button type="button" className="rounded-full bg-cyan-700 px-3 py-1 text-xs font-bold text-white hover:bg-cyan-800" onClick={() => { window.location.href = `/products/${p.id}`; }}>{tr("edit")}</button>
+                      ) : null}
+                      {can("products.delete") ? (
+                        <button type="button" className="rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white hover:bg-rose-700" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); reload(); })}>{tr("delete")}</button>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
       )}
       <h3 className="mb-2 mt-6 font-bold">{tr("movements")}</h3>
       <SmartFilter
@@ -290,13 +411,11 @@ export function BatchesPage() {
 }
 
 export function PurchasesPage() {
-  const { tr, lang, lookups } = useApp();
+  const { tr, lang, can } = useApp();
+  const nav = useNavigate();
   const f = useListQuery("purchases");
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<any>({ supplier_id: "", items: [] as any[] });
-  const [draft, setDraft] = useState({ product_id: "" as any, sku: "", name: "", quantity: "1", unit_cost: "", costDirty: false });
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
@@ -305,42 +424,8 @@ export function PurchasesPage() {
     setTotals(r.totals || {});
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
-  function resetDraft() {
-    setDraft({ product_id: "", sku: "", name: "", quantity: "1", unit_cost: "", costDirty: false });
-  }
-  function addDraftLine() {
-    if (!draft.product_id) {
-      act.fail(undefined, "errNoItems");
-      return;
-    }
-    const qty = Number(draft.quantity || 0);
-    if (qty <= 0) {
-      act.fail(undefined, "errInvalidQty");
-      return;
-    }
-    const unit_cost = Number(draft.unit_cost === "" ? 0 : draft.unit_cost);
-    setForm({
-      ...form,
-      items: [...form.items, {
-        product_id: draft.product_id,
-        sku: draft.sku,
-        name: draft.name,
-        quantity: qty,
-        unit_cost,
-      }],
-    });
-    resetDraft();
-    act.clear();
-  }
-  function updateLine(index: number, patch: Record<string, number>) {
-    setForm({
-      ...form,
-      items: form.items.map((it: any, i: number) => (i === index ? { ...it, ...patch } : it)),
-    });
-  }
-  const purchaseTotal = (form.items || []).reduce((s: number, it: any) => s + Number(it.quantity || 0) * Number(it.unit_cost || 0), 0);
   return (
-    <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} /><Btn onClick={() => { act.clear(); setForm({ supplier_id: "", items: [] }); resetDraft(); setOpen(true); }}>{tr("newPurchase")}</Btn></>}>
+    <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} />{can("purchases.create") ? <Btn onClick={() => nav("/purchases/new")}>{tr("newPurchase")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
         <Stat label={tr("purchases")} value={String(totals.count || rows.length)} />
@@ -374,130 +459,6 @@ export function PurchasesPage() {
         ])}
       />
       )}
-      <Modal open={open} title={tr("newPurchase")} onClose={() => { setOpen(false); act.clear(); }} wide>
-        <p className="mb-4 text-sm font-bold leading-6 text-[var(--text)]">{tr("purchaseHint")}</p>
-        <Field label={tr("supplier")}>
-          <SearchPick
-            path="/api/suppliers"
-            valueId={form.supplier_id}
-            valueLabel={lookups?.suppliers.find((s) => String(s.id) === String(form.supplier_id))?.name || ""}
-            placeholder={tr("searchAndPick")}
-            subtitle={(r) => [r.phone, r.city].filter(Boolean).join(" · ")}
-            onPick={(row) => setForm({ ...form, supplier_id: row ? String(row.id) : "" })}
-          />
-        </Field>
-        <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
-          <div className="mb-2 text-sm font-black text-[var(--text)]">{tr("addPurchaseItem")}</div>
-          <Field label={tr("products")}>
-            <ProductPick
-              resetKey={form.items.length}
-              onChange={(p) => {
-                setDraft((d) => ({
-                  ...d,
-                  product_id: p.id,
-                  sku: p.sku || "",
-                  name: p.name || "",
-                  unit_cost: d.costDirty ? d.unit_cost : (p.cost != null ? String(p.cost) : d.unit_cost),
-                }));
-              }}
-            />
-          </Field>
-          {draft.product_id ? (
-            <div className="mt-2 rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm font-bold text-[var(--text)]">
-              {tr("pickedProduct")}: {draft.sku} — {draft.name || draft.product_id}
-            </div>
-          ) : null}
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <Field label={tr("qty")}>
-              <input
-                className={inputCls}
-                type="text"
-                inputMode="decimal"
-                value={draft.quantity}
-                onChange={(e) => setDraft({ ...draft, quantity: e.target.value })}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addDraftLine(); } }}
-              />
-            </Field>
-            <Field label={tr("unitCost")}>
-              <input
-                className={inputCls}
-                type="text"
-                inputMode="decimal"
-                value={draft.unit_cost}
-                onChange={(e) => setDraft({ ...draft, unit_cost: e.target.value, costDirty: true })}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addDraftLine(); } }}
-              />
-            </Field>
-          </div>
-          <Btn className="mt-3 w-full" kind="soft" onClick={addDraftLine}>
-            <Plus size={16} />
-            {tr("addPurchaseItem")}
-          </Btn>
-        </div>
-        <div className="mt-4">
-          <div className="mb-2 text-sm font-black text-[var(--text)]">{tr("items")} ({form.items.length})</div>
-          {form.items.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{tr("items")}</th>
-                    <th>{tr("qty")}</th>
-                    <th>{tr("unitCost")}</th>
-                    <th>{tr("total")}</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.items.map((it: any, i: number) => (
-                    <tr key={`${it.product_id}-${i}`}>
-                      <td className="font-bold text-[var(--text)]">{it.sku ? `${it.sku} — ${it.name || ""}` : it.name || it.product_id}</td>
-                      <td>
-                        <input className={`${inputCls} min-w-16`} type="text" inputMode="decimal" value={it.quantity} onChange={(e) => updateLine(i, { quantity: Number(e.target.value || 0) })} />
-                      </td>
-                      <td>
-                        <input className={`${inputCls} min-w-20`} type="text" inputMode="decimal" value={it.unit_cost} onChange={(e) => updateLine(i, { unit_cost: Number(e.target.value || 0) })} />
-                      </td>
-                      <td className="font-bold">{money(Number(it.quantity || 0) * Number(it.unit_cost || 0), lang)}</td>
-                      <td>
-                        <button type="button" className="rounded-lg p-1 text-rose-700" title={tr("delete")} onClick={() => setForm({ ...form, items: form.items.filter((_: any, idx: number) => idx !== i) })}>
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-4 text-sm font-bold text-[var(--text)]">{tr("noPurchaseItems")}</div>
-          )}
-        </div>
-        <div className="mt-4 flex items-center justify-between rounded-xl bg-[#0b1f33] px-3 py-3 text-sm font-black text-[#f8f1de]">
-          <span>{tr("total")}</span>
-          <span>{money(purchaseTotal, lang)}</span>
-        </div>
-        <ErrorNote message={act.message} />
-        <Btn className="mt-4 w-full" onClick={async () => {
-          if (!form.supplier_id) {
-            act.fail(undefined, "errSupplierRequired");
-            return;
-          }
-          if (!form.items?.length || form.items.some((it: any) => !it.product_id || Number(it.quantity) <= 0)) {
-            act.fail(undefined, form.items.some((it: any) => Number(it.quantity) <= 0) ? "errInvalidQty" : "errNoItems");
-            return;
-          }
-          try {
-            await post("/api/inventory/purchases", form);
-            playSound("done");
-            act.clear();
-            setOpen(false);
-            load();
-          } catch (e) {
-            act.fail(e);
-          }
-        }}>{tr("savePurchase")}</Btn>
-      </Modal>
       {dialog}
     </Page>
   );
@@ -1070,6 +1031,92 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
   );
 }
 
+export function QualitiesPage() {
+  const { tr, refreshLookups, can } = useApp();
+  const [rows, setRows] = useState<{ name: string; products: number }[]>([]);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [apiOk, setApiOk] = useState(false);
+  const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
+  const canManage = can("categories.manage") && apiOk;
+
+  async function load() {
+    try {
+      const r = await get<{ data: { name: string; products: number }[] }>("/api/qualities");
+      setApiOk(true);
+      setRows(r.data || []);
+    } catch {
+      setApiOk(false);
+      const r = await get<{ data: { quality?: string }[] }>("/api/products?pageSize=5000");
+      const counts = new Map<string, number>();
+      for (const p of r.data || []) {
+        const name = String(p.quality || "").trim();
+        if (!name) continue;
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+      setRows([...counts.entries()].sort((a, b) => a[0].localeCompare(b[0], "ar")).map(([name, products]) => ({ name, products })));
+    }
+  }
+  useEffect(() => { load().catch(() => {}); }, []);
+
+  const shown = rows.filter((r) => !q.trim() || r.name.toLowerCase().includes(q.trim().toLowerCase()));
+
+  return (
+    <Page title={tr("categories")}>
+      {dialog}
+      <p className="mb-4 text-sm leading-6 text-slate-500 dark:text-slate-400">{tr("qualitiesHint")}</p>
+      <div className="mb-3">
+        <input className={`${inputCls} max-w-md`} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("search")} />
+      </div>
+      {!shown.length ? <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] py-10 text-center text-sm text-slate-400">{tr("noData")}</div> : (
+        <Table
+          cols={[tr("quality"), tr("qualityUsedOn"), ""]}
+          rows={shown.map((r) => [
+            <span className="font-extrabold">{r.name}</span>,
+            r.products,
+            <div className="flex flex-wrap items-center gap-3">
+              <Link className="font-bold text-cyan-700" to={`/products?quality=${encodeURIComponent(r.name)}`}>{tr("products")}</Link>
+              {canManage ? (
+                <ActionBtns
+                  canEdit
+                  canDelete
+                  onEdit={() => { act.clear(); setFrom(r.name); setTo(r.name); setOpen(true); }}
+                  onDelete={() => confirmDelete(r.name, async () => {
+                    await del(`/api/qualities?name=${encodeURIComponent(r.name)}`);
+                    await load();
+                    refreshLookups();
+                  })}
+                />
+              ) : null}
+            </div>,
+          ])}
+        />
+      )}
+      <Modal open={open} title={tr("renameQuality")} onClose={() => { setOpen(false); act.clear(); }}>
+        <Field label={tr("quality")}>
+          <input className={inputCls} value={to} onChange={(e) => setTo(e.target.value)} />
+        </Field>
+        <ErrorNote message={act.message} />
+        <Btn className="mt-3" onClick={async () => {
+          try {
+            if (!to.trim() || to.trim() === from) { setOpen(false); return; }
+            await put("/api/qualities", { from, to: to.trim() });
+            act.clear();
+            setOpen(false);
+            await load();
+            refreshLookups();
+          } catch (e) {
+            act.fail(e);
+          }
+        }}>{tr("save")}</Btn>
+      </Modal>
+    </Page>
+  );
+}
+
 export function ExpensesPage() {
   const { tr, lang, can, lookups } = useApp();
   const f = useListQuery("expenses");
@@ -1346,430 +1393,6 @@ export function ReportsPage() {
   );
 }
 
-function AccountSettings() {
-  const { tr, can, user } = useApp();
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [pwMsg, setPwMsg] = useState("");
-  const [pwErr, setPwErr] = useState("");
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [roles, setRoles] = useState<any[]>([]);
-  const [open, setOpen] = useState(false);
-  const [accMsg, setAccMsg] = useState("");
-  const [accErr, setAccErr] = useState("");
-  const [form, setForm] = useState({ id: 0, username: "", full_name: "", phone: "", role_id: 2, active: 1, password: "" });
-  const { confirmDelete, dialog } = useConfirm();
-
-  async function loadAccounts() {
-    if (!can("users.manage")) return;
-    const [users, roleRes] = await Promise.all([
-      get<{ data: any[] }>("/api/users"),
-      get<{ roles: any[] }>("/api/roles"),
-    ]);
-    setAccounts(users.data || []);
-    setRoles(roleRes.roles || []);
-  }
-  useEffect(() => { loadAccounts().catch(() => {}); }, []);
-
-  return (
-    <div className="mb-8 space-y-4">
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-        <h3 className="mb-3 font-bold">{tr("changePassword")}</h3>
-        <div className="grid gap-3 md:grid-cols-3">
-          <Field label={tr("currentPassword")}>
-            <input className={inputCls} type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
-          </Field>
-          <Field label={tr("newPassword")}>
-            <input className={inputCls} type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
-          </Field>
-          <Field label={tr("confirmPassword")}>
-            <input className={inputCls} type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
-          </Field>
-        </div>
-        {pwErr ? <div className="mt-2 text-sm text-rose-600">{pwErr}</div> : null}
-        {pwMsg ? <div className="mt-2 text-sm font-bold text-emerald-700">{pwMsg}</div> : null}
-        <Btn className="mt-3" onClick={async () => {
-          setPwErr("");
-          setPwMsg("");
-          if (!current || !next) return;
-          if (next !== confirm) { setPwErr(tr("passwordMismatch")); return; }
-          try {
-            await post("/api/auth/password", { current, next });
-            setCurrent(""); setNext(""); setConfirm("");
-            setPwMsg(tr("passwordChanged"));
-          } catch (e) {
-            setPwErr((e as Error).message === "invalid_current" ? tr("invalidCurrent") : (e as Error).message);
-          }
-        }}>{tr("save")}</Btn>
-      </div>
-      {can("users.manage") ? (
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="font-bold">{tr("employeeAccounts")}</h3>
-            <Btn onClick={() => { setAccErr(""); setAccMsg(""); setForm({ id: 0, username: "", full_name: "", phone: "", role_id: roles[0]?.id || 2, active: 1, password: "" }); setOpen(true); }}>{tr("add")}</Btn>
-          </div>
-          {accMsg ? <div className="mb-2 text-sm font-bold text-emerald-700">{accMsg}</div> : null}
-          <Table
-            cols={[tr("username"), tr("name"), tr("phone"), tr("role"), tr("status"), ""]}
-            rows={accounts.map((u) => [
-              u.username,
-              u.full_name,
-              u.phone || "—",
-              u.role_name_ar,
-              u.active ? tr("active") : tr("inactive"),
-              <ActionBtns
-                key={u.id}
-                canEdit
-                canDelete={u.id !== user?.id}
-                onEdit={() => {
-                  setAccErr(""); setAccMsg("");
-                  setForm({ id: u.id, username: u.username, full_name: u.full_name || "", phone: u.phone || "", role_id: u.role_id, active: u.active ? 1 : 0, password: "" });
-                  setOpen(true);
-                }}
-                onDelete={() => confirmDelete(u.username, async () => { await del(`/api/users/${u.id}`); await loadAccounts(); })}
-              />,
-            ])}
-          />
-          <Modal open={open} title={form.id ? tr("edit") : tr("add")} onClose={() => setOpen(false)}>
-            <div className="grid gap-3">
-              <Field label={tr("username")}>
-                <input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-              </Field>
-              <Field label={tr("name")}>
-                <input className={inputCls} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
-              </Field>
-              <Field label={tr("phone")}>
-                <input className={inputCls} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-              </Field>
-              <Field label={tr("role")}>
-                <select className={inputCls} value={form.role_id} onChange={(e) => setForm({ ...form, role_id: Number(e.target.value) })}>
-                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name_ar}</option>)}
-                </select>
-              </Field>
-              <Field label={tr("password")}>
-                <input className={inputCls} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={form.id ? tr("leaveBlankPassword") : ""} />
-              </Field>
-              {form.id && form.id !== user?.id ? (
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={form.active === 1} onChange={(e) => setForm({ ...form, active: e.target.checked ? 1 : 0 })} />
-                  {tr("active")}
-                </label>
-              ) : null}
-              {accErr ? <div className="text-sm text-rose-600">{accErr}</div> : null}
-              <Btn onClick={async () => {
-                setAccErr("");
-                if (!form.username.trim() || !form.full_name.trim()) return;
-                if (!form.id && !form.password) { setAccErr(tr("newPassword")); return; }
-                try {
-                  if (form.id) {
-                    const body: Record<string, unknown> = { username: form.username.trim(), full_name: form.full_name.trim(), phone: form.phone, role_id: form.role_id, active: form.active };
-                    if (form.password) body.password = form.password;
-                    await put(`/api/users/${form.id}`, body);
-                  } else {
-                    await post("/api/users", { username: form.username.trim(), full_name: form.full_name.trim(), phone: form.phone, role_id: form.role_id, password: form.password });
-                  }
-                  setOpen(false);
-                  setAccMsg(tr("accountSaved"));
-                  await loadAccounts();
-                } catch (e) {
-                  setAccErr((e as Error).message === "username_taken" ? tr("usernameTaken") : (e as Error).message);
-                }
-              }}>{tr("save")}</Btn>
-            </div>
-          </Modal>
-          {dialog}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-export function SettingsPage() {
-  const { tr, settings, refreshSettings, refreshLookups, lang, can } = useApp();
-  const [form, setForm] = useState<Record<string, string>>({});
-  const [templates, setTemplates] = useState<any[]>([]);
-  const [backs, setBacks] = useState<any[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [demo, setDemo] = useState<{ active?: boolean; products?: number; customers?: number; invoices?: number }>({});
-  const [restoreOnImport, setRestoreOnImport] = useState(true);
-  const [impKind, setImpKind] = useState("products");
-  const [impCsv, setImpCsv] = useState("");
-  const [impPreview, setImpPreview] = useState<any>(null);
-  const [impResult, setImpResult] = useState<any>(null);
-  const { confirm, dialog } = useConfirm();
-  const canBackup = can("backup.manage") || can("settings.edit");
-  async function loadBackups() {
-    if (!canBackup) return;
-    const r = await get<{ data: any[]; files: any[] }>("/api/backup");
-    setBacks(r.files || r.data || []);
-  }
-  async function loadDemo() {
-    if (!canBackup) return;
-    setDemo(await get("/api/backup/demo"));
-  }
-  async function downloadNamed(filename: string) {
-    const res = await fetch(`/api/backup/${filename}`, { credentials: "include", headers: authHeaders() });
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-  useEffect(() => {
-    setForm(settings);
-    get<{ templates: any[] }>("/api/settings").then((r) => setTemplates(r.templates || []));
-    loadBackups().catch(() => {});
-    loadDemo().catch(() => {});
-  }, [settings]);
-  return (
-    <Page title={tr("settings")}>
-      {dialog}
-      <AccountSettings />
-      <div className="mb-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-        <Field label="storeLogo">
-          <div className="flex flex-wrap items-center gap-3">
-            {form.logo_url ? <img src={form.logo_url} alt="" className="h-14 w-14 rounded-lg border object-contain" /> : null}
-            <input
-              type="file"
-              accept="image/*"
-              className="text-sm"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-                const fd = new FormData();
-                fd.append("file", file);
-                const res = await fetch("/api/uploads", { method: "POST", credentials: "include", headers: authHeaders(), body: fd });
-                const data = await res.json().catch(() => ({}));
-                if (res.ok && data.url) setForm((prev) => ({ ...prev, logo_url: data.url }));
-              }}
-            />
-          </div>
-        </Field>
-        <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
-          <input type="checkbox" checked={form.tax_enabled === "1"} onChange={(e) => setForm({ ...form, tax_enabled: e.target.checked ? "1" : "0" })} />
-          {tr("taxEnabled")}
-        </label>
-        {form.tax_enabled === "1" ? (
-          <Field label="taxRate">
-            <input className={inputCls} type="number" min={0} step="0.01" value={form.tax_rate ?? ""} onChange={(e) => setForm({ ...form, tax_rate: e.target.value })} />
-          </Field>
-        ) : null}
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        {["store_name","store_name_ar","store_address","store_phone","invoice_prefix","invoice_footer","invoice_header","default_delivery_time","whatsapp_enabled","sound_enabled","allow_negative_stock","use_last_customer_price","price_2_name","price_3_name","price_4_name","workplace_lat","workplace_lng","geofence_meters","usd_egp_rate"].map((k) => (
-          <Field key={k} label={k}>
-            <input className={inputCls} value={form[k] ?? (k === "sound_enabled" ? "1" : "")} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={k === "sound_enabled" || k === "whatsapp_enabled" ? "1 / 0" : ""} />
-          </Field>
-        ))}
-      </div>
-      <p className="mt-3 text-xs text-slate-500">{tr("pickOnMap")}</p>
-      <div className="mt-2 no-print">
-        <OsmMap
-          center={{ lat: Number(form.workplace_lat || 30.0566), lng: Number(form.workplace_lng || 31.33) }}
-          shop={{ lat: Number(form.workplace_lat || 30.0566), lng: Number(form.workplace_lng || 31.33) }}
-          geofence={Number(form.geofence_meters || 100)}
-          height={280}
-          onPick={(lat, lng) => setForm({ ...form, workplace_lat: String(lat), workplace_lng: String(lng) })}
-        />
-      </div>
-      {can("settings.edit") ? <Btn className="mt-4" onClick={async () => { await put("/api/settings", form); refreshSettings(); }}>{tr("save")}</Btn> : null}
-      {can("import.manage") ? (
-        <div className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <h3 className="mb-2 font-bold">{tr("importCsv")}</h3>
-          <p className="mb-3 text-xs text-slate-500">{tr("importHint")}</p>
-          <div className="mb-3 grid gap-3 md:grid-cols-2">
-            <Field label={tr("importKind")}>
-              <select className={inputCls} value={impKind} onChange={(e) => { setImpKind(e.target.value); setImpPreview(null); setImpResult(null); }}>
-                <option value="products">{tr("products")}</option>
-                <option value="customers">{tr("customers")}</option>
-                <option value="suppliers">{tr("suppliers")}</option>
-              </select>
-            </Field>
-            <Field label={tr("csvFile")}>
-              <input className={inputCls} type="file" accept=".csv,text/csv" onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                f.text().then((t) => { setImpCsv(t); setImpPreview(null); setImpResult(null); });
-              }} />
-            </Field>
-          </div>
-          <textarea className={`${inputCls} min-h-32 font-mono text-xs`} value={impCsv} onChange={(e) => setImpCsv(e.target.value)} placeholder={impKind === "products" ? "sku,name_ar,name_en,selling_price,color,quality" : "name,phone,city"} />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Btn kind="soft" disabled={!impCsv.trim()} onClick={async () => {
-              setImpResult(null);
-              setImpPreview(await post("/api/import/preview", { kind: impKind, csv: impCsv }));
-            }}>{tr("preview")}</Btn>
-            <Btn disabled={!impPreview || !impPreview.valid} onClick={async () => {
-              setImpResult(await post("/api/import/commit", { kind: impKind, csv: impCsv }));
-            }}>{tr("commitImport")}</Btn>
-          </div>
-          {impPreview ? (
-            <div className="mt-3 text-sm">
-              {tr("csvPreview")}: {impPreview.valid}/{impPreview.total} — {tr("skipped")}: {impPreview.invalid}
-              <div className="table-wrap mt-2">
-                <table>
-                  <thead><tr><th>#</th>{(impPreview.headers || []).map((h: string) => <th key={h}>{h}</th>)}<th>{tr("status")}</th></tr></thead>
-                  <tbody>
-                    {(impPreview.preview || []).map((r: any) => (
-                      <tr key={r.line}>
-                        <td>{r.line}</td>
-                        {(impPreview.headers || []).map((h: string) => <td key={h}>{r.row?.[h]}</td>)}
-                        <td>{r.ok ? "✓" : (r.errors || []).join(",")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
-          {impResult ? <div className="mt-2 text-sm font-bold">{tr("imported")}: {impResult.inserted} · {tr("skipped")}: {impResult.skipped}</div> : null}
-        </div>
-      ) : null}
-      {canBackup ? (
-        <div className="mt-8 space-y-6">
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-            <h3 className="font-bold">{tr("demoData")}</h3>
-            <p className="mt-1 text-sm text-slate-500">{tr("demoDataHint")}</p>
-            {demo.active ? (
-              <div className="mt-2 text-sm font-bold text-amber-700">
-                {tr("demoActive")} — {tr("products")} {demo.products || 0} · {tr("customers")} {demo.customers || 0} · {tr("sales")} {demo.invoices || 0}
-              </div>
-            ) : null}
-            {msg ? <div className="mt-2 text-sm font-bold text-emerald-700">{msg}</div> : null}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Btn disabled={busy} onClick={async () => {
-                setBusy(true);
-                setMsg("");
-                try {
-                  const r = await post<{ already?: boolean }>("/api/backup/demo", {});
-                  setMsg(r.already ? tr("demoAlready") : tr("demoAdded"));
-                  await loadDemo();
-                  await refreshLookups();
-                } catch (e) {
-                  setMsg((e as Error).message || tr("error"));
-                } finally {
-                  setBusy(false);
-                }
-              }}>{tr("addDemoData")}</Btn>
-              <Btn kind="danger" disabled={busy || !demo.active} onClick={() => confirm(tr("clearDemoData"), tr("demoClearConfirm"), async () => {
-                setBusy(true);
-                setMsg("");
-                try {
-                  await post("/api/backup/demo/clear", { confirm: true });
-                  setMsg(tr("demoCleared"));
-                  await loadDemo();
-                  await refreshLookups();
-                } finally {
-                  setBusy(false);
-                }
-              })}>{tr("clearDemoData")}</Btn>
-            </div>
-          </div>
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-bold">{tr("backup")}</h3>
-              <div className="flex flex-wrap gap-2">
-                <Btn disabled={busy} onClick={async () => {
-                  setBusy(true);
-                  setMsg("");
-                  try {
-                    const r = await post<{ filename: string }>("/api/backup", {});
-                    await loadBackups();
-                    if (r.filename) await downloadNamed(r.filename);
-                    setMsg(tr("backupExported"));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}>{tr("exportBackup")}</Btn>
-                <label className="ui-btn inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-sm font-bold">
-                  {tr("importBackup")}
-                  <input
-                    className="hidden"
-                    type="file"
-                    accept=".sql,application/sql,text/plain"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      if (!file) return;
-                      const go = async () => {
-                        setBusy(true);
-                        setMsg("");
-                        try {
-                          const fd = new FormData();
-                          fd.append("file", file);
-                          fd.append("restore", restoreOnImport ? "1" : "0");
-                          fd.append("confirm", restoreOnImport ? "1" : "0");
-                          const res = await fetch("/api/backup/import", { method: "POST", credentials: "include", headers: authHeaders(), body: fd });
-                          const data = await res.json().catch(() => ({}));
-                          if (!res.ok) {
-                            setMsg(data.error === "not_sqlite" ? tr("notSqlite") : (data.error || tr("error")));
-                            return;
-                          }
-                          setMsg(tr("backupImported"));
-                          await loadBackups();
-                          await loadDemo();
-                          if (data.restored) window.location.reload();
-                        } finally {
-                          setBusy(false);
-                        }
-                      };
-                      if (restoreOnImport) confirm(tr("importBackup"), tr("restoreConfirm"), go);
-                      else void go();
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-            <p className="mb-3 text-xs text-slate-500">{tr("importFileHint")}</p>
-            <label className="mb-3 flex items-center gap-2 text-sm font-bold">
-              <input type="checkbox" checked={restoreOnImport} onChange={(e) => setRestoreOnImport(e.target.checked)} />
-              {tr("importRestoreNow")}
-            </label>
-            <label className="mb-4 flex items-center gap-2 text-sm font-bold">
-              <input
-                type="checkbox"
-                checked={(form.auto_backup_on_login ?? "1") !== "0"}
-                onChange={async (e) => {
-                  const next = e.target.checked ? "1" : "0";
-                  setForm({ ...form, auto_backup_on_login: next });
-                  await put("/api/settings", { ...form, auto_backup_on_login: next });
-                  refreshSettings();
-                }}
-              />
-              {tr("autoBackupOnLogin")}
-            </label>
-            <Table
-              cols={[tr("name"), tr("amount"), ""]}
-              rows={backs.map((b: any) => [
-                b.filename,
-                b.size_bytes ? `${Math.round(b.size_bytes / 1024)} KB` : "",
-                <div className="flex flex-wrap gap-3">
-                  <button className="font-bold text-cyan-700" onClick={() => downloadNamed(b.filename)}>{tr("downloadBackup")}</button>
-                  <button className="font-bold text-rose-700" onClick={() => confirm(tr("restoreBackup"), tr("restoreConfirm"), async () => {
-                    await post(`/api/backup/${b.filename}/restore`, { confirm: true });
-                    window.location.reload();
-                  })}>{tr("restoreBackup")}</button>
-                </div>,
-              ])}
-            />
-          </div>
-        </div>
-      ) : null}
-      <h3 className="mt-8 font-bold">{tr("waTemplates")}</h3>
-      {templates.map((t) => (
-        <div key={t.code} className="mt-3 rounded-xl bg-white p-3">
-          <div className="font-bold">{t.code}</div>
-          <textarea className={`${inputCls} mt-2 min-h-32`} value={lang === "ar" ? t.body_ar : t.body_en} onChange={(e) => setTemplates(templates.map((x) => x.code === t.code ? { ...x, [lang === "ar" ? "body_ar" : "body_en"]: e.target.value } : x))} />
-          {can("settings.edit") ? <Btn kind="ghost" className="mt-2" onClick={async () => { await put(`/api/settings/whatsapp-templates/${t.code}`, t); }}>{tr("save")}</Btn> : null}
-        </div>
-      ))}
-    </Page>
-  );
-}
 
 export function UsersPage() {
   const { tr, can } = useApp();
@@ -2024,16 +1647,18 @@ export function AuditPage() {
   );
 }
 
-function Page({ title, action, children }: { title: string; action?: any; children: any }) {
+function Page({ title, action, children, print = true }: { title: string; action?: any; children: any; print?: boolean }) {
   return (
     <div>
       <PrintLetterhead title={title} />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{title}</h1>
-        <div className="no-print flex flex-wrap items-center gap-2">
-          {action}
-          <PrintBtn />
-        </div>
+        {action || print ? (
+          <div className="no-print flex flex-wrap items-center gap-2">
+            {action}
+            {print ? <PrintBtn /> : null}
+          </div>
+        ) : null}
       </div>
       {children}
     </div>

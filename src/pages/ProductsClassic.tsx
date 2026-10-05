@@ -4,7 +4,8 @@ import { FileText, Pencil, Plus, Printer, Trash2, Warehouse, X } from "lucide-re
 import { useApp } from "../context";
 import { get } from "../lib/api";
 import { money, num } from "../lib/format";
-import { PrintLetterhead } from "../components/ui";
+import { PrintLetterhead, printPage } from "../components/ui";
+import { downloadExport } from "../lib/export";
 import { ProductDialogClassic } from "../components/classic/ProductDialogClassic";
 import { emptyProduct, useProductCatalog, type ProductForm } from "../hooks/useProductCatalog";
 
@@ -67,11 +68,11 @@ export default function ProductsClassic() {
       <PrintLetterhead title={tr("easyGoods")} />
       <div className="inv-classic-top no-print">
         <b>{tr("easyGoods")}</b>
-        <FilterBox label={tr("posColCategory")} value={cat.filters.category_id} onChange={() => cat.setFilters({ ...cat.filters, category_id: "" })}>
-          <select value={cat.filters.category_id} onChange={(e) => cat.setFilters({ ...cat.filters, category_id: e.target.value ? Number(e.target.value) : "" })}>
-            <option value="">-</option>
-            {(lookups?.categories || []).map((c) => <option key={c.id} value={c.id}>{lang === "ar" ? c.name_ar : c.name_en}</option>)}
-          </select>
+        <FilterBox label={tr("posColCategory")} value={cat.filters.quality} onChange={() => cat.setFilters({ ...cat.filters, quality: "" })}>
+          <input list="classic-quality-list" value={cat.filters.quality} onChange={(e) => cat.setFilters({ ...cat.filters, quality: e.target.value })} />
+          <datalist id="classic-quality-list">
+            {[...new Set(cat.rows.map((p) => String(p.quality || "").trim()).filter(Boolean))].map((q) => <option key={q} value={q} />)}
+          </datalist>
         </FilterBox>
         <FilterBox label={tr("posColBrand")} value={cat.filters.brand_id} onChange={() => cat.setFilters({ ...cat.filters, brand_id: "" })}>
           <select value={cat.filters.brand_id} onChange={(e) => cat.setFilters({ ...cat.filters, brand_id: e.target.value ? Number(e.target.value) : "" })}>
@@ -111,7 +112,8 @@ export default function ProductsClassic() {
             <button type="button" className="is-edit" disabled={!can("products.edit")} onClick={() => void openEdit()}><Pencil size={14} /> {tr("edit")}</button>
             <button type="button" className="is-new" disabled={!can("products.create")} onClick={() => { setForm(emptyProduct()); setDlg(true); }}><Plus size={14} /> {tr("new")}</button>
           </div>
-          <button type="button" onClick={() => window.print()}><Printer size={14} /> {tr("invPrintList")}</button>
+          <button type="button" onClick={() => downloadExport("products", cat.exportQuery).catch(() => {})}>{tr("exportCsv")}</button>
+          <button type="button" onClick={async () => { await cat.loadAllFiltered(); requestAnimationFrame(() => printPage()); }}><Printer size={14} /> {tr("invPrintList")}</button>
           <button type="button" disabled={!cat.picked} onClick={() => void showMoves()}><FileText size={14} /> {tr("invItemMove")}</button>
           <button type="button" onClick={() => nav("/inventory")}><Warehouse size={14} /> {tr("invWarehouseStock")}</button>
           <div className="inv-classic-dist">
@@ -159,6 +161,7 @@ export default function ProductsClassic() {
                 <th>{tr("barcode")}</th>
                 <th>{tr("invCode1")}</th>
                 <th>{tr("posColCategory")}</th>
+                <th>{tr("posColKind")}</th>
                 <th>{tr("posColBrand")}</th>
                 <th>{tr("supplier")}</th>
               </tr>
@@ -181,7 +184,8 @@ export default function ProductsClassic() {
                   {cat.showCost ? <td>{money(p.last_purchase_price || p.purchase_price || 0, lang)}</td> : null}
                   <td>{p.barcode || ""}</td>
                   <td>{p.extra_code1 || ""}</td>
-                  <td>{(lang === "ar" ? p.category_ar : p.category_en) || ""}</td>
+                  <td>{p.quality || ""}</td>
+                  <td>{(lang === "ar" ? p.part_type_ar : p.part_type_en) || ""}</td>
                   <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || ""}</td>
                   <td>{p.supplier_name || ""}</td>
                 </tr>
@@ -191,7 +195,7 @@ export default function ProductsClassic() {
               <tr>
                 <td colSpan={3}>{tr("invGrandQty")}</td>
                 <td>{num(totalQty, lang)}</td>
-                <td colSpan={cat.showCost ? 9 : 7}>
+                <td colSpan={cat.showCost ? 10 : 8}>
                   {num(cat.rows.length, lang)} / {num(cat.total, lang)}
                   <span className="ms-3">
                     <button type="button" disabled={cat.filters.page <= 1 || cat.loading} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page - 1 })}>{tr("prev")}</button>

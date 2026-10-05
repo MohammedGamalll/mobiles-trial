@@ -21,6 +21,7 @@ export type Lookups = {
   brands: { id: number; name_ar: string; name_en: string }[];
   part_types: { id: number; name_ar: string; name_en: string }[];
   categories: { id: number; name_ar: string; name_en: string }[];
+  qualities?: { name: string; products?: number }[];
   models: { id: number; name: string; brand_id: number; code?: string; brand_en?: string }[];
   locations: { id: number; name: string; kind?: string; parent_id?: number | null; code?: string; path?: string; label?: string; warehouse?: string; box?: string; rack?: string; shelf?: string; drawer?: string }[];
   suppliers: { id: number; name: string }[];

@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import { Phone, MapPin, Banknote } from "lucide-react";
 import { useApp } from "../context";
-import { get, post } from "../lib/api";
+import { get } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, ErrorNote, PageLoading } from "../components/ui";
-
-const ACTIVE = new Set(["out_for_delivery", "rescheduled", "customer_unavailable"]);
+import { ErrorNote, PageLoading } from "../components/ui";
 
 type Order = {
   id: number;
@@ -19,7 +17,7 @@ type Order = {
   area?: string;
   dest_lat?: number | null;
   dest_lng?: number | null;
-  delivery_status?: string;
+  status?: string;
 };
 
 function mapsHref(o: Order) {
@@ -35,13 +33,12 @@ export default function CourierDashboard() {
   const [rows, setRows] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [busyId, setBusyId] = useState<number | null>(null);
 
   async function load() {
     setLoading(true);
     try {
       const r = await get<{ data: Order[] }>("/api/delivery/orders");
-      setRows((r.data || []).filter((x) => ACTIVE.has(String(x.delivery_status || ""))));
+      setRows(r.data || []);
     } finally {
       setLoading(false);
     }
@@ -50,19 +47,6 @@ export default function CourierDashboard() {
   useEffect(() => {
     load().catch((e) => setErr(apiMessage(tr, e)));
   }, []);
-
-  async function mark(id: number) {
-    setBusyId(id);
-    setErr("");
-    try {
-      await post(`/api/delivery/orders/${id}/mark-delivered`, {});
-      setRows((cur) => cur.filter((x) => x.id !== id));
-    } catch (e) {
-      setErr(apiMessage(tr, e));
-    } finally {
-      setBusyId(null);
-    }
-  }
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-8">
@@ -76,7 +60,7 @@ export default function CourierDashboard() {
         <div className="rounded-3xl border border-slate-100 bg-white p-8 text-center text-slate-400">{tr("courierNoOrders")}</div>
       ) : null}
       {rows.map((o) => {
-        const due = Number(o.remaining ?? o.total) || 0;
+        const due = Number(o.total) || 0;
         const map = mapsHref(o);
         const phone = String(o.customer_phone || "").replace(/\D/g, "");
         return (
@@ -86,7 +70,7 @@ export default function CourierDashboard() {
                 <div className="text-lg font-black">{o.customer_name || tr("walkIn")}</div>
                 <div className="text-xs font-bold text-slate-400">{o.number}</div>
               </div>
-              <span className={statusClass(o.delivery_status)}>{statusLabel(o.delivery_status, lang)}</span>
+              <span className={statusClass(o.status)}>{statusLabel(o.status, lang)}</span>
             </div>
             <div className="mt-3 flex items-center gap-2 text-base font-black">
               <Banknote size={18} />
@@ -112,9 +96,6 @@ export default function CourierDashboard() {
                 <div className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-slate-50 text-sm text-slate-400">{tr("viewLocation")}</div>
               )}
             </div>
-            <Btn className="mt-3 min-h-14 w-full rounded-2xl text-base" disabled={busyId === o.id} onClick={() => void mark(o.id)}>
-              {busyId === o.id ? tr("loading") : tr("markDelivered")}
-            </Btn>
           </article>
         );
       })}

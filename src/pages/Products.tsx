@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, getCached, post, put, del } from "../lib/api";
-import { peekCached } from "../lib/query-cache";
+import { invalidateGetCache, peekCached } from "../lib/query-cache";
 import { authHeaders } from "../lib/session";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, ErrorNote, ExportBtn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, ExportBtn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls, printPage } from "../components/ui";
 import { useActionError } from "../lib/errors";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
@@ -13,6 +13,28 @@ import { Barcode } from "../components/Barcode";
 import { useConfirm } from "../components/Confirm";
 import { playSound } from "../lib/sounds";
 import { LocationSelect } from "../components/PlaceFields";
+import {
+  PosHeaderFilter,
+  applyPosHeaderFilters,
+  uniqueFilterValues,
+} from "../components/PosHeaderFilter";
+import type { Product } from "../hooks/usePOSLogic";
+
+function lookupLabel(row: { name_ar?: string; name_en?: string; name?: string } | undefined, lang: string) {
+  if (!row) return "";
+  return (lang === "ar" ? row.name_ar : row.name_en) || row.name_ar || row.name_en || row.name || "";
+}
+
+function idForLabel(rows: any[] | undefined, label: string, lang: string) {
+  if (!label) return "";
+  const hit = (rows || []).find((r) => lookupLabel(r, lang) === label);
+  return hit ? String(hit.id) : "";
+}
+
+function labelForId(rows: any[] | undefined, id: string | number | undefined, lang: string) {
+  if (id == null || String(id) === "") return "";
+  return lookupLabel((rows || []).find((r) => String(r.id) === String(id)), lang);
+}
 
 function parseScale(raw: unknown) {
   if (!raw) return { length: "", width: "", height: "", weight: "" };
@@ -79,6 +101,7 @@ export default function Products() {
   const [form, setForm] = useState<any>(empty());
   const [view, setView] = useState<"list" | "board">("list");
   const [loading, setLoading] = useState(true);
+  const [catalogQualities, setCatalogQualities] = useState<string[]>([]);
   const loadGen = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const { confirmDelete, confirm, dialog } = useConfirm();
@@ -175,22 +198,87 @@ export default function Products() {
       .catch(() => setDaily({ purchases: [], shipments: [] }));
     get<{ data: any[] }>("/api/offers").then((o) => setOffers(o.data || [])).catch(() => {});
   }
+  async function loadQualities() {
+    try {
+      const r = await get<{ data: { name: string }[] }>("/api/qualities");
+      setCatalogQualities((r.data || []).map((x) => String(x.name || "").trim()).filter(Boolean));
+    } catch {
+      const r = await get<{ data: { quality?: string }[] }>("/api/products?pageSize=5000");
+      setCatalogQualities([...new Set((r.data || []).map((p) => String(p.quality || "").trim()).filter(Boolean))]);
+    }
+  }
+
   useEffect(() => {
     let live = true;
     load().then(() => { if (!live) return; }).catch(() => { if (live) { setData([]); setLoading(false); } });
     return () => { live = false; };
   }, [f.qs, warehouseId]);
 
-  const qualities = Array.from(new Set((lookups as any)?.products ? [] : ["A", "B", "C", "Original", "Copy"]));
+  useEffect(() => {
+    loadQualities().catch(() => {});
+  }, []);
+
+  function listFilterQuery(extra: Record<string, string> = {}) {
+    const p = new URLSearchParams(f.qs);
+    p.delete("page");
+    p.delete("pageSize");
+    if (warehouseId) {
+      p.set("location_id", String(warehouseId));
+      p.delete("locations");
+      p.delete("warehouse_id");
+      p.delete("warehouse");
+      p.delete("bay_id");
+      p.delete("shelf_id");
+      p.delete("bin_id");
+      p.delete("fork_id");
+    }
+    Object.entries(extra).forEach(([k, v]) => { if (v) p.set(k, v); });
+    return p.toString();
+  }
+
+  async function printFiltered() {
+    const r = await getCached<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
+    setData(r.data || []);
+    requestAnimationFrame(() => printPage());
+  }
+
+  const qualities = Array.from(new Set([
+    ...catalogQualities,
+    ...(lookups?.qualities || []).map((q) => String(q.name || "").trim()),
+    ...data.map((p) => String(p.quality || "").trim()).filter(Boolean),
+    String(f.values.quality || "").trim(),
+  ].filter(Boolean))).sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
+
+  const [headerFilters, setHeaderFilters] = useState<Record<string, string>>({});
+  const setHeaderFilter = (col: string, v: string) => setHeaderFilters((prev) => ({ ...prev, [col]: v }));
+  const pickPrice = (p: Product) => Number(p.selling_price) || 0;
+  const catalogRows = useMemo(
+    () => applyPosHeaderFilters(data as Product[], headerFilters, lang, pickPrice),
+    [data, headerFilters, lang],
+  );
+  const statusFilterOpts = [
+    { value: "in", label: tr("stockIn") },
+    { value: "low", label: tr("stockLow") },
+    { value: "out", label: tr("stockOut") },
+    { value: "dead", label: tr("deadStock") },
+  ];
+  const partTypeOptions = [...new Set((lookups?.part_types || []).map((r) => lookupLabel(r, lang)).filter(Boolean))].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
+  const brandOptions = [...new Set((lookups?.brands || []).map((r) => lookupLabel(r, lang)).filter(Boolean))].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
+  const modelOptions = [...new Set(
+    (lookups?.models || [])
+      .filter((m) => !f.values.brand_id || String((m as any).brand_id) === String(f.values.brand_id))
+      .map((r) => lookupLabel(r, lang))
+      .filter(Boolean),
+  )].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
 
   return (
     <div className="space-y-4">
       <PrintLetterhead title={tr("products")} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{tr("products")}</h1>
-        <div className="no-print flex gap-2">
-          <ExportBtn kind="products" query={f.qs} />
-          <PrintBtn />
+        <div className="no-print page-actions flex gap-2">
+          <ExportBtn kind="products" query={listFilterQuery()} />
+          <PrintBtn onClick={printFiltered} />
           {can("prices.manage") || can("products.edit") ? (
             <Btn kind="soft" onClick={() => setOfferOpen(true)}>{tr("qtyOffer")}</Btn>
           ) : null}
@@ -217,7 +305,9 @@ export default function Products() {
                     if (!res.ok) throw Object.assign(new Error(data.error || "fail"), { payload: data });
                     playSound("done");
                     act.setMessage(`${tr("importProductsOk")} — ${data.inserted || 0}/${data.total || 0}`);
+                    invalidateGetCache();
                     await refreshLookups();
+                    await loadQualities();
                     await load();
                   });
                 }}
@@ -245,17 +335,16 @@ export default function Products() {
         suggestRows={data}
         searchPlaceholder={tr("searchProduct")}
         fields={[
-          { key: "kind", label: "productKind", type: "select", quick: true, options: [{ value: "product", label: tr("kindProduct") }, { value: "service", label: tr("kindService") }] },
-          { key: "brand_id", label: "brand", type: "select", quick: true, lookup: "brands" },
-          { key: "model_id", label: "model", type: "select", quick: true, lookup: "models" },
-          { key: "part_type_id", label: "partType", type: "select", lookup: "part_types" },
-          { key: "category_id", label: "categories", type: "select", quick: true, lookup: "categories" },
-          { key: "compatible_model_id", label: "compatibleModel", type: "select", lookup: "models" },
+          { key: "kind", label: "productKind", type: "select", options: [{ value: "product", label: tr("kindProduct") }, { value: "service", label: tr("kindService") }] },
           { key: "quality", label: "quality", type: "select", options: qualities.map((q) => ({ value: q, label: q })) },
+          { key: "part_type_id", label: "partType", type: "select", lookup: "part_types" },
+          { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
+          { key: "model_id", label: "model", type: "select", lookup: "models" },
+          { key: "compatible_model_id", label: "compatibleModel", type: "select", lookup: "models" },
           { key: "color", label: "color", type: "text" },
           { key: "supplier_id", label: "suppliers", type: "select", lookup: "suppliers" },
           { key: "locations", label: "location", type: "locations" },
-          { key: "status", label: "status", type: "select", quick: true, options: [
+          { key: "status", label: "status", type: "select", options: [
             { value: "in", label: tr("stockIn") },
             { value: "low", label: tr("stockLow") },
             { value: "out", label: tr("stockOut") },
@@ -273,24 +362,6 @@ export default function Products() {
           { value: "price_low", label: tr("lowestPrice") },
           { value: "moved", label: tr("mostMoved") },
         ]}
-        extra={
-          <div className="flex flex-wrap gap-1">
-            {[["", tr("all")], ["in", tr("stockIn")], ["low", tr("stockLow")], ["out", tr("stockOut")], ["dead", tr("deadStock")]].map(([v, l]) => (
-              <button key={v} type="button" className={`rounded-full px-2 py-1 text-xs font-bold ${ (f.values.status || "") === v ? "bg-ink text-white" : "bg-slate-100"}`} onClick={() => f.set("status", v)}>{l}</button>
-            ))}
-            {(lookups?.categories || []).slice(0, 12).map((c: any) => (
-              <button
-                key={`cat-${c.id}`}
-                type="button"
-                className={`rounded-full px-2 py-1 text-xs font-bold ${String(f.values.category_id || "") === String(c.id) ? "bg-ink text-white" : "bg-slate-100"}`}
-                onClick={() => f.set("category_id", String(f.values.category_id) === String(c.id) ? "" : String(c.id))}
-              >
-                {lang === "ar" ? c.name_ar : c.name_en}
-              </button>
-            ))}
-            <button type="button" className={`rounded-full px-2 py-1 text-xs font-bold ${f.values.sort === "moved" ? "bg-ink text-white" : "bg-slate-100"}`} onClick={() => f.set("sort", "moved")}>{tr("mostMoved")}</button>
-          </div>
-        }
       />
       {loading ? <div className="rounded-2xl border border-slate-100 bg-white px-4 py-8 text-center text-sm font-bold text-slate-500">{tr("loading")}</div> : !data.length ? <EmptyFilterState onClear={f.clear} /> : view === "board" ? (
       <div className="acc-board">
@@ -352,30 +423,88 @@ export default function Products() {
           <table>
             <thead>
               <tr>
-                <th>{tr("name")}</th>
-                <th>{tr("sku")}</th>
-                <th>{tr("brand")}</th>
-                <th>{tr("model")}</th>
-                <th>{tr("available")}</th>
+                <PosHeaderFilter
+                  column="name"
+                  label={tr("name")}
+                  values={uniqueFilterValues(data as Product[], "name", lang, pickPrice)}
+                  value={headerFilters.name || ""}
+                  onChange={(v) => setHeaderFilter("name", v)}
+                />
+                <PosHeaderFilter
+                  column="sku"
+                  label={tr("sku")}
+                  values={uniqueFilterValues(data as Product[], "sku", lang, pickPrice)}
+                  value={headerFilters.sku || ""}
+                  onChange={(v) => setHeaderFilter("sku", v)}
+                />
+                <PosHeaderFilter
+                  column="category"
+                  label={tr("quality")}
+                  values={qualities}
+                  value={String(f.values.quality || "")}
+                  onChange={(v) => f.set("quality", v)}
+                />
+                <PosHeaderFilter
+                  column="partType"
+                  label={tr("partType")}
+                  values={partTypeOptions}
+                  value={labelForId(lookups?.part_types, f.values.part_type_id, lang)}
+                  onChange={(v) => f.set("part_type_id", idForLabel(lookups?.part_types, v, lang))}
+                />
+                <PosHeaderFilter
+                  column="brand"
+                  label={tr("brand")}
+                  values={brandOptions}
+                  value={labelForId(lookups?.brands, f.values.brand_id, lang)}
+                  onChange={(v) => f.setMany({ brand_id: idForLabel(lookups?.brands, v, lang), model_id: "" })}
+                />
+                <PosHeaderFilter
+                  column="model"
+                  label={tr("model")}
+                  values={modelOptions}
+                  value={labelForId(lookups?.models, f.values.model_id, lang)}
+                  onChange={(v) => f.set("model_id", idForLabel(lookups?.models, v, lang))}
+                />
+                <PosHeaderFilter
+                  column="status"
+                  label={tr("available")}
+                  values={statusFilterOpts.map((s) => s.label)}
+                  value={statusFilterOpts.find((s) => s.value === f.values.status)?.label || ""}
+                  onChange={(v) => f.set("status", statusFilterOpts.find((s) => s.label === v)?.value || "")}
+                />
                 <th>{tr("lineValue")}</th>
                 <th>{tr("openingQty")}</th>
                 <th>{tr("warehouseDist")}</th>
-                <th>{tr("sellingPrice")}</th>
-                <th>{tr("location")}</th>
-                <th></th>
+                <PosHeaderFilter
+                  column="selling"
+                  label={tr("sellingPrice")}
+                  values={uniqueFilterValues(data as Product[], "selling", lang, pickPrice)}
+                  value={headerFilters.selling || ""}
+                  onChange={(v) => setHeaderFilter("selling", v)}
+                />
+                <PosHeaderFilter
+                  column="location"
+                  label={tr("location")}
+                  values={uniqueFilterValues(data as Product[], "location", lang, pickPrice)}
+                  value={headerFilters.location || ""}
+                  onChange={(v) => setHeaderFilter("location", v)}
+                />
+                <th className="no-print"></th>
               </tr>
             </thead>
             <tbody>
-              {data.map((p) => (
+              {catalogRows.map((p) => (
                 <tr key={p.id}>
                   <td>
                     <div className="font-semibold">{lang === "ar" ? p.name_ar : p.name_en}</div>
                     <div className="text-xs text-slate-400">
-                      {p.kind === "service" ? tr("kindService") : p.part_type_en}
-                      {p.color || p.quality ? ` · ${[p.color, p.quality].filter(Boolean).join(" / ")}` : ""}
+                      {p.kind === "service" ? tr("kindService") : (lang === "ar" ? p.part_type_ar : p.part_type_en)}
+                      {p.color ? ` · ${p.color}` : ""}
                     </div>
                   </td>
                   <td>{p.sku}</td>
+                  <td>{p.quality || "—"}</td>
+                  <td>{lang === "ar" ? p.part_type_ar : p.part_type_en}</td>
                   <td>{lang === "ar" ? p.brand_ar : p.brand_en}</td>
                   <td className="max-w-40 truncate">{(p.models || []).map((m: any) => m.name).join(", ")}</td>
                   <td>
@@ -393,11 +522,11 @@ export default function Products() {
                   </td>
                   <td>{money(p.selling_price, lang)}</td>
                   <td className="text-xs">{p.location_name}</td>
-                  <td>
+                  <td className="no-print">
                     <div className="flex flex-wrap gap-2">
-                      <Link className="text-sm font-bold text-cyan-700" to={`/products/${p.id}`}>{tr("view")}</Link>
+                      <Link className="filter-link text-sm" to={`/products/${p.id}`}>{tr("view")}</Link>
                       {can("products.edit") ? (
-                        <button className="text-sm font-bold text-cyan-700" onClick={() => {
+                        <button className="filter-link text-sm" onClick={() => {
                           setForm({
                             ...empty(),
                             ...p,
@@ -422,10 +551,10 @@ export default function Products() {
                     }}>{tr("edit")}</button>
                       ) : null}
                       {can("products.delete") ? (
-                        <button className="text-sm font-bold text-rose-600" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); load(); })}>{tr("delete")}</button>
+                        <button className="filter-link is-danger text-sm" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); load(); })}>{tr("delete")}</button>
                       ) : null}
-                      <Link className="text-sm font-bold text-slate-500" to={`/inventory?q=${encodeURIComponent(p.sku)}`}>{tr("movements")}</Link>
-                      <Link className="text-sm font-bold text-slate-500" to="/serials">{tr("serialSearch")}</Link>
+                      <Link className="filter-link is-muted text-sm" to={`/inventory?q=${encodeURIComponent(p.sku)}`}>{tr("movements")}</Link>
+                      <Link className="filter-link is-muted text-sm" to="/serials">{tr("serialSearch")}</Link>
                     </div>
                   </td>
                 </tr>
@@ -524,11 +653,9 @@ export default function Products() {
               <input className={inputCls} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />
             </Field>
           ))}
-          <Field label={tr("brand")}>
-            <select className={inputCls} value={form.brand_id} onChange={(e) => setForm({ ...form, brand_id: e.target.value })}>
-              <option value="">-</option>
-              {lookups?.brands.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
-            </select>
+          <Field label={tr("quality")}>
+            <input className={inputCls} list="product-quality-list" value={form.quality} onChange={(e) => setForm({ ...form, quality: e.target.value })} />
+            <datalist id="product-quality-list">{qualities.map((q) => <option key={q} value={q} />)}</datalist>
           </Field>
           <Field label={tr("partType")}>
             <select className={inputCls} value={form.part_type_id} onChange={(e) => setForm({ ...form, part_type_id: e.target.value })}>
@@ -536,10 +663,10 @@ export default function Products() {
               {lookups?.part_types.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
             </select>
           </Field>
-          <Field label={tr("category")}>
-            <select className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+          <Field label={tr("brand")}>
+            <select className={inputCls} value={form.brand_id} onChange={(e) => setForm({ ...form, brand_id: e.target.value })}>
               <option value="">-</option>
-              {lookups?.categories.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
+              {lookups?.brands.map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
             </select>
           </Field>
           <LocationSelect
@@ -561,9 +688,6 @@ export default function Products() {
           </Field>
           <Field label={tr("color")}>
             <input className={inputCls} value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
-          </Field>
-          <Field label={tr("quality")}>
-            <input className={inputCls} value={form.quality} onChange={(e) => setForm({ ...form, quality: e.target.value })} />
           </Field>
           <Field label={tr("parentProduct")}>
             <select className={inputCls} value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : "" })}>
@@ -731,7 +855,7 @@ export function ProductDetail() {
       ) : null}
       <div className="no-print flex flex-wrap gap-2 page-tabs">
         {(["batches", "moves", "prices", "label"] as const).map((k) => (
-          <button key={k} className={`rounded-xl px-3 py-1.5 text-sm font-bold ${tab === k ? "bg-ink text-white" : "bg-slate-100"}`} onClick={() => setTab(k)}>
+          <button key={k} className={`filter-chip ${tab === k ? "is-on" : ""}`} onClick={() => setTab(k)}>
             {k === "batches" ? tr("batches") : k === "moves" ? tr("movements") : k === "prices" ? tr("comparePrices") : tr("printLabel")}
           </button>
         ))}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Check,
   ChevronLeft,
@@ -26,9 +26,36 @@ import { ProductDialogClassic } from "../components/classic/ProductDialogClassic
 import { AccountDialogClassic } from "../components/classic/AccountDialogClassic";
 import { emptyProduct, type ProductForm } from "../hooks/useProductCatalog";
 import { usePOSLogic, type Product } from "../hooks/usePOSLogic";
+import { PosHeaderFilter, applyPosHeaderFilters, uniqueFilterValues } from "../components/PosHeaderFilter";
 
 function binText(p: Product) {
   return [p.rack, p.shelf, p.drawer].filter(Boolean).join("+");
+}
+
+function ClassicDropUp({
+  label,
+  display,
+  open,
+  onToggle,
+  children,
+  wide,
+}: {
+  label: string;
+  display: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <label className={`pos-classic-dropup ${wide ? "is-wide" : ""}`}>
+      <span>{label}</span>
+      <button type="button" className="pos-classic-dropup-btn" onClick={onToggle}>
+        {display}
+      </button>
+      {open ? <div className="pos-classic-dropup-menu">{children}</div> : null}
+    </label>
+  );
 }
 
 export default function POSClassic() {
@@ -36,13 +63,13 @@ export default function POSClassic() {
   const {
     tr, lang, lookups, can, nav, quoteMode, showCost,
     q, setQ, typeFilter, setTypeFilter,
-    cart, setCart, sel, setSel, type, method, setMethod,
-    customerQ, setCustomerQ, custListOpen, setCustListOpen,
+    cart, setCart, sel, setSel, type, setType, method, setMethod,
+    customerQ, setCustomerQ, customers, custListOpen, setCustListOpen,
     customer, setCustomer, walkIn, setWalkIn,
-    cashAccountId, setCashAccountId,
+    cashAccountId, setCashAccountId, agentId, setAgentId,
     address, setAddress, paid, setPaid,
     discount, setDiscount, discMode, setDiscMode, invDate, setInvDate,
-    extrasOpen, setExtrasOpen, extraAmount, notes, setNotes,
+    extrasOpen, setExtrasOpen, extraAmount, setExtraAmount, notes, setNotes,
     due, setDue, pays, setPays,
     held, heldOpen, setHeldOpen, heldTab, setHeldTab, todayInv, todayStats,
     doneOpen, setDoneOpen, doneInv, waOpen, setWaOpen, waPreview, waMsg, setWaMsg,
@@ -50,12 +77,12 @@ export default function POSClassic() {
     listId, setListId, err, setErr, busy, custOpen, setCustOpen,
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
-    partyKind, setPartyKind, accountCode, setAccountCode,
+    partyKind, setPartyKind,
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
-    printRows, printInvoice, waEnabled, cartQty, showGoods, partyHits, applyParty, saveAccount,
-    loadToday, loadHeldList, openHeld, cancelHeld, previewWa, submit, holdInvoice,
+    printRows, printInvoice, waEnabled, cartQty, applyParty, saveAccount,
+    loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice,
     forceGoods, setForceGoods, setStockTick,
   } = pos;
   const [railOpen, setRailOpen] = useState(true);
@@ -65,6 +92,32 @@ export default function POSClassic() {
   const [prodBusy, setProdBusy] = useState(false);
   const [prodErr, setProdErr] = useState("");
   const [acctOpen, setAcctOpen] = useState(false);
+  const [headerFilters, setHeaderFilters] = useState<Record<string, string>>({});
+  const [cashOpen, setCashOpen] = useState(false);
+  const [courierOpen, setCourierOpen] = useState(false);
+  const cashAccounts = lookups?.cash_accounts || [];
+  const couriers = (lookups?.delivery_agents || []).filter((a) => !a.role_type || a.role_type === "delivery" || a.role_type === "both");
+  const cashName = cashAccounts.find((a) => a.id === cashAccountId)?.name || tr("posTreasury");
+  const courierName = couriers.find((a) => a.id === agentId)?.name || tr("agent");
+  const customerName = customer?.name || walkIn || customerQ || tr("walkIn");
+  const setHeaderFilter = (col: string, v: string) => setHeaderFilters((prev) => ({ ...prev, [col]: v }));
+  const catalogRows = useMemo(
+    () => applyPosHeaderFilters(visible, headerFilters, lang, pickPrice),
+    [visible, headerFilters, lang, pickPrice],
+  );
+  useEffect(() => {
+    setForceGoods(true);
+  }, [setForceGoods]);
+  useEffect(() => {
+    if (cashAccountId || !cashAccounts.length) return;
+    const main = cashAccounts.find((a) => /صندوق رئيسي|الصندوق الرئيسي|main drawer|main cash/i.test(a.name));
+    setCashAccountId((main || cashAccounts[0]).id);
+  }, [cashAccountId, cashAccounts, setCashAccountId]);
+  function closeFooterMenus() {
+    setCashOpen(false);
+    setCourierOpen(false);
+    setCustListOpen(false);
+  }
   const rtl = lang === "ar";
   const Collapse = rtl ? ChevronRight : ChevronLeft;
   const Expand = rtl ? ChevronLeft : ChevronRight;
@@ -73,12 +126,6 @@ export default function POSClassic() {
   const clockLabel = clock.toLocaleTimeString(lang === "ar" ? "en-US" : "en-GB", { hour: "numeric", minute: "2-digit" });
   const dateLabel = invDate.split("-").reverse().join("/");
   const invoiceNo = doneInv?.number || "";
-  const accountName = customer?.name || supplierName() || newCust.name || customerQ || walkIn;
-
-  function supplierName() {
-    return partyKind === "supplier" || partyKind === "agent" ? (newCust.name || walkIn || "") : "";
-  }
-
   function onAdd() {
     if (q.trim() || picked) addPicked();
     else addFromSearch();
@@ -313,9 +360,13 @@ export default function POSClassic() {
                         <td className="is-price">{money(h.total, lang)}</td>
                         <td>{statusLabel(h.status, lang)}</td>
                         <td>
+                          <div className="held-act">
+                          <button type="button" className="is-pay" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "pay")}>{tr("completeHeldPay")}</button>
+                          <button type="button" className="is-credit" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "credit")}>{tr("completeHeldCredit")}</button>
                           <button type="button" onClick={() => { setDesk("sale"); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
                           <button type="button" onClick={() => nav(`/sales/${h.id}`)}>{tr("view")}</button>
                           <button type="button" onClick={() => void cancelHeld(h.id)}>{tr("delete")}</button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -378,117 +429,32 @@ export default function POSClassic() {
                 <button type="button" onClick={clearCart}>{tr("posDeleteInvoice")}</button>
               </div>
             </div>
-          ) : !showGoods ? (
-            <div className="pos-classic-account">
-              <div className="pos-classic-account-card">
-                <div className="pos-classic-account-title">{tr("invoice")}</div>
-                <label>
-                  <span>{tr("posAccountName")}</span>
-                  <div className="pos-classic-suggest-wrap">
-                    <input
-                      value={accountName}
-                      autoComplete="off"
-                      onFocus={() => setCustListOpen(true)}
-                      onChange={(e) => {
-                        setCustomer(null);
-                        setCustomerQ(e.target.value);
-                        setWalkIn(e.target.value);
-                        setNewCust({ ...newCust, name: e.target.value });
-                        setCustListOpen(true);
-                      }}
-                    />
-                    {custListOpen ? (
-                      <div className="pos-classic-suggest">
-                        {partyHits.map((row: any) => (
-                          <button
-                            key={`${partyKind}-${row.id}`}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => { applyParty(row); setCustListOpen(false); }}
-                          >
-                            <b>{row.name}</b>
-                            <small>{[row.phone, row.code, row.area].filter(Boolean).join(" · ")}</small>
-                          </button>
-                        ))}
-                        {!partyHits.length ? <div className="px-2 py-2 text-xs text-slate-400">{tr("noResults")}</div> : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </label>
-                <label>
-                  <span>{tr("posAccountCode")}</span>
-                  <input value={accountCode || (customer?.id ? String(customer.id) : "")} onChange={(e) => setAccountCode(e.target.value)} />
-                </label>
-                <div className="pos-classic-radios">
-                  <span>{tr("posAccountType")}</span>
-                  {([["customer", tr("posPartyCustomer")], ["supplier", tr("posPartySupplier")], ["agent", tr("posPartyAgent")]] as const).map(([id, label]) => (
-                    <label key={id} className="pos-classic-radio">
-                      <input
-                        type="radio"
-                        checked={partyKind === id}
-                        onChange={() => {
-                          setPartyKind(id);
-                          setCustomer(null);
-                          setCustListOpen(false);
-                        }}
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-                <label>
-                  <span>{tr("posMobile")}</span>
-                  <input value={newCust.phone || customer?.phone || ""} onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })} />
-                </label>
-                <label>
-                  <span>{tr("address")}</span>
-                  <input value={address || newCust.address} onChange={(e) => { setAddress(e.target.value); setNewCust({ ...newCust, address: e.target.value }); }} />
-                </label>
-                <button type="button" className="pos-classic-save-acc" disabled={busy} onClick={() => void saveAccount()}>
-                  <Check size={16} /> {tr("posSaveAccount")}
-                </button>
-              </div>
-            </div>
           ) : (
             <div className="pos-classic-grid-wrap">
-              <div className="pos-classic-filters">
-                <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">{tr("posColKind")}</option>
-                  {(lookups?.part_types || []).map((t) => <option key={t.id} value={t.id}>{lang === "ar" ? t.name_ar : t.name_en}</option>)}
-                </select>
-                <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">{tr("posColBrand")}</option>
-                  {(lookups?.brands || []).map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name_ar : b.name_en}</option>)}
-                </select>
-                <select value={listId} onChange={(e) => setListId(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">{tr("priceList")}</option>
-                  {(lookups?.price_lists || []).map((l) => <option key={l.id} value={l.id}>{lang === "ar" ? l.name : (l.name_en || l.name)}</option>)}
-                </select>
-              </div>
               <div className="pos-classic-table">
                 <table>
                   <thead>
                     <tr>
-                      <th>{tr("posColSku")}</th>
-                      <th>{tr("posColName")}</th>
+                      <PosHeaderFilter column="sku" label={tr("posColSku")} values={uniqueFilterValues(visible, "sku", lang, pickPrice)} value={headerFilters.sku || ""} onChange={(v) => setHeaderFilter("sku", v)} />
+                      <PosHeaderFilter column="name" label={tr("posColName")} values={uniqueFilterValues(visible, "name", lang, pickPrice)} value={headerFilters.name || ""} onChange={(v) => setHeaderFilter("name", v)} />
                       <th>{tr("posColTotalQty")}</th>
                       <th>{tr("posColUnit")}</th>
                       <th>{tr("posColStoreQty")}</th>
                       <th>{tr("posColShopQty")}</th>
-                      <th>{tr("posColCategory")}</th>
-                      <th>{tr("posColKind")}</th>
-                      <th>{tr("posColBrand")}</th>
+                      <PosHeaderFilter column="category" label={tr("posColCategory")} values={uniqueFilterValues(visible, "category", lang, pickPrice)} value={headerFilters.category || ""} onChange={(v) => setHeaderFilter("category", v)} />
+                      <PosHeaderFilter column="partType" label={tr("posColKind")} values={uniqueFilterValues(visible, "partType", lang, pickPrice)} value={headerFilters.partType || ""} onChange={(v) => setHeaderFilter("partType", v)} />
+                      <PosHeaderFilter column="brand" label={tr("posColBrand")} values={uniqueFilterValues(visible, "brand", lang, pickPrice)} value={headerFilters.brand || ""} onChange={(v) => setHeaderFilter("brand", v)} />
                       <th>{tr("supplier")}</th>
-                      <th>{tr("posColPack")}</th>
-                      <th>{tr("posColBin")}</th>
-                      <th>{tr("sellingPrice")}</th>
-                      <th>{tr("posColMinPrice")}</th>
+                      <PosHeaderFilter column="box" label={tr("posColPack")} values={uniqueFilterValues(visible, "box", lang, pickPrice)} value={headerFilters.box || ""} onChange={(v) => setHeaderFilter("box", v)} />
+                      <PosHeaderFilter column="bin" label={tr("posColBin")} values={uniqueFilterValues(visible, "bin", lang, pickPrice)} value={headerFilters.bin || ""} onChange={(v) => setHeaderFilter("bin", v)} />
+                      <PosHeaderFilter column="selling" label={tr("sellingPrice")} values={uniqueFilterValues(visible, "selling", lang, pickPrice)} value={headerFilters.selling || ""} onChange={(v) => setHeaderFilter("selling", v)} />
+                      <PosHeaderFilter column="min" label={tr("posColMinPrice")} values={uniqueFilterValues(visible, "min", lang, pickPrice)} value={headerFilters.min || ""} onChange={(v) => setHeaderFilter("min", v)} />
                       {showCost ? <th>{tr("posColAvgBuy")}</th> : null}
                       {showCost ? <th>{tr("posColLastBuy")}</th> : null}
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((p) => {
+                    {catalogRows.map((p) => {
                       const inCart = cartQty(p.id);
                       return (
                         <tr
@@ -503,8 +469,8 @@ export default function POSClassic() {
                           <td>{p.unit || ""}</td>
                           <td>{num(p.current_stock ?? p.available, lang)}</td>
                           <td>{num(p.available, lang)}</td>
-                          <td>{(lang === "ar" ? p.category_ar : p.category_en) || ""}</td>
-                          <td>{kindLabel(p)}</td>
+                          <td>{p.quality || ""}</td>
+                          <td>{(lang === "ar" ? p.part_type_ar : p.part_type_en) || p.part_type_ar || ""}</td>
                           <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || ""}</td>
                           <td>{p.supplier_name || ""}</td>
                           <td>{p.box || ""}</td>
@@ -533,42 +499,123 @@ export default function POSClassic() {
           {err ? <div className="pos-classic-err">{err}</div> : null}
 
           <div className="pos-classic-green">
-            <label>
-              <span>{tr("posTreasury")}</span>
-              <select value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value ? Number(e.target.value) : "")}>
-                <option value="">-</option>
-                {(lookups?.cash_accounts || []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{tr("sellingPrice")}</span>
-              <input value={priceField} onChange={(e) => setPriceField(e.target.value)} />
-            </label>
-            <label>
-              <span>{tr("posAddKind")}</span>
-              <select value={type} disabled>
-                <option value="normal">{tr("posSell")}</option>
-              </select>
-            </label>
+            <ClassicDropUp
+              label={tr("posTreasury")}
+              display={cashName}
+              open={cashOpen}
+              onToggle={() => { setCourierOpen(false); setCustListOpen(false); setCashOpen((v) => !v); }}
+            >
+              {cashAccounts.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={cashAccountId === a.id ? "is-on" : ""}
+                  onClick={() => { setCashAccountId(a.id); setCashOpen(false); }}
+                >
+                  {a.name}
+                </button>
+              ))}
+            </ClassicDropUp>
             {can("sales.discount") ? (
-            <>
-            <label>
-              <span>{tr("posDiscPct")}</span>
+              <>
+                <label>
+                  <span>{tr("posDiscPct")}</span>
+                  <input
+                    type="number"
+                    value={discMode === "pct" ? discount : ""}
+                    onChange={(e) => { setDiscMode("pct"); setDiscount(Number(e.target.value) || 0); }}
+                  />
+                </label>
+                <label>
+                  <span>{tr("posDiscValue")}</span>
+                  <input
+                    type="number"
+                    value={discMode === "egp" ? discount : discAmt}
+                    onChange={(e) => { setDiscMode("egp"); setDiscount(Number(e.target.value) || 0); }}
+                  />
+                </label>
+              </>
+            ) : null}
+            <ClassicDropUp
+              wide
+              label={tr("customer")}
+              display={customerName}
+              open={custListOpen}
+              onToggle={() => { setCashOpen(false); setCourierOpen(false); setCustListOpen((v) => !v); }}
+            >
               <input
-                type="number"
-                value={discMode === "pct" ? discount : ""}
-                onChange={(e) => { setDiscMode("pct"); setDiscount(Number(e.target.value) || 0); }}
+                value={customer ? customer.name : customerQ}
+                autoComplete="off"
+                placeholder={tr("customer")}
+                onChange={(e) => {
+                  setCustomer(null);
+                  setCustomerQ(e.target.value);
+                  setWalkIn(e.target.value);
+                  setCustListOpen(true);
+                }}
               />
-            </label>
-            <label>
-              <span>{tr("posDiscValue")}</span>
-              <input
-                type="number"
-                value={discMode === "egp" ? discount : discAmt}
-                onChange={(e) => { setDiscMode("egp"); setDiscount(Number(e.target.value) || 0); }}
-              />
-            </label>
-            </>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomer(null);
+                  setCustomerQ("");
+                  setWalkIn("");
+                  setCustListOpen(false);
+                }}
+              >
+                {tr("walkIn")}
+              </button>
+              {customers.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setCustomer(c);
+                    setCustomerQ("");
+                    setWalkIn("");
+                    setAddress(c.address || "");
+                    if (c.price_list_id) setListId(Number(c.price_list_id));
+                    setCustListOpen(false);
+                  }}
+                >
+                  <b>{c.name}</b>
+                  <small>{[c.phone, c.area].filter(Boolean).join(" · ")}</small>
+                </button>
+              ))}
+            </ClassicDropUp>
+            <button
+              type="button"
+              className={`pos-classic-deliv ${type === "delivery" ? "is-on" : ""}`}
+              onClick={() => { closeFooterMenus(); setType(type === "delivery" ? "normal" : "delivery"); }}
+            >
+              {tr("delivery")}
+            </button>
+            {type === "delivery" ? (
+              <>
+                <ClassicDropUp
+                  wide
+                  label={tr("agent")}
+                  display={courierName}
+                  open={courierOpen}
+                  onToggle={() => { setCashOpen(false); setCustListOpen(false); setCourierOpen((v) => !v); }}
+                >
+                  <button type="button" onClick={() => { setAgentId(""); setCourierOpen(false); }}>{tr("agent")}</button>
+                  {couriers.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={agentId === a.id ? "is-on" : ""}
+                      onClick={() => { setAgentId(a.id); setCourierOpen(false); }}
+                    >
+                      {a.name}
+                    </button>
+                  ))}
+                </ClassicDropUp>
+                <label>
+                  <span>{tr("deliveryFee")}</span>
+                  <input type="number" value={extraAmount} onChange={(e) => setExtraAmount(Number(e.target.value))} />
+                </label>
+              </>
             ) : null}
             <div className="pos-classic-green-total">{money(total, lang)}</div>
           </div>
@@ -583,7 +630,7 @@ export default function POSClassic() {
             {can("settings.edit") ? <button type="button" onClick={() => nav("/settings")}><Settings size={12} /> {tr("settings")}</button> : null}
             <button type="button" onClick={() => nav("/")}>{tr("posClose")}</button>
             <span className="pos-classic-black-gap" />
-            <button type="button" disabled={busy || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>
+            <button type="button" className="is-hold" disabled={busy || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>
           </div>
         </div>
       </div>
@@ -643,7 +690,7 @@ export default function POSClassic() {
         </div>
       </Modal>
 
-      <Modal open={heldOpen} title={tr("heldInvoices")} onClose={() => setHeldOpen(false)} wide>
+      <Modal open={heldOpen} title={tr("heldInvoices")} onClose={() => setHeldOpen(false)} xl>
         <div className="mb-3 flex flex-wrap gap-1">
           {([["held", tr("heldInvoices")], ["print", tr("heldPrint")], ["wa", tr("whatsapp")]] as const).map(([id, label]) => (
             <button key={id} type="button" className={`period-chip ${heldTab === id ? "is-on" : ""}`} onClick={() => setHeldTab(id)}>{label}</button>
@@ -667,8 +714,12 @@ export default function POSClassic() {
                     <td>{h.customer_name || tr("walkIn")}</td>
                     <td className="font-bold">{money(h.total, lang)}</td>
                     <td>
-                      <button type="button" className="text-xs font-bold text-cyan-700" onClick={() => { setHeldOpen(false); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
-                      <button type="button" className="ms-2 text-xs font-bold text-rose-600" onClick={() => void cancelHeld(h.id)}>{tr("delete")}</button>
+                      <div className="held-act">
+                        <button type="button" className="is-pay" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "pay")}>{tr("completeHeldPay")}</button>
+                        <button type="button" className="is-credit" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "credit")}>{tr("completeHeldCredit")}</button>
+                        <button type="button" onClick={() => { setHeldOpen(false); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
+                        <button type="button" className="is-del" onClick={() => void cancelHeld(h.id)}>{tr("delete")}</button>
+                      </div>
                     </td>
                   </tr>
                 ))}

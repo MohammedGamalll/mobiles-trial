@@ -33,12 +33,13 @@ export function canonWarehouseName(name: string | null | undefined) {
   return n;
 }
 
-export function mergeWarehouseCards(rows?: { name?: string | null; stock_value?: number | string; units?: number | string }[]) {
-  const map = new Map<string, { name: string; stock_value: number; units: number }>();
+export function mergeWarehouseCards(rows?: { name?: string | null; stock_value?: number | string; retail_value?: number | string; units?: number | string }[]) {
+  const map = new Map<string, { name: string; stock_value: number; retail_value: number; units: number }>();
   for (const row of rows || []) {
     const name = canonWarehouseName(row.name);
-    const cur = map.get(name) || { name, stock_value: 0, units: 0 };
+    const cur = map.get(name) || { name, stock_value: 0, retail_value: 0, units: 0 };
     cur.stock_value += Number(row.stock_value || 0);
+    cur.retail_value += Number(row.retail_value || 0);
     cur.units += Number(row.units || 0);
     map.set(name, cur);
   }

@@ -101,9 +101,13 @@ export function ProductDialogClassic({
               <div>
                 <label>
                   <span>{tr("posColCategory")}</span>
-                  <select value={form.category_id} onChange={(e) => set({ category_id: e.target.value ? Number(e.target.value) : "" })}>
+                  <input value={form.quality} onChange={(e) => set({ quality: e.target.value })} />
+                </label>
+                <label>
+                  <span>{tr("posColKind")}</span>
+                  <select value={form.part_type_id} onChange={(e) => set({ part_type_id: e.target.value ? Number(e.target.value) : "" })}>
                     <option value="">-</option>
-                    {(lookups?.categories || []).map((c) => <option key={c.id} value={c.id}>{lang === "ar" ? c.name_ar : c.name_en}</option>)}
+                    {(lookups?.part_types || []).map((t) => <option key={t.id} value={t.id}>{lang === "ar" ? t.name_ar : t.name_en}</option>)}
                   </select>
                 </label>
                 <label>

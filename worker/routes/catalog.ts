@@ -32,11 +32,11 @@ function productSelectSql(availSql: string, stockJoin = "") {
 `;
 }
 
-const productSelect = productSelectSql("(p.current_stock - p.reserved_stock)");
+const productSelect = productSelectSql("GREATEST(COALESCE(p.current_stock,0) - COALESCE(p.reserved_stock,0), 0)");
 
 function scopedStockJoin(stockIds: number[] | null) {
   if (!stockIds) {
-    return { join: "", availSql: "(p.current_stock - p.reserved_stock)", binds: [] as number[] };
+    return { join: "", availSql: "GREATEST(COALESCE(p.current_stock,0) - COALESCE(p.reserved_stock,0), 0)", binds: [] as number[] };
   }
   if (!stockIds.length) {
     return { join: "", availSql: "0", binds: [] as number[] };
@@ -44,13 +44,12 @@ function scopedStockJoin(stockIds: number[] | null) {
   return {
     join: `LEFT JOIN (
       SELECT product_id,
-             COALESCE(SUM(remaining_qty),0) as scope_current,
-             COALESCE(SUM(reserved_qty),0) as scope_reserved
+             COALESCE(SUM(GREATEST(COALESCE(remaining_qty,0) - COALESCE(reserved_qty,0), 0)),0) as scope_available
       FROM inventory_batches
       WHERE location_id IN (${stockIds.map(() => "?").join(",")})
       GROUP BY product_id
     ) sc ON sc.product_id = p.id`,
-    availSql: "(COALESCE(sc.scope_current,0) - COALESCE(sc.scope_reserved,0))",
+    availSql: "COALESCE(sc.scope_available,0)",
     binds: stockIds,
   };
 }
@@ -61,21 +60,24 @@ async function applyStockScope<T extends Record<string, unknown>>(db: AppDb, pro
   const { results } = locIds.length
     ? await db
         .prepare(
-          `SELECT product_id, COALESCE(SUM(remaining_qty),0) as current_stock, COALESCE(SUM(reserved_qty),0) as reserved_stock
+          `SELECT product_id,
+                  COALESCE(SUM(GREATEST(COALESCE(remaining_qty,0) - COALESCE(reserved_qty,0), 0)),0) as available,
+                  COALESCE(SUM(GREATEST(COALESCE(reserved_qty,0), 0)),0) as reserved_stock,
+                  COALESCE(SUM(COALESCE(remaining_qty,0)),0) as current_stock
            FROM inventory_batches
            WHERE product_id IN (${ids.map(() => "?").join(",")}) AND location_id IN (${locIds.map(() => "?").join(",")})
            GROUP BY product_id`,
         )
         .bind(...ids, ...locIds)
-        .all<{ product_id: number; current_stock: number; reserved_stock: number }>()
-    : { results: [] as { product_id: number; current_stock: number; reserved_stock: number }[] };
+        .all<{ product_id: number; current_stock: number; reserved_stock: number; available: number }>()
+    : { results: [] as { product_id: number; current_stock: number; reserved_stock: number; available: number }[] };
   const map = new Map((results || []).map((r) => [r.product_id, r]));
   return products.map((p) => {
     if (String(p.kind || "product") === "service") return { ...p, available: 9999, stock_status: "in" };
-    const s = map.get(Number(p.id)) || { current_stock: 0, reserved_stock: 0 };
+    const s = map.get(Number(p.id)) || { current_stock: 0, reserved_stock: 0, available: 0 };
     const current_stock = Number(s.current_stock) || 0;
     const reserved_stock = Number(s.reserved_stock) || 0;
-    const available = current_stock - reserved_stock;
+    const available = Math.max(Number(s.available) || 0, 0);
     const min = Math.max(Number(p.reorder_point || 0), Number(p.min_stock || 0));
     return {
       ...p,
@@ -109,13 +111,69 @@ async function attachModels(db: AppDb, products: { id: number }[]) {
 }
 
 function withoutCost<T extends Record<string, unknown>>(user: { role_slug: string; permissions: string[] }, rows: T[]): T[] {
-  if (user.role_slug === "admin" || user.permissions.includes("costs.view") || user.permissions.includes("products.edit")) return rows;
+  if (
+    user.role_slug === "admin"
+    || user.permissions.includes("costs.view")
+    || user.permissions.includes("products.edit")
+    || user.permissions.includes("purchases.create")
+    || user.permissions.includes("purchases.view")
+  ) return rows;
   return rows.map((row) => {
     const next = { ...row };
     delete next.purchase_price;
     delete next.last_purchase_price;
     return next;
   });
+}
+
+async function attachLastBuy(db: AppDb, products: { id: number; supplier_name?: string; last_purchase_price?: number; purchase_price?: number }[]) {
+  if (!products.length) return products;
+  try {
+    const ids = products.map((p) => p.id);
+    const ph = ids.map(() => "?").join(",");
+    const fromPurchases = await db
+      .prepare(
+        `SELECT pii.product_id, s.name as supplier_name, pii.unit_cost, pi.date
+         FROM purchase_invoice_items pii
+         JOIN purchase_invoices pi ON pi.id = pii.purchase_id
+         LEFT JOIN suppliers s ON s.id = pi.supplier_id
+         WHERE pii.product_id IN (${ph})
+           AND IFNULL(pi.deleted_at,'') = ''
+           AND IFNULL(pi.status,'') NOT IN ('void','rejected')
+         ORDER BY pi.date DESC, pii.id DESC`,
+      )
+      .bind(...ids)
+      .all<{ product_id: number; supplier_name: string | null; unit_cost: number; date: string }>();
+    const fromSpp = await db
+      .prepare(
+        `SELECT spp.product_id, s.name as supplier_name, spp.unit_cost, spp.last_date as date
+         FROM supplier_product_prices spp
+         JOIN suppliers s ON s.id = spp.supplier_id
+         WHERE spp.product_id IN (${ph})
+         ORDER BY spp.last_date DESC, spp.id DESC`,
+      )
+      .bind(...ids)
+      .all<{ product_id: number; supplier_name: string | null; unit_cost: number; date: string }>();
+    const latest = new Map<number, { supplier_name: string; unit_cost: number }>();
+    for (const row of [...(fromPurchases.results || []), ...(fromSpp.results || [])]) {
+      if (latest.has(row.product_id)) continue;
+      latest.set(row.product_id, { supplier_name: String(row.supplier_name || "").trim(), unit_cost: Number(row.unit_cost || 0) });
+    }
+    return products.map((p) => {
+      const hit = latest.get(p.id);
+      return {
+        ...p,
+        last_supplier_name: hit?.supplier_name || p.supplier_name || "",
+        last_buy_price: hit?.unit_cost || Number(p.last_purchase_price || p.purchase_price || 0),
+      };
+    });
+  } catch {
+    return products.map((p) => ({
+      ...p,
+      last_supplier_name: p.supplier_name || "",
+      last_buy_price: Number(p.last_purchase_price || p.purchase_price || 0),
+    }));
+  }
 }
 
 async function attachUnits(db: AppDb, products: { id: number }[]) {
@@ -166,8 +224,8 @@ async function attachStockReport(db: AppDb, products: { id: number }[], locIds: 
   const warehouses = await db
     .prepare(
       `SELECT ib.product_id, sl.warehouse, sl.box, sl.rack, sl.shelf, sl.drawer, sl.name as location_name,
-              COALESCE(SUM(ib.remaining_qty - ib.reserved_qty),0) as qty,
-              COALESCE(SUM((ib.remaining_qty - ib.reserved_qty) * ib.unit_cost),0) as value
+              COALESCE(SUM(GREATEST(COALESCE(ib.remaining_qty,0) - COALESCE(ib.reserved_qty,0), 0)),0) as qty,
+              COALESCE(SUM(GREATEST(COALESCE(ib.remaining_qty,0) - COALESCE(ib.reserved_qty,0), 0) * COALESCE(ib.unit_cost,0)),0) as value
        FROM inventory_batches ib
        LEFT JOIN storage_locations sl ON sl.id = ib.location_id
        WHERE ib.product_id IN (${ph})${locFilter.replace("location_id", "ib.location_id")}
@@ -177,7 +235,7 @@ async function attachStockReport(db: AppDb, products: { id: number }[], locIds: 
     .all<{ product_id: number; warehouse: string | null; box: string | null; rack: string | null; shelf: string | null; drawer: string | null; location_name: string | null; qty: number; value: number }>();
   const costs = await db
     .prepare(
-      `SELECT product_id, COALESCE(SUM((remaining_qty - reserved_qty) * unit_cost),0) as cost_value
+      `SELECT product_id, COALESCE(SUM(GREATEST(COALESCE(remaining_qty,0) - COALESCE(reserved_qty,0), 0) * COALESCE(unit_cost,0)),0) as cost_value
        FROM inventory_batches
        WHERE product_id IN (${ph})${locFilter}
        GROUP BY product_id`,
@@ -439,7 +497,7 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
   });
 });
 
-catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create", "inventory.view"), async (c) => {
+catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create", "inventory.view", "purchases.create", "purchases.view"), async (c) => {
   const q = (new URL(c.req.url).searchParams.get("q") || "").trim();
   if (!q) return c.json({ data: [] });
   const l = like(q);
@@ -477,9 +535,11 @@ catalogRoutes.get("/products/search", requirePerm("products.view", "sales.create
     )
     .all();
   const withModels = await attachModels(c.env.DB, results as { id: number }[]);
+  const withUnits = await attachUnits(c.env.DB, withModels);
+  const withBuy = await attachLastBuy(c.env.DB, withUnits as { id: number; supplier_name?: string; last_purchase_price?: number; purchase_price?: number }[]);
   const data = withoutCost(
     c.get("user"),
-    await applyStockScope(c.env.DB, (await attachUnits(c.env.DB, withModels)) as Record<string, unknown>[], stockIds),
+    await applyStockScope(c.env.DB, withBuy as Record<string, unknown>[], stockIds),
   );
   return c.json({ data });
 });
@@ -492,12 +552,13 @@ catalogRoutes.get("/products/:id", requirePerm("products.view", "sales.create"),
   const scoped = await applyStockScope(c.env.DB, [row as Record<string, unknown>], stockIds);
   const withModels = await attachModels(c.env.DB, scoped as { id: number }[]);
   const withUnits = await attachUnits(c.env.DB, withModels);
+  const withBuy = await attachLastBuy(c.env.DB, withUnits as { id: number; supplier_name?: string; last_purchase_price?: number; purchase_price?: number }[]);
   const batches = await availableBatches(c.env.DB, id, stockIds || undefined);
   const allBatches = await c.env.DB
     .prepare("SELECT * FROM inventory_batches WHERE product_id = ? ORDER BY purchase_date DESC")
     .bind(id)
     .all();
-  return c.json({ data: { ...withUnits[0], batches: allBatches.results, available_batches: batches } });
+  return c.json({ data: { ...withBuy[0], batches: allBatches.results, available_batches: batches } });
 });
 
 catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
@@ -645,6 +706,32 @@ catalogRoutes.put("/products/:id", requirePerm("products.edit"), async (c) => {
     new_value: { sku: b.sku, name_ar: b.name_ar, selling_price: b.selling_price, min_selling_price: b.min_selling_price, purchase_price: b.purchase_price, active: b.active === 0 ? 0 : 1, kind: b.kind },
   });
   if (b.selling_price != null) await audit(c.env.DB, c.get("user"), "change_price", "product", id, `Selling price ${b.selling_price}`, { old_value: { selling_price: prev?.selling_price }, new_value: { selling_price: b.selling_price } });
+  return c.json({ ok: true });
+});
+
+catalogRoutes.get("/qualities", requirePerm("categories.manage", "products.view", "sales.create"), async (c) => {
+  const { results } = await c.env.DB
+    .prepare("SELECT TRIM(quality) as name, COUNT(*) as products FROM products WHERE (deleted_at IS NULL OR deleted_at = '') AND TRIM(IFNULL(quality,'')) != '' GROUP BY TRIM(quality) ORDER BY name")
+    .all<{ name: string; products: number }>();
+  return c.json({ data: results || [] });
+});
+
+catalogRoutes.put("/qualities", requirePerm("categories.manage"), async (c) => {
+  const b = await c.req.json<{ from?: string; to?: string }>();
+  const from = String(b.from || "").trim();
+  const to = String(b.to || "").trim();
+  if (!from || !to) return c.json({ error: "missing_name" }, 400);
+  await c.env.DB.prepare("UPDATE products SET quality = ? WHERE TRIM(quality) = ? AND (deleted_at IS NULL OR deleted_at = '')").bind(to, from).run();
+  await audit(c.env.DB, c.get("user"), "rename_quality", "product", 0, `${from} -> ${to}`);
+  return c.json({ ok: true });
+});
+
+catalogRoutes.delete("/qualities", requirePerm("categories.manage"), async (c) => {
+  const b = await c.req.json<{ name?: string }>().catch(() => ({ name: "" }));
+  const name = String(b.name || c.req.query("name") || "").trim();
+  if (!name) return c.json({ error: "missing_name" }, 400);
+  await c.env.DB.prepare("UPDATE products SET quality = NULL WHERE TRIM(quality) = ? AND (deleted_at IS NULL OR deleted_at = '')").bind(name).run();
+  await audit(c.env.DB, c.get("user"), "clear_quality", "product", 0, name);
   return c.json({ ok: true });
 });
 

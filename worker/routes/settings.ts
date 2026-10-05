@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { audit, getSettings, setSetting, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
+import { parseMapsCoords, extractMapsUrl, coordsFromMapsHtml } from "../lib/maps";
 
 export const settingsRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -9,6 +10,33 @@ settingsRoutes.get("/", requirePerm("settings.view", "dashboard.view"), async (c
   const methods = await c.env.DB.prepare("SELECT * FROM payment_methods ORDER BY sort_order").all();
   const templates = await c.env.DB.prepare("SELECT * FROM whatsapp_templates").all();
   return c.json({ settings, payment_methods: methods.results, templates: templates.results });
+});
+
+settingsRoutes.get("/maps-coords", requirePerm("settings.edit", "settings.view"), async (c) => {
+  const raw = String(new URL(c.req.url).searchParams.get("url") || "").trim();
+  if (!raw) return c.json({ error: "missing_url" }, 400);
+  const url = extractMapsUrl(raw);
+  const direct = parseMapsCoords(url);
+  if (direct) return c.json(direct);
+  if (!/^https?:\/\//i.test(url)) return c.json({ error: "invalid_url" }, 400);
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+    const finalUrl = res.url || url;
+    const fromFinal = parseMapsCoords(finalUrl);
+    if (fromFinal) return c.json(fromFinal);
+    const text = await res.text();
+    const fromHtml = coordsFromMapsHtml(text.slice(0, 120000));
+    if (fromHtml) return c.json(fromHtml);
+  } catch {
+    return c.json({ error: "lookup_failed" }, 400);
+  }
+  return c.json({ error: "no_coords" }, 400);
 });
 
 settingsRoutes.put("/", requirePerm("settings.edit"), async (c) => {

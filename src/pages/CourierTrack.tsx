@@ -7,7 +7,7 @@ import { Btn, PrintBtn, PrintLetterhead } from "../components/ui";
 import { OsmMap } from "../components/OsmMap";
 import { useCourierGps } from "../hooks/useCourierGps";
 
-const CUSTODY = new Set(["out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement", "pending_delivery"]);
+const OPEN_DELIVERY = new Set(["held"]);
 const COLORS = ["#0f766e", "#1d4ed8", "#7c3aed", "#c2410c", "#be123c"];
 
 function pinCoords(lat: unknown, lng: unknown) {
@@ -26,7 +26,7 @@ export default function CourierTrack() {
 
   async function loadOrders() {
     const r = await get<{ data: any[] }>("/api/delivery/orders");
-    setOrders((r.data || []).filter((o) => CUSTODY.has(String(o.delivery_status || ""))));
+    setOrders((r.data || []).filter((o) => OPEN_DELIVERY.has(String(o.status || ""))));
   }
 
   async function loadLive() {

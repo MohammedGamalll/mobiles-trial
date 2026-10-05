@@ -3,6 +3,64 @@ import type { AppDb } from "./db";
 import { nextNumber, todayIso } from "./helpers";
 import { logMovement } from "./stock";
 
+/** Exact columns from the client template `products.xlsx` (row 3). */
+export const PRODUCT_IMPORT_HEADERS = [
+  "",
+  "رقم الصنف",
+  "اسم الصنف",
+  "إجمالى الكمية",
+  "الوحدة",
+  "سعر البيع",
+  "متوسط سعر الشراء",
+  "آخر سعر شراء",
+  "باركود",
+  "كود الصنف 1",
+  "التصنيف",
+  "النوع",
+  "الماركه",
+  "المورد",
+  "بكيه",
+  "رف+شوكه+درج",
+] as const;
+
+export function binPlace(rack?: unknown, shelf?: unknown, drawer?: unknown) {
+  return [rack, shelf, drawer].map((x) => String(x || "").trim()).filter(Boolean).join(" + ");
+}
+
+export function productToImportCells(row: Record<string, unknown>, hideCost = false): unknown[] {
+  const qty = Math.max(Number(row.available ?? 0) || 0, 0);
+  return [
+    row.sku || "",
+    row.name_ar || "",
+    qty,
+    row.unit || "",
+    Number(row.selling_price || 0) || 0,
+    hideCost ? "" : Number(row.purchase_price || 0) || 0,
+    hideCost ? "" : Number(row.last_purchase_price || row.purchase_price || 0) || 0,
+    row.barcode || "",
+    row.extra_code1 || "",
+    row.quality || "",
+    row.part_type_ar || row.part_type || "",
+    row.brand_ar || row.brand || "",
+    row.supplier_name || row.supplier || "",
+    row.box || "",
+    binPlace(row.rack, row.shelf, row.drawer) || String(row.location || row.location_name || ""),
+  ];
+}
+
+export function productsImportWorkbook(rows: unknown[][]) {
+  const wb = XLSX.utils.book_new();
+  const body = rows.map((r, i) => [i + 1, ...r]);
+  const ws = XLSX.utils.aoa_to_sheet([
+    ["البضاعة"],
+    [],
+    [...PRODUCT_IMPORT_HEADERS],
+    ...body,
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
 export type ProductImportRow = {
   sku: string;
   name_ar: string;
@@ -56,6 +114,7 @@ const HEADER_ALIASES: Record<string, keyof ProductImportRow> = {
   اجمالي_الكمية: "qty",
   إجمالى_الكمية: "qty",
   إجمالي_الكمية: "qty",
+  اجمالى_الكمية: "qty",
   الوحدة: "unit",
   سعر_البيع: "selling_price",
   متوسط_سعر_الشراء: "purchase_price",
@@ -184,6 +243,9 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
     }
   }
   if (!map) throw new Error("missing_headers");
+  const headerRow = grid[start - 1] || [];
+  const qualityCol = headerRow.findIndex((cell) => /تصنيف/u.test(cellStr(cell)) || /category/i.test(cellStr(cell)));
+  if (qualityCol >= 0) map.quality = qualityCol;
   const out: ProductImportRow[] = [];
   for (let i = start; i < grid.length; i++) {
     const row = grid[i] || [];
@@ -325,6 +387,42 @@ async function ensureModels(db: AppDb, cache: Map<string, number>, brandId: numb
   return ids;
 }
 
+async function updateImportedProduct(db: AppDb, id: number, r: ProductImportRow, cache: Map<string, number>) {
+  const brandId = await ensurePair(db, "brands", cache, r.brand);
+  const typeId = await ensurePair(db, "part_types", cache, r.part_type);
+  const supplierId = await ensureSupplier(db, cache, r.supplier);
+  const locationId = await ensureLocation(db, cache, r);
+  await db
+    .prepare(
+      `UPDATE products SET barcode=?, name_ar=?, name_en=?, brand_id=?, part_type_id=?, location_id=?, supplier_id=?,
+        purchase_price=?, selling_price=?, quality=?, unit=?, extra_code1=?, extra_code2=?, updated_at=datetime('now')
+       WHERE id=?`,
+    )
+    .bind(
+      r.barcode || null,
+      r.name_ar,
+      r.name_en,
+      brandId,
+      typeId,
+      locationId,
+      supplierId,
+      r.purchase_price,
+      r.selling_price,
+      r.quality || null,
+      r.unit || "قطعة",
+      r.extra_code1 || null,
+      r.extra_code2 || null,
+      id,
+    )
+    .run();
+  try {
+    await db.prepare("UPDATE products SET last_purchase_price = ? WHERE id = ?").bind(r.last_purchase_price, id).run();
+  } catch {
+    /* optional column */
+  }
+  return { brandId, typeId };
+}
+
 export async function importProductRows(db: AppDb, rows: ProductImportRow[], opts: { replace?: boolean; userId?: number } = {}) {
   if (opts.replace) {
     await db
@@ -333,20 +431,20 @@ export async function importProductRows(db: AppDb, rows: ProductImportRow[], opt
   }
   const cache = new Map<string, number>();
   let inserted = 0;
+  let updated = 0;
   let skipped = 0;
   const errors: { sku: string; error: string }[] = [];
   for (const r of rows) {
     try {
-      if (!opts.replace) {
-        const exists = await db.prepare("SELECT id FROM products WHERE sku = ? AND deleted_at IS NULL").bind(r.sku).first();
-        if (exists) {
-          skipped += 1;
-          continue;
-        }
+      const exists = await db.prepare("SELECT id FROM products WHERE sku = ? AND deleted_at IS NULL").bind(r.sku).first<{ id: number }>();
+      if (exists?.id) {
+        await updateImportedProduct(db, exists.id, r, cache);
+        updated += 1;
+        continue;
       }
       const brandId = await ensurePair(db, "brands", cache, r.brand);
       const typeId = await ensurePair(db, "part_types", cache, r.part_type);
-      const catId = await ensurePair(db, "categories", cache, r.quality);
+      const catId = null;
       const supplierId = await ensureSupplier(db, cache, r.supplier);
       const locationId = await ensureLocation(db, cache, r);
       const modelIds = await ensureModels(db, cache, brandId, r.model);
@@ -382,6 +480,7 @@ export async function importProductRows(db: AppDb, rows: ProductImportRow[], opt
         )
         .run();
       const id = ins.meta.last_row_id;
+      await db.prepare("UPDATE products SET quality = ?, unit = ? WHERE id = ?").bind(r.quality || null, r.unit || "قطعة", id).run();
       try {
         await db.prepare("UPDATE products SET last_purchase_price = ? WHERE id = ?").bind(r.last_purchase_price, id).run();
       } catch {
@@ -423,5 +522,5 @@ export async function importProductRows(db: AppDb, rows: ProductImportRow[], opt
       errors.push({ sku: r.sku, error: e instanceof Error ? e.message : "fail" });
     }
   }
-  return { inserted, skipped, total: rows.length, errors: errors.slice(0, 20) };
+  return { inserted, updated, skipped, total: rows.length, errors: errors.slice(0, 20) };
 }

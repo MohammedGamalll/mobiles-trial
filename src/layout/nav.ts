@@ -31,7 +31,6 @@ import {
   Hash,
   Receipt,
   CalendarRange,
-  ClipboardCheck,
 } from "lucide-react";
 import type { Msg } from "../i18n";
 
@@ -62,9 +61,8 @@ export const modernNav: NavGroup[] = [
   {
     label: "delivery",
     items: [
-      { to: "/courier", key: "myOrders", icon: Truck, perm: "delivery.mark", agentOnly: true },
+      { to: "/courier", key: "myOrders", icon: Truck, perm: "delivery.view", agentOnly: true },
       { to: "/delivery", key: "delivery", icon: Truck, perm: "delivery.update" },
-      { to: "/delivery/settle", key: "settleCourier", icon: ClipboardCheck, perm: "delivery.settle" },
       { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.view" },
     ],
   },

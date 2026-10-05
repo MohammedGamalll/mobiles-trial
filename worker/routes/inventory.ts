@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { audit, nextNumber, notify, paginate, round2, todayIso, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
-import { applyDate, applyEq, applyLocationCol, applyRange, applySearch, listParams } from "../lib/filters";
-import { availableBatches, logMovement, maybeStockAlerts, planAllocation, restockToBatch, weightedCost } from "../lib/stock";
+import { applyDate, applyEq, applyLocationCol, applyRange, applySearch, listParams, stockScopeIds } from "../lib/filters";
+import { availCostSql, availQtySql, availableBatches, logMovement, maybeStockAlerts, planAllocation, reservedCostSql, reservedQtySql, restockToBatch, weightedCost } from "../lib/stock";
 import { postPurchaseJournal, tryLedger } from "../lib/ledger";
 import { mergeWarehouseStats } from "../lib/warehouse";
+import { notifyAdmins, safeNotify } from "../lib/notifications";
 
 export const inventoryRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -68,33 +69,155 @@ inventoryRoutes.get("/daily-ops", requirePerm("inventory.view", "products.view")
 });
 
 inventoryRoutes.get("/summary", requirePerm("inventory.view"), async (c) => {
-  const [value, low, out, reserved, warehouses] = await c.env.DB.batch([
-    c.env.DB.prepare(
-      `SELECT COALESCE(SUM(remaining_qty * unit_cost),0) as stock_value,
-              COALESCE(SUM(remaining_qty),0) as units
-       FROM inventory_batches`,
-    ),
-    c.env.DB.prepare(
-      `SELECT COUNT(*) as n FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) > 0 AND (current_stock - reserved_stock) <= min_stock`,
-    ),
-    c.env.DB.prepare(`SELECT COUNT(*) as n FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) <= 0`),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(reserved_stock),0) as n FROM products WHERE deleted_at IS NULL`),
-    c.env.DB.prepare(
-      `SELECT COALESCE(sl.warehouse, sl.name, 'بدون مخزن') as name,
-              COALESCE(SUM(ib.remaining_qty * ib.unit_cost),0) as stock_value,
-              COALESCE(SUM(ib.remaining_qty),0) as units
-       FROM inventory_batches ib
-       LEFT JOIN storage_locations sl ON sl.id = ib.location_id
-       GROUP BY sl.warehouse, sl.name`,
-    ),
+  const url = new URL(c.req.url);
+  const p = listParams(url);
+  const stockIds = await stockScopeIds(c.env.DB, p);
+  const avail = availQtySql("ib.remaining_qty", "ib.reserved_qty");
+  const availCost = availCostSql("ib.remaining_qty", "ib.reserved_qty", "ib.unit_cost");
+  const availRetail = `(${avail} * COALESCE(p.selling_price,0))`;
+  const reserved = reservedQtySql("ib.reserved_qty");
+  const reservedCost = reservedCostSql("ib.reserved_qty", "ib.unit_cost");
+  const reservedRetail = `(${reserved} * COALESCE(p.selling_price,0))`;
+  const warehouseName = `COALESCE(NULLIF(TRIM(sl.warehouse), ''), sl.name, 'بدون مخزن')`;
+
+  const batchWhere = ["p.deleted_at IS NULL", "COALESCE(p.kind,'product') != 'service'"];
+  const batchParams: (string | number)[] = [];
+  if (stockIds) {
+    if (!stockIds.length) batchWhere.push("1=0");
+    else {
+      batchWhere.push(`ib.location_id IN (${stockIds.map(() => "?").join(",")})`);
+      batchParams.push(...stockIds);
+    }
+  }
+  if (p.brand_id) {
+    batchWhere.push("p.brand_id = ?");
+    batchParams.push(Number(p.brand_id));
+  }
+  if (p.category_id) {
+    batchWhere.push("p.category_id = ?");
+    batchParams.push(Number(p.category_id));
+  }
+  if (p.model_id) {
+    batchWhere.push("EXISTS (SELECT 1 FROM product_models pm WHERE pm.product_id = p.id AND pm.model_id = ?)");
+    batchParams.push(Number(p.model_id));
+  }
+  const batchSql = batchWhere.join(" AND ");
+  const batchFrom = `FROM inventory_batches ib
+       JOIN products p ON p.id = ib.product_id`;
+
+  const locWhere = ["1=1"];
+  const locParams: (string | number)[] = [];
+  if (stockIds) {
+    if (!stockIds.length) locWhere.push("1=0");
+    else {
+      locWhere.push(`ib.location_id IN (${stockIds.map(() => "?").join(",")})`);
+      locParams.push(...stockIds);
+    }
+  }
+
+  const prodWhere = ["p.deleted_at IS NULL", "COALESCE(p.kind,'product') != 'service'"];
+  const prodParams: (string | number)[] = [];
+  if (p.brand_id) {
+    prodWhere.push("p.brand_id = ?");
+    prodParams.push(Number(p.brand_id));
+  }
+  if (p.category_id) {
+    prodWhere.push("p.category_id = ?");
+    prodParams.push(Number(p.category_id));
+  }
+  if (p.model_id) {
+    prodWhere.push("EXISTS (SELECT 1 FROM product_models pm WHERE pm.product_id = p.id AND pm.model_id = ?)");
+    prodParams.push(Number(p.model_id));
+  }
+  if (stockIds) {
+    if (!stockIds.length) prodWhere.push("1=0");
+    else {
+      const ph = stockIds.map(() => "?").join(",");
+      prodWhere.push(`(p.location_id IN (${ph}) OR EXISTS (
+        SELECT 1 FROM inventory_batches ibx WHERE ibx.product_id = p.id AND ibx.location_id IN (${ph})
+      ))`);
+      prodParams.push(...stockIds, ...stockIds);
+    }
+  }
+
+  const aggJoin = `LEFT JOIN (
+      SELECT ib.product_id,
+             COALESCE(SUM(${avail}),0) as units,
+             COALESCE(SUM(${availCost}),0) as stock_value
+      FROM inventory_batches ib
+      WHERE ${locWhere.join(" AND ")}
+      GROUP BY ib.product_id
+    ) a ON a.product_id = p.id`;
+  const lowRule = `COALESCE(a.units,0) > 0 AND COALESCE(a.units,0) <= CASE WHEN COALESCE(p.reorder_point,0) > COALESCE(p.min_stock,0) THEN p.reorder_point ELSE COALESCE(p.min_stock,0) END`;
+  const prodSql = prodWhere.join(" AND ");
+
+  const [value, low, out, warehouses] = await c.env.DB.batch([
+    c.env.DB
+      .prepare(
+        `SELECT COALESCE(SUM(${availCost}),0) as stock_value,
+                COALESCE(SUM(${availRetail}),0) as stock_retail,
+                COALESCE(SUM(${avail}),0) as units,
+                COALESCE(SUM(${reserved}),0) as reserved,
+                COALESCE(SUM(${reservedCost}),0) as reserved_value,
+                COALESCE(SUM(${reservedRetail}),0) as reserved_retail
+         ${batchFrom}
+         WHERE ${batchSql}`,
+      )
+      .bind(...batchParams),
+    c.env.DB
+      .prepare(
+        `SELECT COUNT(*) as n,
+                COALESCE(SUM(COALESCE(a.units,0)),0) as units,
+                COALESCE(SUM(COALESCE(a.stock_value,0)),0) as stock_value,
+                COALESCE(SUM(COALESCE(a.units,0) * COALESCE(p.selling_price,0)),0) as stock_retail
+         FROM products p
+         ${aggJoin}
+         WHERE ${prodSql} AND ${lowRule}`,
+      )
+      .bind(...locParams, ...prodParams),
+    c.env.DB
+      .prepare(
+        `SELECT COUNT(*) as n,
+                COALESCE(SUM(COALESCE(a.units,0)),0) as units,
+                COALESCE(SUM(COALESCE(a.stock_value,0)),0) as stock_value,
+                COALESCE(SUM(COALESCE(a.units,0) * COALESCE(p.selling_price,0)),0) as stock_retail
+         FROM products p
+         ${aggJoin}
+         WHERE ${prodSql} AND COALESCE(a.units,0) <= 0`,
+      )
+      .bind(...locParams, ...prodParams),
+    c.env.DB
+      .prepare(
+        `SELECT ${warehouseName} as name,
+                COALESCE(SUM(${availCost}),0) as stock_value,
+                COALESCE(SUM(${availRetail}),0) as retail_value,
+                COALESCE(SUM(${avail}),0) as units
+         ${batchFrom}
+         LEFT JOIN storage_locations sl ON sl.id = ib.location_id
+         WHERE ${batchSql}
+         GROUP BY ${warehouseName}`,
+      )
+      .bind(...batchParams),
   ]);
+  const valueRow = (value.results[0] || {}) as { stock_value?: number; stock_retail?: number; units?: number; reserved?: number; reserved_value?: number; reserved_retail?: number };
+  const lowRow = (low.results[0] || {}) as { n?: number; units?: number; stock_value?: number; stock_retail?: number };
+  const outRow = (out.results[0] || {}) as { n?: number; units?: number; stock_value?: number; stock_retail?: number };
   return c.json({
-    stock_value: (value.results[0] as { stock_value: number }).stock_value,
-    units: (value.results[0] as { units: number }).units,
-    low: (low.results[0] as { n: number }).n,
-    out: (out.results[0] as { n: number }).n,
-    reserved: (reserved.results[0] as { n: number }).n,
-    by_warehouse: mergeWarehouseStats(warehouses.results as { name?: string; stock_value?: number; units?: number }[]),
+    stock_value: Number(valueRow.stock_value) || 0,
+    stock_retail: Number(valueRow.stock_retail) || 0,
+    units: Number(valueRow.units) || 0,
+    reserved: Number(valueRow.reserved) || 0,
+    reserved_value: Number(valueRow.reserved_value) || 0,
+    reserved_retail: Number(valueRow.reserved_retail) || 0,
+    low: Number(lowRow.n) || 0,
+    low_units: Number(lowRow.units) || 0,
+    low_value: Number(lowRow.stock_value) || 0,
+    low_retail: Number(lowRow.stock_retail) || 0,
+    out: Number(outRow.n) || 0,
+    out_units: Number(outRow.units) || 0,
+    out_value: Number(outRow.stock_value) || 0,
+    out_retail: Number(outRow.stock_retail) || 0,
+    by_warehouse: mergeWarehouseStats(warehouses.results as { name?: string; stock_value?: number; retail_value?: number; units?: number }[]),
   });
 });
 
@@ -108,7 +231,7 @@ inventoryRoutes.get("/batches", requirePerm("inventory.view"), async (c) => {
   applyEq(where, params, "p.brand_id", p.brand_id, true);
   applyEq(where, params, "p.category_id", p.category_id, true);
   await applyLocationCol(c.env.DB, where, params, "ib.location_id", p);
-  applyRange(where, params, "(ib.remaining_qty - ib.reserved_qty)", p.qty_min, p.qty_max);
+  applyRange(where, params, "GREATEST(COALESCE(ib.remaining_qty,0) - COALESCE(ib.reserved_qty,0), 0)", p.qty_min, p.qty_max);
   applySearch(where, params, p.q, ["ib.batch_code", "p.name_ar", "p.name_en", "p.sku", "IFNULL(p.barcode,'')", "IFNULL(pi.number,'')"], ["p.barcode", "p.sku"]);
   const whereSql = where.join(" AND ");
   const count = await c.env.DB
@@ -121,7 +244,7 @@ inventoryRoutes.get("/batches", requirePerm("inventory.view"), async (c) => {
     .prepare(
       `SELECT ib.*, p.name_ar, p.name_en, p.sku, pi.number as purchase_number, s.name as supplier_name,
               sl.name as location_name, sl.path as location_path,
-              (ib.remaining_qty - ib.reserved_qty) as available
+              GREATEST(COALESCE(ib.remaining_qty,0) - COALESCE(ib.reserved_qty,0), 0) as available
        FROM inventory_batches ib
        JOIN products p ON p.id = ib.product_id
        LEFT JOIN purchase_invoices pi ON pi.id = ib.purchase_id
@@ -313,7 +436,7 @@ inventoryRoutes.post("/purchases", requirePerm("purchases.create"), async (c) =>
     notes?: string;
     paid?: number;
     payment_method?: string;
-    items: { product_id: number; quantity: number; unit_cost: number; discount?: number; expiry_date?: string; production_date?: string }[];
+    items: { product_id: number; quantity: number; unit_cost: number; selling_price?: number; discount?: number; expiry_date?: string; production_date?: string }[];
   }>();
   if (!b.items?.length) return c.json({ error: "no_items" }, 400);
   if (!b.supplier_id) return c.json({ error: "supplier_required" }, 400);
@@ -341,7 +464,28 @@ inventoryRoutes.post("/purchases", requirePerm("purchases.create"), async (c) =>
         .bind(id, i.product_id, i.quantity, i.unit_cost, i.discount || 0, round2(i.quantity * i.unit_cost - (i.discount || 0)), i.expiry_date || null, i.production_date || null),
     ),
   );
+  const sellUpdates = b.items
+    .filter((i) => i.selling_price != null && Number.isFinite(Number(i.selling_price)))
+    .map((i) =>
+      c.env.DB.prepare("UPDATE products SET selling_price = ?, updated_at = datetime('now') WHERE id = ?").bind(Number(i.selling_price), i.product_id),
+    );
+  if (sellUpdates.length) await c.env.DB.batch(sellUpdates);
   await audit(c.env.DB, c.get("user"), "purchase", "purchase", id, `Create ${number}`);
+  await safeNotify(async () => {
+    const supplier = b.supplier_id
+      ? await c.env.DB.prepare("SELECT name FROM suppliers WHERE id = ?").bind(b.supplier_id).first<{ name: string }>()
+      : null;
+    await notifyAdmins(c.env.DB, {
+      type: "stock",
+      titleAr: "فاتورة مشتريات جديدة",
+      titleEn: "New purchase invoice",
+      bodyAr: `تم تسجيل فاتورة مشتريات جديدة من المورد ${supplier?.name || ""} — ${number}`,
+      bodyEn: `A new purchase was recorded from ${supplier?.name || "a supplier"} — ${number}`,
+      entityType: "purchase",
+      entityId: Number(id),
+      actionUrl: `/purchases/${id}`,
+    });
+  });
   return c.json({ id, number }, 201);
 });
 

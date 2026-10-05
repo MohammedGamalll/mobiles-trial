@@ -5,6 +5,7 @@ import { accrueCommission } from "../lib/commission";
 import { applyDate, applyEq, applySearch, listParams } from "../lib/filters";
 import { CUSTODY_STATUSES, isCustodyStatus, normalizeOutcome, settleInvoice, type ChargeTo } from "../lib/delivery-pod";
 import { pingDistanceOk } from "../lib/geo";
+import { notifyAccountants, notifyAdmins, safeNotify, sendNotification, userIdForAgent } from "../lib/notifications";
 
 export const deliveryRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -16,10 +17,11 @@ deliveryRoutes.get("/orders", requirePerm("delivery.view", "sales.view", "delive
   if (user.role_slug === "delivery" && user.delivery_agent_id && !user.permissions.includes("delivery.all")) {
     where.push("si.delivery_agent_id = ?");
     params.push(user.delivery_agent_id);
+    where.push("si.status = 'held'");
   } else {
     applyEq(where, params, "si.delivery_agent_id", p.agent_id || p.sales_agent_id, true);
   }
-  applyEq(where, params, "si.delivery_status", p.status);
+  applyEq(where, params, "si.status", p.status);
   if (p.area) {
     where.push("si.area LIKE ?");
     params.push(`%${p.area}%`);
@@ -86,6 +88,19 @@ deliveryRoutes.post("/orders/:id/assign", requirePerm("delivery.update"), async 
     .bind(agent.id, agent.name, agent.code, agent.phone, nowIso(), id)
     .run();
   await audit(c.env.DB, c.get("user"), "assign_courier", "invoice", id, `${inv.number} → ${agent.code}`);
+  await safeNotify(async () => {
+    const courierUserId = await userIdForAgent(c.env.DB, Number(agent.id));
+    await sendNotification(c.env.DB, courierUserId, {
+      type: "delivery",
+      titleAr: "أوردر جديد",
+      titleEn: "New order",
+      bodyAr: `تم تعيين طلب توصيل جديد لك — ${inv.number}`,
+      bodyEn: `A new delivery was assigned to you — ${inv.number}`,
+      entityType: "invoice",
+      entityId: id,
+      actionUrl: "/courier",
+    });
+  });
   return c.json({ ok: true, delivery_agent_id: agent.id, status: "out_for_delivery" });
 });
 
@@ -121,6 +136,20 @@ deliveryRoutes.post("/orders/:id/mark-delivered", requirePerm("delivery.mark"), 
     .bind(id)
     .run();
   await audit(c.env.DB, user, "delivery_mark", "invoice", id, inv.number);
+  await safeNotify(async () => {
+    const payload = {
+      type: "delivery",
+      titleAr: "طلب بانتظار التسوية",
+      titleEn: "Awaiting settlement",
+      bodyAr: `المندوب ${user.full_name} قام بتوصيل الطلب ${inv.number} وفي انتظار تسوية النقدية`,
+      bodyEn: `${user.full_name} marked ${inv.number} delivered and cash is pending settlement`,
+      entityType: "invoice",
+      entityId: id,
+      actionUrl: "/delivery/settle",
+    };
+    await notifyAdmins(c.env.DB, payload);
+    await notifyAccountants(c.env.DB, payload);
+  });
   return c.json({ ok: true, delivery_status: "pending_settlement" });
 });
 
@@ -337,7 +366,7 @@ deliveryRoutes.get("/live", requirePerm("delivery.view", "sales.view"), async (c
     .prepare(
       `SELECT a.*,
         (SELECT COUNT(*) FROM sales_invoices si WHERE si.delivery_agent_id = a.id AND si.type = 'delivery' AND si.deleted_at IS NULL
-          AND si.delivery_status IN ('pending_delivery','out_for_delivery','rescheduled','customer_unavailable')) as open_orders
+          AND si.status = 'held') as open_orders
        FROM delivery_agents a WHERE a.deleted_at IS NULL ORDER BY a.code`,
     )
     .all();
@@ -346,8 +375,6 @@ deliveryRoutes.get("/live", requirePerm("delivery.view", "sales.view"), async (c
     .all();
   return c.json({ data: { agents, trail } });
 });
-
-const CUSTODY_SQL = CUSTODY_STATUSES.map(() => "?").join(",");
 
 async function resolveCourierAgentId(
   db: AppBindings["DB"],
@@ -430,12 +457,9 @@ deliveryRoutes.post("/tracking/ping", requirePerm("delivery.update", "delivery.v
   const open = await c.env.DB
     .prepare(
       `SELECT id FROM sales_invoices WHERE delivery_agent_id = ? AND type = 'delivery' AND deleted_at IS NULL
-        AND (
-          delivery_status IN (${CUSTODY_SQL})
-          OR delivery_status = 'pending_delivery'
-        ) LIMIT 1`,
+        AND status = 'held' LIMIT 1`,
     )
-    .bind(agentId, ...CUSTODY_STATUSES)
+    .bind(agentId)
     .first();
   return c.json({ ok: true, at: now, speed_mps: speed, skipped: open ? undefined : "no_active_orders" });
 });
@@ -447,7 +471,7 @@ deliveryRoutes.get("/tracking/live", requirePerm("delivery.view", "delivery.upda
     .prepare(
       `SELECT a.id, a.code, a.name, a.phone, a.lat, a.lng, a.last_seen_at, a.status,
         (SELECT COUNT(*) FROM sales_invoices si WHERE si.delivery_agent_id = a.id AND si.type = 'delivery' AND si.deleted_at IS NULL
-          AND (si.delivery_status IN ('pending_delivery','out_for_delivery','rescheduled','customer_unavailable','pending_settlement'))) AS open_orders
+          AND si.status = 'held') AS open_orders
        FROM delivery_agents a WHERE a.deleted_at IS NULL ORDER BY a.code`,
     )
     .all<{

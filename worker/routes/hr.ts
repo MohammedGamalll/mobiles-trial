@@ -4,6 +4,7 @@ import { requirePerm } from "../lib/auth";
 import { haversineMeters, workplaceFromSettings } from "../lib/geo";
 import { postPayrollJournal, tryLedger } from "../lib/ledger";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
+import { notifyAdmins, safeNotify, sendNotification, userIdForEmployee } from "../lib/notifications";
 
 export const hrRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -624,6 +625,19 @@ hrRoutes.post("/leaves", requirePerm("leaves.own", "leaves.manage"), async (c) =
     .bind(employeeId, b.type || "annual", b.date_from, b.date_to, days, b.reason || null, user.id)
     .run();
   await audit(c.env.DB, user, "create_leave", "leave", r.meta.last_row_id, b.reason || "");
+  await safeNotify(async () => {
+    const emp = await c.env.DB.prepare("SELECT name FROM employees WHERE id = ?").bind(employeeId).first<{ name: string }>();
+    await notifyAdmins(c.env.DB, {
+      type: "hr",
+      titleAr: "طلب HR جديد",
+      titleEn: "New HR request",
+      bodyAr: `الموظف ${emp?.name || ""} طلب أجازة جديدة`,
+      bodyEn: `${emp?.name || "An employee"} requested leave`,
+      entityType: "leave",
+      entityId: Number(r.meta.last_row_id),
+      actionUrl: "/hr/leaves",
+    });
+  });
   return c.json({ id: r.meta.last_row_id }, 201);
 });
 
@@ -637,6 +651,20 @@ hrRoutes.post("/leaves/:id/approve", requirePerm("leaves.manage"), async (c) => 
     .bind(c.get("user").id, id)
     .run();
   await audit(c.env.DB, c.get("user"), "approve_leave", "leave", id, "Approve leave");
+  await safeNotify(async () => {
+    const leave = await c.env.DB.prepare("SELECT employee_id FROM leave_requests WHERE id = ?").bind(id).first<{ employee_id: number }>();
+    const uid = await userIdForEmployee(c.env.DB, leave?.employee_id);
+    await sendNotification(c.env.DB, uid, {
+      type: "hr",
+      titleAr: "تحديث حالة الطلب",
+      titleEn: "Request update",
+      bodyAr: "تم قبول طلبك",
+      bodyEn: "Your leave request was approved",
+      entityType: "leave",
+      entityId: id,
+      actionUrl: "/hr/leaves",
+    });
+  });
   return c.json({ ok: true });
 });
 
@@ -647,6 +675,20 @@ hrRoutes.post("/leaves/:id/reject", requirePerm("leaves.manage"), async (c) => {
     .bind(c.get("user").id, id)
     .run();
   await audit(c.env.DB, c.get("user"), "reject_leave", "leave", id, "Reject leave");
+  await safeNotify(async () => {
+    const leave = await c.env.DB.prepare("SELECT employee_id FROM leave_requests WHERE id = ?").bind(id).first<{ employee_id: number }>();
+    const uid = await userIdForEmployee(c.env.DB, leave?.employee_id);
+    await sendNotification(c.env.DB, uid, {
+      type: "hr",
+      titleAr: "تحديث حالة الطلب",
+      titleEn: "Request update",
+      bodyAr: "تم رفض طلبك",
+      bodyEn: "Your leave request was rejected",
+      entityType: "leave",
+      entityId: id,
+      actionUrl: "/hr/leaves",
+    });
+  });
   return c.json({ ok: true });
 });
 
@@ -721,15 +763,41 @@ hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (
     .bind(employeeId, round2(b.amount), date, month, b.notes || null, c.get("user").id)
     .run();
   await audit(c.env.DB, c.get("user"), "create_advance", "advance", r.meta.last_row_id, String(b.amount));
+  await safeNotify(async () => {
+    const emp = await c.env.DB.prepare("SELECT name FROM employees WHERE id = ?").bind(employeeId).first<{ name: string }>();
+    await notifyAdmins(c.env.DB, {
+      type: "hr",
+      titleAr: "طلب HR جديد",
+      titleEn: "New HR request",
+      bodyAr: `الموظف ${emp?.name || ""} طلب سلفة جديدة`,
+      bodyEn: `${emp?.name || "An employee"} received a new advance`,
+      entityType: "advance",
+      entityId: Number(r.meta.last_row_id),
+      actionUrl: "/hr/employees",
+    });
+  });
   return c.json({ id: r.meta.last_row_id, employee_id: employeeId }, 201);
 });
 
 hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll"), async (c) => {
   const id = Number(c.req.param("id"));
-  const row = await c.env.DB.prepare("SELECT status FROM salary_advances WHERE id = ?").bind(id).first<{ status: string }>();
+  const row = await c.env.DB.prepare("SELECT status, employee_id FROM salary_advances WHERE id = ?").bind(id).first<{ status: string; employee_id: number }>();
   if (!row) return c.json({ error: "not_found" }, 404);
   if (row.status !== "open") return c.json({ error: "not_open" }, 400);
   await c.env.DB.prepare("UPDATE salary_advances SET status = 'cancelled' WHERE id = ?").bind(id).run();
+  await safeNotify(async () => {
+    const uid = await userIdForEmployee(c.env.DB, row.employee_id);
+    await sendNotification(c.env.DB, uid, {
+      type: "hr",
+      titleAr: "تحديث حالة الطلب",
+      titleEn: "Request update",
+      bodyAr: "تم رفض طلبك",
+      bodyEn: "Your advance was cancelled",
+      entityType: "advance",
+      entityId: id,
+      actionUrl: "/hr/employees",
+    });
+  });
   return c.json({ ok: true });
 });
 

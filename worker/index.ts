@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppBindings, AppVars } from "./lib/helpers";
 import { like, todayIso } from "./lib/helpers";
-import { addDays, applyProductScope, applySearch, listParams, numVal, resolveDates } from "./lib/filters";
+import { addDays, applyProductScope, listParams, numVal, resolveDates } from "./lib/filters";
 import { numAgg, parkedInvoiceSql } from "./lib/pos-today";
 import { requireAuth, requirePerm } from "./lib/auth";
 import { authRoutes } from "./routes/auth";
@@ -25,6 +25,7 @@ import { importRoutes } from "./routes/import";
 import { sahlRoutes } from "./routes/sahl";
 import { uploadRoutes, publicUploadRoutes } from "./routes/uploads";
 import { withLocationLabels } from "./lib/location-label";
+import { notificationRoutes } from "./routes/notifications";
 
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -94,7 +95,7 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     profitPrev: db.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND ${live} AND DATE(date) BETWEEN ? AND ?${sx}`).bind(prevFrom, prevTo, ...salesBinds),
     purchases: db.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND DATE(date) BETWEEN ? AND ?`).bind(from, to),
     purchasesPrev: db.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND DATE(date) BETWEEN ? AND ?`).bind(prevFrom, prevTo),
-    stockValue: db.prepare(`SELECT COALESCE(SUM(remaining_qty * unit_cost),0) as n FROM inventory_batches`),
+    stockValue: db.prepare(`SELECT COALESCE(SUM(GREATEST(COALESCE(remaining_qty,0) - COALESCE(reserved_qty,0), 0) * COALESCE(unit_cost,0)),0) as n FROM inventory_batches`),
     debtors: db.prepare(`SELECT COALESCE(SUM(current_balance),0) as n FROM customers WHERE current_balance > 0`),
     pending: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE type='delivery' AND delivery_status IN ('pending_delivery','out_for_delivery','rescheduled','customer_unavailable') AND deleted_at IS NULL`),
     completed: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE type='delivery' AND delivery_status IN ('delivered','completed') AND deleted_at IS NULL`),
@@ -196,40 +197,7 @@ app.get("/api/search", async (c) => {
   });
 });
 
-app.get("/api/notifications", async (c) => {
-  const p = listParams(new URL(c.req.url));
-  const where = ["1=1"];
-  const params: (string | number)[] = [];
-  if (p.type) {
-    where.push("type = ?");
-    params.push(p.type);
-  }
-  if (p.read === "1") where.push("read_at IS NOT NULL");
-  if (p.read === "0" || p.unread === "1") where.push("read_at IS NULL");
-  if (p.module || p.entity_type) {
-    where.push("IFNULL(entity_type,'') = ?");
-    params.push(p.module || p.entity_type);
-  }
-  applySearch(where, params, p.q, ["title_ar", "title_en", "body_ar", "body_en"]);
-  const { from, to } = resolveDates(p);
-  if (from) {
-    where.push("date(created_at) >= date(?)");
-    params.push(from);
-  }
-  if (to) {
-    where.push("date(created_at) <= date(?)");
-    params.push(to);
-  }
-  const { results } = await c.env.DB.prepare(`SELECT * FROM notifications WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT 80`).bind(...params).all();
-  return c.json({ data: results });
-});
-
-app.post("/api/notifications/read", async (c) => {
-  const b = await c.req.json<{ id?: number }>();
-  if (b.id) await c.env.DB.prepare("UPDATE notifications SET read_at = datetime('now') WHERE id = ?").bind(b.id).run();
-  else await c.env.DB.prepare("UPDATE notifications SET read_at = datetime('now') WHERE read_at IS NULL").run();
-  return c.json({ ok: true });
-});
+app.route("/api/notifications", notificationRoutes);
 
 app.get("/api/audit", requirePerm("audit.view"), async (c) => {
   const url = new URL(c.req.url);
@@ -274,7 +242,7 @@ app.get("/api/audit", requirePerm("audit.view"), async (c) => {
 });
 
 app.get("/api/lookups", async (c) => {
-  const [brands, types, cats, models, locations, suppliers, methods, agents, lists, branches, cash] = await c.env.DB.batch([
+  const [brands, types, cats, models, locations, suppliers, methods, agents, lists, branches, cash, qualities] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT * FROM brands WHERE deleted_at IS NULL AND active = 1 ORDER BY name_en"),
     c.env.DB.prepare("SELECT * FROM part_types WHERE deleted_at IS NULL AND active = 1 ORDER BY name_en"),
     c.env.DB.prepare("SELECT * FROM categories WHERE deleted_at IS NULL AND active = 1 ORDER BY name_en"),
@@ -286,11 +254,13 @@ app.get("/api/lookups", async (c) => {
     c.env.DB.prepare("SELECT * FROM price_lists WHERE active = 1 ORDER BY id"),
     c.env.DB.prepare("SELECT * FROM branches WHERE active = 1 ORDER BY id"),
     c.env.DB.prepare("SELECT id, kind, name, name_en, account_id, current_balance FROM cash_accounts WHERE active = 1 ORDER BY kind, id"),
+    c.env.DB.prepare("SELECT TRIM(quality) as name, COUNT(*) as products FROM products WHERE (deleted_at IS NULL OR deleted_at = '') AND TRIM(IFNULL(quality,'')) != '' GROUP BY TRIM(quality) ORDER BY name"),
   ]);
   return c.json({
     brands: brands.results,
     part_types: types.results,
     categories: cats.results,
+    qualities: qualities.results,
     models: models.results,
     locations: withLocationLabels(locations.results || []).filter((l) => Number((l as { active?: number }).active) !== 0),
     suppliers: suppliers.results,

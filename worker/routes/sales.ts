@@ -13,6 +13,7 @@ import {
   type AppDb,
 } from "../lib/helpers";
 import { applyInvoiceListFilters, INVOICE_SORT, listParams, sortSql, stockScopeIds } from "../lib/filters";
+import { safeNotify, sendNotification, userIdForAgent } from "../lib/notifications";
 import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
@@ -255,6 +256,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     if (!salesAgent) salesAgentId = null;
   }
   const planned: { item: CartItem; product: { id: number; name_ar: string; sku: string; min_selling_price: number; selling_price: number; kind: string; track_serial?: number; location_id?: number | null }; alloc: Allocation[]; lineTotal: number; unitCost: number; isService: boolean; stockQty: number }[] = [];
+  const deliveryHeld = type === "delivery" && !b.quote && !b.order;
+  const asHold = !!b.hold || !!b.quote || !!b.order || deliveryHeld;
   const reserveHold = !!(b.reserve && (b.quote || b.hold || b.order));
   const saleLocationId = Number(b.location_id || 0) || null;
   const saleScope = await stockScopeIds(c.env.DB, { location_id: saleLocationId || undefined, warehouse: (b as { warehouse?: string }).warehouse });
@@ -284,7 +287,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     const isService = product.kind === "service" || Number(product.non_stock) === 1;
     let alloc: Allocation[] = [];
     let unitCost = Number(product.purchase_price || 0);
-    if (!isService && product.track_serial && !b.hold && !b.quote && !b.order) {
+    if (!isService && product.track_serial && !asHold) {
       const serials = (item.serials || []).map((s) => String(s).trim()).filter(Boolean);
       if (serials.length !== item.quantity) return c.json({ error: "serials_required", sku: product.sku }, 400);
       for (const serial of serials) {
@@ -294,7 +297,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     }
     const factor = Number(item.unit_factor || 1) || 1;
     const stockQty = item.quantity * factor;
-    if (!isService && ((!b.hold && !b.quote && !b.order) || reserveHold)) {
+    if (!isService && (!asHold || reserveHold)) {
       const batches = await availableBatches(c.env.DB, product.id, saleScope || undefined);
       try {
         alloc = planAllocation(batches, stockQty, item.batch_id);
@@ -324,7 +327,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   const total = round2(totals.total + extra);
   const costTotal = round2(planned.reduce((s, p) => s + p.unitCost * p.stockQty, 0));
   const profit = round2(total - costTotal);
-  const hold = !!b.hold || !!b.quote || !!b.order;
+  const hold = asHold;
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
   const paid = hold
     ? 0
@@ -337,9 +340,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     if (cred) return c.json({ error: cred }, 400);
   }
   const payState = remaining <= 0 ? "completed" : "partial";
-  const assignedNow = type === "delivery" && !!agent?.id && !hold && !b.order && !b.quote;
-  const status = b.order ? "order" : b.quote ? "quote" : hold ? "held" : type === "delivery" ? (assignedNow ? "out_for_delivery" : "pending_delivery") : payState;
-  const deliveryStatus = hold ? null : type === "delivery" ? (assignedNow ? "out_for_delivery" : "pending_delivery") : null;
+  const status = b.order ? "order" : b.quote ? "quote" : hold ? "held" : payState;
+  const deliveryStatus = null;
   let invoiceId = 0;
   let number = "";
   try {
@@ -524,7 +526,23 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     `${number} — ${formatLite(total)}`,
     "invoice",
     invoiceId,
+    type === "delivery" ? "/delivery" : `/sales/${invoiceId}`,
   );
+  if (type === "delivery" && hold && agent?.id) {
+    await safeNotify(async () => {
+      const courierUserId = await userIdForAgent(c.env.DB, Number(agent.id));
+      await sendNotification(c.env.DB, courierUserId, {
+        type: "delivery",
+        titleAr: "أوردر توصيل جديد (قيد التجهيز)",
+        titleEn: "New delivery (held)",
+        bodyAr: `تم تعيينك لتوصيل أوردر جديد (معلق). يرجى المتابعة واستلامه. — ${number}`,
+        bodyEn: `A new held delivery was assigned to you — ${number}`,
+        entityType: "invoice",
+        entityId: invoiceId,
+        actionUrl: "/courier",
+      });
+    });
+  }
   const data = await loadInvoice(c.env.DB, invoiceId);
   return c.json({ data }, 201);
 });
@@ -552,7 +570,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
   let costTotal = 0;
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
   const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
-  const defaultPaid = row.status === "quote" ? 0 : row.type === "normal" ? row.total : 0;
+  const defaultPaid = row.status === "quote" ? 0 : row.total;
   const requested = splitPays.length
     ? round2(splitPays.reduce((s, p) => s + p.amount, 0))
     : round2(b.unpaid || b.payment_method === "credit" ? Number(b.paid ?? 0) : (b.paid ?? defaultPaid));
@@ -560,12 +578,12 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
   const paid = split.invoicePaid;
   const remaining = split.remaining;
   const surplus = split.surplus;
-  const status = row.type === "delivery" ? "pending_delivery" : remaining <= 0 ? "completed" : "partial";
+  const status = remaining <= 0 ? "completed" : "partial";
   let customer = null as { credit_limit: number; current_balance: number } | null;
   if (row.customer_id) {
     customer = await c.env.DB.prepare("SELECT credit_limit, current_balance FROM customers WHERE id = ?").bind(row.customer_id).first();
   }
-  if (row.type !== "delivery") {
+  {
     const cred = creditError(customer, remaining);
     if (cred) return c.json({ error: cred }, 400);
   }
@@ -594,18 +612,14 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           }
         }
         costTotal = round2(costTotal + alloc.reduce((s, a) => s + a.qty * a.unit_cost, 0));
-        if (row.type === "delivery") {
-          if (!existing.length) await applyReserve(tx, alloc, item.product_id, saleScope || row.location_id);
-        } else {
-          await applyIssue(tx, alloc, item.product_id, wasReserved && existing.length > 0, saleScope || row.location_id);
-          await maybeStockAlerts(tx, item.product_id);
-        }
+        await applyIssue(tx, alloc, item.product_id, wasReserved && existing.length > 0, saleScope || row.location_id);
+        await maybeStockAlerts(tx, item.product_id);
       }
       await tx
         .prepare("UPDATE sales_invoices SET status=?, delivery_status=?, paid=?, remaining=?, payment_method=?, cost_total=?, profit=?, held_at=NULL, completed_at=? WHERE id=?")
-        .bind(status, row.type === "delivery" ? "pending_delivery" : null, paid, remaining, b.payment_method || row.payment_method, costTotal, round2(row.total - costTotal), row.type === "normal" && remaining <= 0 ? todayIso() : null, id)
+        .bind(status, null, paid, remaining, b.payment_method || row.payment_method, costTotal, round2(row.total - costTotal), remaining <= 0 ? todayIso() : null, id)
         .run();
-      if (paid > 0 && row.type !== "delivery") {
+      if (paid > 0) {
         const pays = splitPays.length ? splitPays : [{ method: b.payment_method || row.payment_method || "cash", amount: paid }];
         let left = paid;
         for (const pay of pays) {
@@ -618,10 +632,10 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           left = round2(left - amt);
         }
       }
-      if (row.customer_id && remaining > 0 && row.type !== "delivery") {
+      if (row.customer_id && remaining > 0) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance + ?, updated_at = datetime('now') WHERE id = ?").bind(remaining, row.customer_id).run();
       }
-      if (row.customer_id && surplus > 0 && row.type !== "delivery") {
+      if (row.customer_id && surplus > 0) {
         const extra = await tx
           .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .bind(null, row.customer_id, b.payment_method || row.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id)
@@ -637,13 +651,11 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           userId: user.id,
         });
       }
-      if (row.type !== "delivery") {
-        await postSaleJournal(
-          tx,
-          { id, number: row.number, date: todayIso(), total: row.total, paid, remaining, payment_method: b.payment_method || row.payment_method, cost_total: costTotal, cash_account_id: row.cash_account_id || null },
-          user.id,
-        );
-      }
+      await postSaleJournal(
+        tx,
+        { id, number: row.number, date: todayIso(), total: row.total, paid, remaining, payment_method: b.payment_method || row.payment_method, cost_total: costTotal, cash_account_id: row.cash_account_id || null },
+        user.id,
+      );
     });
   } catch (err) {
     if (isStockErr(err)) return c.json({ error: "insufficient_stock" }, 400);

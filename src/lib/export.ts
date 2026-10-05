@@ -16,12 +16,16 @@ export function downloadCsv(filename: string, headers: string[], rows: unknown[]
 }
 
 export async function downloadExport(kind: string, query = "") {
-  const res = await fetch(`/api/reports/export?kind=${encodeURIComponent(kind)}&${query}`, { credentials: "include", headers: authHeaders() });
+  const qs = query.startsWith("?") ? query.slice(1) : query;
+  const res = await fetch(`/api/reports/export?kind=${encodeURIComponent(kind)}${qs ? `&${qs}` : ""}`, { credentials: "include", headers: authHeaders() });
   if (!res.ok) throw new Error(`export ${res.status}`);
   const blob = await res.blob();
+  const cd = res.headers.get("content-disposition") || "";
+  const named = /filename\*?=(?:UTF-8'')?["']?([^";]+)/i.exec(cd)?.[1];
+  const excel = (res.headers.get("content-type") || "").includes("spreadsheet") || /\.xlsx$/i.test(named || "");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${kind}.csv`;
+  a.download = named ? decodeURIComponent(named) : `${kind}.${excel ? "xlsx" : "csv"}`;
   a.click();
   URL.revokeObjectURL(a.href);
 }

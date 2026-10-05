@@ -33,6 +33,7 @@ export type Product = {
   part_type_en?: string;
   category_ar?: string;
   category_en?: string;
+  quality?: string;
   location_name?: string;
   warehouse?: string;
   rack?: string;
@@ -486,6 +487,25 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     }
   }
 
+  async function finalizeHeld(id: number, mode: "pay" | "credit" = "pay") {
+    setBusy(true);
+    setErr("");
+    try {
+      await post(`/api/invoices/${id}/finalize`, mode === "credit"
+        ? { payment_method: "credit", unpaid: true, paid: 0 }
+        : { payment_method: "cash" });
+      playSound("done");
+      setStockTick((n) => n + 1);
+      await loadHeldList();
+      await loadToday().catch(() => {});
+    } catch (e) {
+      playSound("err");
+      setErr(apiMessage(tr, e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function previewWa(invoiceId: number) {
     const r = await get<any>(`/api/invoices/${invoiceId}/whatsapp?type=invoice_created&lang=${lang}`);
     setWaPreview({ ...r, invoice_id: invoiceId });
@@ -508,7 +528,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
 
   async function submit(opts?: { paid?: number; method?: string; hold?: boolean; quote?: boolean; order?: boolean; print?: boolean }) {
     const payMethod = opts?.method ?? method;
-    if (payMethod === "credit" && !customer && !opts?.hold && !opts?.quote && !opts?.order) {
+    if (payMethod === "credit" && !customer && !opts?.hold && !opts?.quote && !opts?.order && type !== "delivery") {
       playSound("err");
       setErr(tr("errCustomerRequired"));
       return;
@@ -520,7 +540,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     try {
       const body = {
         type,
-        hold: !!opts?.hold,
+        hold: !!opts?.hold || (type === "delivery" && !asQuote && !opts?.order),
         quote: asQuote && !opts?.hold && !opts?.order,
         order: !!opts?.order,
         reserve: asQuote,
@@ -789,6 +809,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
     subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer,
     printRows, printTotal, printExtra, printInvoice, related, waEnabled, cartQty,
-    loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, previewWa, submit, holdInvoice,
+    loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice,
   };
 }

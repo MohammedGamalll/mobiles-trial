@@ -332,7 +332,11 @@ export function SmartFilter({
         <div key={field.key} className="min-w-[140px]">{renderField(field)}</div>
       ))}
       {sorts?.length ? (
-        <select className={`${inputCls} w-auto min-w-[140px]`} value={f.values.sort || ""} onChange={(e) => f.set("sort", e.target.value)}>
+        <select
+          className="ds-input w-48 shrink-0 rounded-xl border px-3 py-2 text-sm outline-none ring-pixel/30 focus:border-cyan-400 focus:ring-2"
+          value={f.values.sort || ""}
+          onChange={(e) => f.set("sort", e.target.value)}
+        >
           <option value="">{tr("sortBy")}</option>
           {sorts.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
@@ -364,21 +368,22 @@ export function SmartFilter({
           ))}
         </div>
       ) : null}
-      <div className="filter-bar smart-filter hidden flex-wrap items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-sm md:flex">
+      <div className="filter-bar smart-filter hidden flex-wrap items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-sm md:flex">
         {form}
       </div>
       <div className="md:hidden">
-        <div className="flex gap-2">
-          {search ? searchBox("flex-1") : null}
+        <div className="flex flex-wrap items-center gap-3">
+          {search ? searchBox("min-w-[160px] flex-1") : null}
           <button type="button" className="rounded-xl bg-[var(--ink)] px-3 py-2 text-sm font-bold text-white" onClick={() => setOpen(true)}>
             {tr("filter")}{f.count ? ` (${f.count})` : ""}
           </button>
+          {extra}
         </div>
       </div>
       {chips.length ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {chips.map((c) => (
-            <button key={c.key} type="button" className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold dark:bg-slate-800" onClick={() => {
+            <button key={c.key} type="button" className="filter-chip inline-flex items-center gap-1" onClick={() => {
               if (c.key === "from") f.setMany({ from: "", to: "" });
               else if (c.key === "q") { f.setQ(""); f.set("q", ""); }
               else f.set(c.key, "");
@@ -386,7 +391,7 @@ export function SmartFilter({
               {c.label} <X className="h-3 w-3" />
             </button>
           ))}
-          <button type="button" className="text-xs font-bold text-rose-600" onClick={f.clear}>{tr("clearAllFilters")}</button>
+          <button type="button" className="filter-link is-danger text-xs" onClick={f.clear}>{tr("clearAllFilters")}</button>
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -396,12 +401,12 @@ export function SmartFilter({
             <span className="ms-1 text-slate-400" onClick={(e) => { e.stopPropagation(); setViews(removeView(f.id, v.name)); }}>×</span>
           </button>
         ))}
-        <button type="button" className="font-bold text-cyan-700" onClick={() => {
+        <button type="button" className="filter-link text-xs" onClick={() => {
           const name = prompt(tr("saveFilter"));
           if (!name) return;
           setViews(saveView(f.id, name, f.values));
         }}>{tr("saveFilter")}</button>
-        <button type="button" className="font-bold text-slate-500" onClick={() => { saveDefaultView(f.id, f.values); }}>{defaultOn ? tr("defaultView") : tr("setDefaultView")}</button>
+        <button type="button" className="filter-link is-muted text-xs" onClick={() => { saveDefaultView(f.id, f.values); }}>{defaultOn ? tr("defaultView") : tr("setDefaultView")}</button>
       </div>
       {children}
       <Drawer open={open} title={tr("advancedFilters")} onClose={() => setOpen(false)} wide>

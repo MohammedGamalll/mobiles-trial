@@ -12,18 +12,20 @@ export function Drawer({
   onClose,
   children,
   wide,
+  xl,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  xl?: boolean;
 }) {
   if (!open) return null;
   return (
     <div className="drawer-root fixed inset-0 z-50 no-print">
       <div className="absolute inset-0 bg-ink/50 backdrop-blur-[2px]" onClick={onClose} />
-      <aside className={`drawer-panel absolute inset-y-0 end-0 flex h-full flex-col bg-[var(--surface)] shadow-2xl ${wide ? "w-full max-w-xl" : "w-full max-w-md"}`}>
+      <aside className={`drawer-panel absolute inset-y-0 end-0 flex h-full flex-col bg-[var(--surface)] shadow-2xl ${xl ? "w-full max-w-4xl" : wide ? "w-full max-w-xl" : "w-full max-w-md"}`}>
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h3 className="text-base font-bold">{title}</h3>
           <button className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100" onClick={onClose}>
@@ -42,6 +44,7 @@ export function Modal(props: {
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  xl?: boolean;
 }) {
   return <Drawer {...props} />;
 }
@@ -105,6 +108,37 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <span className="field-label mb-1 block font-extrabold text-[var(--text)]">{fieldLabel(lang, label)}</span>
       {children}
     </label>
+  );
+}
+
+export function Switch({
+  checked,
+  onChange,
+  label,
+  hint,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  hint?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3.5">
+      <div className="min-w-0">
+        <div className="text-sm font-extrabold text-[var(--text)]">{label}</div>
+        {hint ? <div className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</div> : null}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-label={label}
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative h-8 w-[52px] shrink-0 rounded-full transition-colors ${checked ? "bg-teal-500" : "bg-slate-300 dark:bg-slate-600"}`}
+      >
+        <span className={`absolute top-1 size-6 rounded-full bg-white shadow-md transition-[inset-inline-start] ${checked ? "start-6" : "start-1"}`} />
+      </button>
+    </div>
   );
 }
 
@@ -221,10 +255,10 @@ export function Btn({
   className?: string;
 }) {
   const map = {
-    primary: "bg-[var(--ink)] text-white hover:opacity-90",
-    ghost: "bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]",
-    danger: "bg-rose-600 text-white hover:bg-rose-700",
-    soft: "bg-teal-50 text-teal-800 hover:bg-teal-100 dark:bg-teal-900/40 dark:text-teal-100",
+    primary: "bg-[var(--ink)] text-white hover:opacity-90 hover:text-white",
+    ghost: "bg-[var(--surface)] border border-[var(--border)] text-[#0b1f33] hover:bg-[#efe4cc] hover:text-[#0b1f33] dark:text-[#f8f1de] dark:hover:bg-[#223044] dark:hover:text-[#f8f1de]",
+    danger: "bg-rose-600 text-white hover:bg-rose-700 hover:text-white",
+    soft: "bg-teal-50 text-teal-800 hover:bg-teal-200 hover:text-teal-950 dark:bg-teal-900/40 dark:text-teal-100 dark:hover:bg-[#134e4a] dark:hover:text-white",
   };
   return (
     <button type={type} disabled={disabled} onClick={onClick} className={`ui-btn inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold disabled:opacity-50 ${map[kind]} ${className}`}>
@@ -276,10 +310,10 @@ export function printPage(mode: "a4" | "thermal" = "a4") {
   window.setTimeout(() => document.documentElement.classList.remove("print-thermal"), 400);
 }
 
-export function PrintBtn({ className = "", thermal = false }: { className?: string; thermal?: boolean }) {
+export function PrintBtn({ className = "", thermal = false, onClick }: { className?: string; thermal?: boolean; onClick?: () => void | Promise<void> }) {
   const { tr } = useApp();
   return (
-    <Btn kind="ghost" className={`no-print ${className}`} onClick={() => printPage(thermal ? "thermal" : "a4")}>
+    <Btn kind="ghost" className={`no-print ${className}`} onClick={() => { if (onClick) return onClick(); printPage(thermal ? "thermal" : "a4"); }}>
       <Printer size={15} />
       {thermal ? tr("printThermal") : tr("print")}
     </Btn>

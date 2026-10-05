@@ -1,4 +1,5 @@
 import type { AppDb } from "./db";
+import { notifyAdmins, recentlyNotified, safeNotify } from "./notifications";
 
 export type BatchRow = {
   id: number;
@@ -12,6 +13,23 @@ export type BatchRow = {
 };
 
 export type Allocation = { batch_id: number; batch_code: string; qty: number; unit_cost: number; location_id?: number | null };
+
+/** Available qty = remaining − reserved, floored at 0. Null/undefined counts as 0. */
+export function availQtySql(remainingCol: string, reservedCol: string) {
+  return `GREATEST(COALESCE(${remainingCol},0) - COALESCE(${reservedCol},0), 0)`;
+}
+
+export function availCostSql(remainingCol: string, reservedCol: string, costCol: string) {
+  return `(${availQtySql(remainingCol, reservedCol)} * COALESCE(${costCol},0))`;
+}
+
+export function reservedQtySql(reservedCol: string) {
+  return `GREATEST(COALESCE(${reservedCol},0), 0)`;
+}
+
+export function reservedCostSql(reservedCol: string, costCol: string) {
+  return `(${reservedQtySql(reservedCol)} * COALESCE(${costCol},0))`;
+}
 
 function asLocationIds(locationId?: number | number[] | null) {
   if (Array.isArray(locationId)) return locationId.map(Number).filter((n) => n > 0);
@@ -191,19 +209,19 @@ export async function maybeStockAlerts(db: AppDb, productId: number) {
     .first<{ id: number; name_ar: string; name_en: string; current_stock: number; reserved_stock: number; min_stock: number }>();
   if (!p) return;
   const avail = p.current_stock - p.reserved_stock;
-  if (avail <= 0) {
-    await db
-      .prepare(
-        "INSERT INTO notifications (type, title_ar, title_en, body_ar, body_en, entity_type, entity_id) VALUES ('out_of_stock', 'صنف نافد', 'Out of stock', ?, ?, 'product', ?)",
-      )
-      .bind(`${p.name_ar} نافد من المخزن`, `${p.name_en} is out of stock`, p.id)
-      .run();
-  } else if (avail <= p.min_stock) {
-    await db
-      .prepare(
-        "INSERT INTO notifications (type, title_ar, title_en, body_ar, body_en, entity_type, entity_id) VALUES ('low_stock', 'مخزون منخفض', 'Low stock', ?, ?, 'product', ?)",
-      )
-      .bind(`${p.name_ar} وصل للحد الأدنى`, `${p.name_en} reached minimum stock`, p.id)
-      .run();
-  }
+  const type = avail <= 0 ? "out_of_stock" : avail <= p.min_stock ? "low_stock" : "";
+  if (!type) return;
+  await safeNotify(async () => {
+    if (await recentlyNotified(db, type, p.id)) return;
+    await notifyAdmins(db, {
+      type,
+      titleAr: type === "out_of_stock" ? "صنف نافد" : "تحذير نقص مخزون",
+      titleEn: type === "out_of_stock" ? "Out of stock" : "Low stock",
+      bodyAr: type === "out_of_stock" ? `${p.name_ar} نافد من المخزن` : `الصنف ${p.name_ar} وصل للحد الأدنى في المخزن`,
+      bodyEn: type === "out_of_stock" ? `${p.name_en} is out of stock` : `${p.name_en} reached minimum stock`,
+      entityType: "product",
+      entityId: p.id,
+      actionUrl: `/products/${p.id}`,
+    });
+  });
 }

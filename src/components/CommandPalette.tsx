@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { useApp } from "../context";
 import { get } from "../lib/api";
 import type { Msg } from "../i18n";
@@ -12,9 +12,8 @@ const pages: { to: string; key: Msg; perm: string }[] = [
   { to: "/products", key: "products", perm: "products.view" },
   { to: "/customers", key: "customers", perm: "customers.view" },
   { to: "/inventory", key: "inventory", perm: "inventory.view" },
-  { to: "/courier", key: "myOrders", perm: "delivery.mark" },
+  { to: "/courier", key: "myOrders", perm: "delivery.view" },
   { to: "/delivery", key: "delivery", perm: "delivery.update" },
-  { to: "/delivery/settle", key: "settleCourier", perm: "delivery.settle" },
   { to: "/purchases", key: "purchases", perm: "purchases.view" },
   { to: "/expenses", key: "expenses", perm: "expenses.view" },
   { to: "/reports", key: "reports", perm: "reports.view" },
@@ -73,7 +72,13 @@ export function CommandPalette({ open, onOpen, onClose }: { open: boolean; onOpe
       setQ("");
       setHits({});
       setActive(0);
+      return;
     }
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, [open]);
 
   useEffect(() => {
@@ -125,17 +130,17 @@ export function CommandPalette({ open, onOpen, onClose }: { open: boolean; onOpe
 
   if (!open) return null;
   return (
-    <div className="command-palette drawer-root fixed inset-0 z-[60] no-print" onClick={onClose}>
-      <div className="absolute inset-0 bg-ink/50 backdrop-blur-[2px]" />
+    <div className="command-palette drawer-root fixed inset-0 z-[80] no-print">
+      <button type="button" className="absolute inset-0 bg-ink/50 backdrop-blur-[2px]" aria-label={tr("close")} onPointerDown={onClose} />
       <div
-        className="relative mx-auto mt-[12vh] w-[min(640px,calc(100%-1.5rem))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+        className="relative mx-auto mt-[8vh] w-[min(640px,calc(100%-1.5rem))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-2xl"
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-[var(--border)] px-3">
           <Search size={16} className="text-slate-400" />
           <input
             autoFocus
-            className="w-full bg-transparent py-3 text-sm outline-none"
+            className="w-full bg-transparent py-3 text-sm text-[var(--text)] outline-none"
             placeholder={tr("globalSearch")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -155,7 +160,9 @@ export function CommandPalette({ open, onOpen, onClose }: { open: boolean; onOpe
               }
             }}
           />
-          <kbd className="rounded-md border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-slate-400">ESC</kbd>
+          <button type="button" className="rounded-lg p-2 text-[var(--text)]" aria-label={tr("close")} onClick={onClose}>
+            <X size={18} />
+          </button>
         </div>
         <div className="max-h-[50vh] overflow-auto p-2">
           {items.length === 0 ? <div className="px-3 py-8 text-center text-sm text-slate-400">{tr("noResults")}</div> : null}

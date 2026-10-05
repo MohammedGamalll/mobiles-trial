@@ -72,8 +72,8 @@ export function ThemeSwitcher() {
         <span className="hidden lg:inline">{uiLayout === "classic_easy" ? tr("classicEasyDesign") : tr("modernDesign")}</span>
       </button>
       {open ? (
-        <div className="theme-switcher-panel absolute end-0 z-40 mt-2 w-72 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-xl">
-          <div className="mb-2 text-sm font-black">{tr("changeDesign")}</div>
+        <div className="theme-switcher-panel absolute end-0 z-40 mt-2 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 shadow-xl dark:border-[var(--border)] dark:bg-[var(--surface)] dark:text-[var(--text)]">
+          <div className="mb-2 text-sm font-black text-slate-900 dark:text-[var(--text)]">{tr("changeDesign")}</div>
           <div className="grid gap-2">
             {([
               ["modern", "modernDesign"],
@@ -86,7 +86,7 @@ export function ThemeSwitcher() {
                 onClick={() => pick(id)}
               >
                 <Preview kind={id} />
-                <div className="mt-2 text-sm font-bold">{tr(label)}</div>
+                <div className="mt-2 text-sm font-bold text-slate-900 dark:text-[var(--text)]">{tr(label)}</div>
               </button>
             ))}
           </div>

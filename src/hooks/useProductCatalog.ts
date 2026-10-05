@@ -12,6 +12,7 @@ export type CatalogFilters = {
   supplier_id: number | "";
   location_id: number | "";
   part_type_id: number | "";
+  quality: string;
   barcode: string;
   page: number;
 };
@@ -67,6 +68,7 @@ export function useProductCatalog() {
     supplier_id: "",
     location_id: "",
     part_type_id: "",
+    quality: "",
     barcode: "",
     page: 1,
   });
@@ -86,6 +88,7 @@ export function useProductCatalog() {
     p.set("active", "1");
     if (filters.q.trim()) p.set("q", filters.q.trim());
     if (filters.barcode.trim()) p.set("q", filters.barcode.trim() || filters.q.trim());
+    if (filters.quality.trim()) p.set("quality", filters.quality.trim());
     if (filters.category_id) p.set("category_id", String(filters.category_id));
     if (filters.brand_id) p.set("brand_id", String(filters.brand_id));
     if (filters.supplier_id) p.set("supplier_id", String(filters.supplier_id));
@@ -206,8 +209,25 @@ export function useProductCatalog() {
     }
   }
 
+  async function loadAllFiltered() {
+    const p = new URLSearchParams(qs);
+    p.set("page", "1");
+    p.set("pageSize", "5000");
+    const r = await getCached<{ data: any[] }>(`/api/products?${p}`);
+    setRows(r.data || []);
+    return r.data || [];
+  }
+
+  const exportQuery = useMemo(() => {
+    const p = new URLSearchParams(qs);
+    p.delete("page");
+    p.delete("pageSize");
+    return p.toString();
+  }, [qs]);
+
   return {
     rows, filters, setFilters, picked, setPicked, selected, checked, setChecked, toggleCheck,
-    showCost, busy, loading, total, err, setErr, load, loadOne, save, remove, reload: () => setTick((n) => n + 1),
+    showCost, busy, loading, total, err, setErr, load, loadOne, save, remove, loadAllFiltered, exportQuery,
+    reload: () => setTick((n) => n + 1),
   };
 }

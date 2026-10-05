@@ -15,11 +15,11 @@ function pinIcon(label: string, color: string) {
   });
 }
 
-function Recenter({ center }: { center: LatLng }) {
+function Recenter({ center, zoom }: { center: LatLng; zoom?: number }) {
   const map = useMap();
   useEffect(() => {
-    map.setView([center.lat, center.lng], map.getZoom());
-  }, [center.lat, center.lng, map]);
+    map.setView([center.lat, center.lng], zoom || map.getZoom());
+  }, [center.lat, center.lng, zoom, map]);
   return null;
 }
 
@@ -60,7 +60,7 @@ export function OsmMap({
     <div className="osm-map overflow-hidden rounded-2xl border border-slate-200" style={{ height }}>
       <MapContainer center={c} zoom={zoom} style={{ height: "100%", width: "100%" }} scrollWheelZoom>
         <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <Recenter center={center} />
+        <Recenter center={center} zoom={zoom} />
         {onPick ? <ClickCatch onPick={onPick} /> : null}
         {shop ? (
           <>

@@ -62,7 +62,7 @@ stockOpsRoutes.get("/locations/tree", requirePerm("locations.manage", "inventory
     .prepare(
       `SELECT sl.*,
               (SELECT COUNT(*) FROM inventory_batches ib WHERE ib.location_id = sl.id AND ib.remaining_qty > 0) as batch_count,
-              (SELECT COALESCE(SUM(ib.remaining_qty * ib.unit_cost),0) FROM inventory_batches ib WHERE ib.location_id = sl.id) as stock_value
+              (SELECT COALESCE(SUM(GREATEST(COALESCE(ib.remaining_qty,0) - COALESCE(ib.reserved_qty,0), 0) * COALESCE(ib.unit_cost,0)),0) FROM inventory_batches ib WHERE ib.location_id = sl.id) as stock_value
        FROM storage_locations sl
        WHERE sl.deleted_at IS NULL
        ORDER BY COALESCE(sl.sort_order, 0), sl.id`,

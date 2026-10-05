@@ -1,4 +1,5 @@
 import type { AppDb } from "./db";
+import { notifyAdmins, safeNotify } from "./notifications";
 
 export type { AppDb };
 export type D1Database = AppDb;
@@ -96,13 +97,20 @@ export async function notify(
   bodyEn: string,
   entityType?: string,
   entityId?: number,
+  actionUrl?: string,
 ) {
-  await db
-    .prepare(
-      "INSERT INTO notifications (user_id, type, title_ar, title_en, body_ar, body_en, entity_type, entity_id) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(type, titleAr, titleEn, bodyAr, bodyEn, entityType ?? null, entityId ?? null)
-    .run();
+  await safeNotify(() =>
+    notifyAdmins(db, {
+      type,
+      titleAr,
+      titleEn,
+      bodyAr,
+      bodyEn,
+      entityType,
+      entityId,
+      actionUrl,
+    }),
+  );
 }
 
 export async function getSettings(db: AppDb) {

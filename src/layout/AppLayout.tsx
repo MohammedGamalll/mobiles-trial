@@ -15,9 +15,8 @@ import {
   Maximize2,
   MoreVertical,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "../context";
-import { get, post } from "../lib/api";
 import { PixelMark, inputCls } from "../components/ui";
 import { setSoundEnabled, unlockSounds } from "../lib/sounds";
 import { CommandPalette } from "../components/CommandPalette";
@@ -30,6 +29,7 @@ import { allNavItems, classicNav, matchNavTo, modernNav } from "./nav";
 import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
 import { useCourierGps } from "../hooks/useCourierGps";
+import { useNotifications } from "../hooks/useNotifications";
 import { apiMessage } from "../lib/errors";
 
 export default function AppLayout() {
@@ -41,19 +41,22 @@ export default function AppLayout() {
   const pos = loc.pathname === "/pos";
   const classicDesk = classic && (pos || loc.pathname === "/products" || loc.pathname === "/inventory");
   const [cmd, setCmd] = useState(false);
-  const [notes, setNotes] = useState<any[]>([]);
   const [noteType, setNoteType] = useState("");
   const [noteRead, setNoteRead] = useState("");
   const [bell, setBell] = useState(false);
+  const inbox = useNotifications();
   const [menu, setMenu] = useState(false);
+  const [menuShown, setMenuShown] = useState(false);
+  const menuTimer = useRef<number>(0);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("motamayez_sidebar") === "1");
   const [quick, setQuick] = useState(false);
+  const [wareOpen, setWareOpen] = useState(false);
   const [more, setMore] = useState(false);
   const [favs, setFavs] = useState<FavItem[]>(() => loadFavs());
   const [recent, setRecent] = useState<FavItem[]>(() => loadRecent());
   const gps = useCourierGps();
-  const unread = notes.filter((n) => !n.read_at).length;
-  const shownNotes = notes.filter((n) => {
+  const unread = inbox.unread;
+  const shownNotes = inbox.notes.filter((n) => {
     if (noteType && n.type !== noteType) return false;
     if (noteRead === "1" && !n.read_at) return false;
     if (noteRead === "0" && n.read_at) return false;
@@ -67,20 +70,29 @@ export default function AppLayout() {
     if (loc.pathname === "/login") return;
     setRecent(pushRecent({ to: loc.pathname, key: pageKey }));
     setMenu(false);
+    setMenuShown(false);
     setMore(false);
     setQuick(false);
+    setWareOpen(false);
     setBell(false);
   }, [loc.pathname]);
+
+  function openMenu() {
+    window.clearTimeout(menuTimer.current);
+    setMenuShown(true);
+    requestAnimationFrame(() => setMenu(true));
+  }
+  function closeMenu() {
+    setMenu(false);
+    window.clearTimeout(menuTimer.current);
+    menuTimer.current = window.setTimeout(() => setMenuShown(false), 260);
+  }
 
   function toggleCollapse() {
     const next = !collapsed;
     setCollapsed(next);
     localStorage.setItem("motamayez_sidebar", next ? "1" : "0");
   }
-
-  useEffect(() => {
-    get<{ data: any[] }>("/api/notifications").then((r) => setNotes(r.data || [])).catch(() => {});
-  }, []);
 
   useEffect(() => {
     setSoundEnabled(settings.sound_enabled !== "0");
@@ -97,11 +109,11 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => {
-    document.body.style.overflow = menu ? "hidden" : "";
+    document.body.style.overflow = menu || more ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
-  }, [menu]);
+  }, [menu, more]);
 
   const Nav = ({ slim = false }: { slim?: boolean }) => (
     <nav className={`app-nav px-3 pb-8 ${classic ? "space-y-2" : "space-y-4"}`}>
@@ -121,7 +133,7 @@ export default function AppLayout() {
                     to={i.to}
                     end={i.to === "/"}
                     title={tr(i.key)}
-                    onClick={() => setMenu(false)}
+                    onClick={closeMenu}
                     aria-current={on ? "page" : undefined}
                     className={`app-nav-link flex items-center ${slim ? "justify-center px-2" : classic ? "gap-2.5 px-3" : "gap-3 px-3"} ${
                       classic ? "rounded-md py-1.5 text-[13px]" : "rounded-xl py-2 text-sm"
@@ -140,7 +152,7 @@ export default function AppLayout() {
   );
 
   return (
-    <div className={`app-shell flex min-h-screen ${pos ? "is-pos" : ""}`}>
+    <div className={`app-shell flex ${pos ? "is-pos h-dvh overflow-hidden" : "min-h-screen"}`}>
       <aside className={`${classic || pos ? "hidden" : "hidden md:flex md:flex-col"} app-sidebar sidebar-scroll sticky top-0 h-screen shrink-0 overflow-y-auto transition-[width] ${
         classic
           ? `border-e border-slate-200 bg-white text-slate-800 ${collapsed ? "w-[68px]" : "w-[220px]"}`
@@ -179,16 +191,16 @@ export default function AppLayout() {
         </button>
       </aside>
 
-      {menu ? (
-        <div className={`sidebar-mobile fixed inset-0 z-40 ${classic || pos ? "" : "md:hidden"}`}>
-          <div className="absolute inset-0 bg-black/50" onClick={() => setMenu(false)} />
-          <aside className={`sidebar-scroll relative flex h-full max-w-full flex-col overflow-hidden ${classic ? "bg-white text-slate-800" : "bg-[#07111f] text-white"}`}>
+      {menuShown ? (
+        <div className={`sidebar-mobile ${menu ? "is-open" : ""} ${classic || pos ? "" : "md:hidden"}`}>
+          <div className="sidebar-mobile-backdrop" onClick={closeMenu} />
+          <aside className={`sidebar-mobile-panel sidebar-scroll ${classic ? "bg-white text-slate-800" : "bg-[#07111f] text-white"}`}>
             <div className="flex shrink-0 items-center justify-between px-4 py-4">
               <div className="flex min-w-0 items-center gap-2">
                 <PixelMark size={22} />
                 <span className="truncate font-black">{tr("app")}</span>
               </div>
-              <button type="button" className="rounded-lg p-2" onClick={() => setMenu(false)} aria-label={tr("close")}>
+              <button type="button" className="rounded-lg p-2" onClick={closeMenu} aria-label={tr("close")}>
                 <X size={18} />
               </button>
             </div>
@@ -217,11 +229,11 @@ export default function AppLayout() {
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className={`topbar sticky top-0 z-30 flex items-center gap-1.5 border-b px-2 md:gap-2 md:px-4 ${
+      <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${pos ? "overflow-hidden" : ""}`}>
+        <header className={`topbar sticky top-0 z-30 flex items-center gap-1.5 overflow-visible border-b px-2 md:gap-2 md:px-4 ${
           classic ? "h-12 border-[#083056] bg-[#0b2a4a] py-0 text-white" : "border-slate-200/80 bg-white/90 py-3 text-slate-800 backdrop-blur"
         }`}>
-          <button type="button" className={`shrink-0 ${classic || pos ? "" : "md:hidden"} ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => setMenu(true)}>
+          <button type="button" className={`shrink-0 ${classic || pos ? "" : "md:hidden"} ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={openMenu}>
             <Menu size={16} />
           </button>
           {classic && loc.pathname !== "/" ? <EasyHomeLink /> : pos ? <EasyHomeLink /> : null}
@@ -239,31 +251,44 @@ export default function AppLayout() {
             type="button"
             className={`shrink-0 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`}
             title={tr("globalSearch")}
-            onClick={() => setCmd(true)}
+            onClick={() => { setMore(false); setBell(false); setCmd(true); }}
           >
             <Search size={16} />
           </button>
-          <CommandPalette open={cmd} onOpen={() => setCmd(true)} onClose={() => setCmd(false)} />
-          <div className="hidden items-center gap-2 md:flex">
+          <div className={`items-center gap-2 ${pos ? "hidden" : "hidden md:flex"}`}>
           {(lookups?.branches || []).length > 1 ? (
             <select className={`max-w-[140px] px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={branchId} onChange={(e) => setBranchId(Number(e.target.value))} title={tr("branch")}>
               {(lookups?.branches || []).map((b) => <option key={b.id} value={b.id}>{lang === "ar" ? b.name : (b.name_en || b.name)}</option>)}
             </select>
           ) : null}
           {warehouseLocations(lookups?.locations).length ? (
-            <select className={`max-w-[140px] px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200 bg-white"}`} value={warehouseId || ""} onChange={(e) => setWarehouseId(Number(e.target.value) || 0)} title={tr("warehouses")}>
-              <option value="">{tr("warehouses")}</option>
-              {warehouseLocations(lookups?.locations).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+            <div className="relative">
+              <button
+                type="button"
+                className={`topbar-select max-w-[160px] truncate px-2 py-2 text-sm ${classic ? "topbar-ctrl rounded-md border" : "rounded-xl border border-slate-200"}`}
+                title={tr("warehouses")}
+                onClick={() => { setWareOpen((v) => !v); setQuick(false); }}
+              >
+                {warehouseLocations(lookups?.locations).find((l) => l.id === warehouseId)?.name || tr("warehouses")}
+              </button>
+              {wareOpen ? (
+                <div className="topbar-menu absolute end-0 z-[80] mt-2 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl dark:bg-[var(--surface)] dark:text-[var(--text)]">
+                  <button type="button" className="block w-full px-3 py-2 text-start text-sm font-bold text-slate-900 hover:bg-slate-100 dark:text-[var(--text)] dark:hover:bg-white/10" onClick={() => { setWarehouseId(0); setWareOpen(false); }}>{tr("warehouses")}</button>
+                  {warehouseLocations(lookups?.locations).map((l) => (
+                    <button key={l.id} type="button" className={`block w-full px-3 py-2 text-start text-sm font-bold text-slate-900 hover:bg-slate-100 dark:text-[var(--text)] dark:hover:bg-white/10 ${warehouseId === l.id ? "bg-slate-100 dark:bg-white/10" : ""}`} onClick={() => { setWarehouseId(l.id); setWareOpen(false); }}>{l.name}</button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           <div className="relative">
             <button className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2 text-slate-600"} title={tr("quickAdd")} onClick={() => setQuick((v) => !v)}>
               <Plus size={16} />
             </button>
             {quick ? (
-              <div className="topbar-menu absolute end-0 z-20 mt-2 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+              <div className="topbar-menu absolute end-0 z-[80] mt-2 w-48 overflow-visible rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl dark:bg-[var(--surface)] dark:text-[var(--text)]">
                 {can("sales.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/pos"); }}>{tr("pos")}</button> : null}
-                {can("purchases.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/purchases"); }}>{tr("purchases")}</button> : null}
+                {can("purchases.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/purchases/new"); }}>{tr("purchases")}</button> : null}
                 {can("customers.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/customers"); }}>{tr("customers")}</button> : null}
                 {can("suppliers.view") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/suppliers"); }}>{tr("suppliers")}</button> : null}
                 {can("transfers.view") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setQuick(false); nav("/transfers"); }}>{tr("transfers")}</button> : null}
@@ -295,21 +320,15 @@ export default function AppLayout() {
           </button>
           </div>
           <div className="relative">
-            <button className={`relative ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => setBell((v) => !v)}>
+            <button className={`relative ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`} onClick={() => { setBell((v) => !v); void inbox.load(); }}>
               <Bell size={16} />
               {unread ? <span className="absolute -top-1 -end-1 h-4 min-w-4 rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{unread}</span> : null}
             </button>
             {bell ? (
-              <div className="topbar-menu absolute end-0 mt-2 w-[min(20rem,calc(100vw-1.25rem))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+              <div className="topbar-menu fixed end-2 top-14 z-[80] mt-0 w-[min(20rem,calc(100vw-1.25rem))] overflow-visible rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl dark:bg-[var(--surface)] dark:text-[var(--text)]">
                 <div className="flex items-center justify-between px-3 py-2 text-sm font-bold">
                   {tr("notifications")}
-                  <button
-                    className="text-xs text-cyan-700"
-                    onClick={async () => {
-                      await post("/api/notifications/read", {});
-                      setNotes((n) => n.map((x) => ({ ...x, read_at: "1" })));
-                    }}
-                  >
+                  <button className="text-xs text-cyan-700" onClick={() => void inbox.markAllRead()}>
                     {tr("markRead")}
                   </button>
                 </div>
@@ -326,45 +345,44 @@ export default function AppLayout() {
                   </select>
                 </div>
                 <div className="max-h-80 overflow-auto">
+                  {!shownNotes.length ? <div className="px-3 py-6 text-center text-sm text-slate-400">{tr("noData")}</div> : null}
                   {shownNotes.map((n) => (
-                    <div key={n.id} className={`border-t border-slate-100 px-3 py-2 text-sm ${n.read_at ? "opacity-60" : ""}`}>
+                    <button
+                      key={n.id}
+                      type="button"
+                      className={`block w-full border-t border-slate-100 px-3 py-2 text-start text-sm ${n.read_at ? "opacity-60" : ""}`}
+                      onClick={async () => {
+                        if (!n.read_at) await inbox.markRead(n.id);
+                        setBell(false);
+                        if (n.action_url) nav(n.action_url);
+                      }}
+                    >
                       <div className="font-bold">{lang === "ar" ? n.title_ar : n.title_en}</div>
                       <div className="text-slate-500">{lang === "ar" ? n.body_ar : n.body_en}</div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
             ) : null}
           </div>
-          <div className="relative md:hidden">
-            <button
-              type="button"
-              className={classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}
-              title={tr("more")}
-              onClick={() => { setMore((v) => !v); setBell(false); }}
-            >
-              <MoreVertical size={16} />
-            </button>
-            {more ? (
-              <div className="topbar-menu absolute end-0 z-20 mt-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-xl">
-                <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); setLang(lang === "ar" ? "en" : "ar"); }}>{tr("language")}</button>
-                <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); setTheme(theme === "dark" ? "light" : "dark"); }}>{theme === "dark" ? tr("lightMode") : tr("darkMode")}</button>
-                <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); setFavs(toggleFav({ to: loc.pathname, key: pageKey })); }}>{tr("favorites")}</button>
-                {can("sales.create") ? <button className="block w-full px-3 py-2 text-start text-sm hover:bg-slate-50" onClick={() => { setMore(false); nav("/pos"); }}>{tr("pos")}</button> : null}
-                <button
-                  className="block w-full px-3 py-2 text-start text-sm text-rose-700 hover:bg-slate-50"
-                  onClick={async () => {
-                    setMore(false);
-                    await logout();
-                    nav("/login");
-                  }}
-                >
-                  {tr("logout")}
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <div className="hidden items-center gap-2 md:flex">
+          <button
+            type="button"
+            className={`relative z-40 md:hidden ${classic ? "topbar-ctrl rounded-md border p-2" : "rounded-xl border border-slate-200 p-2"}`}
+            title={tr("more")}
+            onClick={() => {
+              setBell(false);
+              setCmd(false);
+              if (pos) {
+                setMore(false);
+                openMenu();
+                return;
+              }
+              setMore((v) => !v);
+            }}
+          >
+            <MoreVertical size={16} />
+          </button>
+          <div className={`items-center gap-2 ${pos ? "hidden" : "hidden md:flex"}`}>
             <div className="text-end text-sm">
               <div className="font-bold leading-5">{user?.full_name}</div>
               <div className="text-xs capitalize text-slate-400">{user?.role_slug}</div>
@@ -385,11 +403,40 @@ export default function AppLayout() {
             {gps.err ? apiMessage(tr, { message: gps.err }) : gps.status === "live" ? tr("gpsLive") : gps.status === "skipped" ? tr("gpsNoOrders") : gps.status === "paused" ? tr("gpsPaused") : gps.status === "denied" ? tr("gpsNeedPermission") : tr("waitingGps")}
           </div>
         ) : null}
-        {classicDesk ? null : classic ? <SahlMenu /> : <ModernModules />}
-        <main className={classicDesk || pos ? "app-main sahl-pos-main" : classic && loc.pathname === "/" ? "app-main easy-main" : "app-main p-4 md:p-6"}>
+        {classicDesk ? null : classic ? <SahlMenu /> : pos ? <div className="max-lg:hidden"><ModernModules /></div> : <ModernModules />}
+        <main className={classicDesk || pos ? "app-main sahl-pos-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : classic && loc.pathname === "/" ? "app-main easy-main" : "app-main p-4 md:p-6"}>
           <Outlet />
         </main>
       </div>
+      <CommandPalette open={cmd} onOpen={() => setCmd(true)} onClose={() => setCmd(false)} />
+      {more ? (
+        <div className="fixed inset-0 z-[70] md:hidden">
+          <button type="button" className="absolute inset-0 bg-black/45" aria-label={tr("close")} onPointerDown={() => setMore(false)} />
+          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-white p-3 pb-[max(1rem,env(safe-area-inset-bottom))] text-slate-900 shadow-2xl">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <div className="text-sm font-black">{tr("more")}</div>
+              <button type="button" className="rounded-lg p-2" onClick={() => setMore(false)} aria-label={tr("close")}>
+                <X size={18} />
+              </button>
+            </div>
+            <button type="button" className="block w-full rounded-xl px-3 py-3 text-start text-sm font-bold hover:bg-slate-50" onClick={() => { setMore(false); setLang(lang === "ar" ? "en" : "ar"); }}>{tr("language")}</button>
+            <button type="button" className="block w-full rounded-xl px-3 py-3 text-start text-sm font-bold hover:bg-slate-50" onClick={() => { setMore(false); setTheme(theme === "dark" ? "light" : "dark"); }}>{theme === "dark" ? tr("lightMode") : tr("darkMode")}</button>
+            <button type="button" className="block w-full rounded-xl px-3 py-3 text-start text-sm font-bold hover:bg-slate-50" onClick={() => { setMore(false); setFavs(toggleFav({ to: loc.pathname, key: pageKey })); }}>{tr("favorites")}</button>
+            {can("sales.create") ? <button type="button" className="block w-full rounded-xl px-3 py-3 text-start text-sm font-bold hover:bg-slate-50" onClick={() => { setMore(false); nav("/pos"); }}>{tr("pos")}</button> : null}
+            <button
+              type="button"
+              className="block w-full rounded-xl px-3 py-3 text-start text-sm font-bold text-rose-700 hover:bg-rose-50"
+              onClick={async () => {
+                setMore(false);
+                await logout();
+                nav("/login");
+              }}
+            >
+              {tr("logout")}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

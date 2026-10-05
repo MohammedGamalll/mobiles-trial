@@ -17,6 +17,7 @@ import {
   AuditPage,
   BatchesPage,
   CatalogCrud,
+  QualitiesPage,
   CustomerDetail,
   CustomersPage,
   ExpensesPage,
@@ -26,7 +27,6 @@ import {
   PurchasesPage,
   ReportsPage,
   SalesList,
-  SettingsPage,
   SuppliersPage,
   SupplierDetail,
   PriceListsPage,
@@ -38,6 +38,8 @@ import { RepsPage, RepDetail, VisitsPage, TargetsPage, CommissionsPage } from ".
 import { CashAccountsPage, ChartPage, JournalPage, VouchersPage } from "./pages/Ledger";
 import { SerialsPage, ChequesPage, InstallmentsPage } from "./pages/Sahl";
 import CourierDashboard from "./pages/CourierDashboard";
+import { SettingsPage } from "./pages/Settings";
+import PurchaseInvoiceForm from "./pages/PurchaseInvoiceForm";
 import { homePath } from "./lib/home";
 
 function Guard({ children }: { children: React.ReactNode }) {
@@ -83,7 +85,7 @@ function AppRoutes() {
         }
       >
         <Route index element={user?.role_slug === "delivery" ? <Navigate to="/courier" replace /> : <Dashboard />} />
-        <Route path="courier" element={<PermGuard perm="delivery.mark"><CourierDashboard /></PermGuard>} />
+        <Route path="courier" element={<PermGuard perm={["delivery.mark", "delivery.view"]}><CourierDashboard /></PermGuard>} />
         <Route path="pos" element={<PermGuard perm="sales.create"><POSGate /></PermGuard>} />
         <Route path="sales" element={<PermGuard perm="sales.view"><SalesList /></PermGuard>} />
         <Route path="sales/:id" element={<PermGuard perm="sales.view"><Invoice /></PermGuard>} />
@@ -106,6 +108,7 @@ function AppRoutes() {
         <Route path="products/:id" element={<ProductDetail />} />
         <Route path="inventory" element={<PermGuard perm="inventory.view"><InventoryGate /></PermGuard>} />
         <Route path="batches" element={<PermGuard perm="inventory.view"><BatchesPage /></PermGuard>} />
+        <Route path="purchases/new" element={<PermGuard perm="purchases.create"><PurchaseInvoiceForm /></PermGuard>} />
         <Route path="purchases" element={<PermGuard perm="purchases.view"><PurchasesPage /></PermGuard>} />
         <Route path="purchases/:id" element={<PermGuard perm="purchases.view"><PurchaseDetail /></PermGuard>} />
         <Route path="customers" element={<PermGuard perm="customers.view"><CustomersPage /></PermGuard>} />
@@ -116,7 +119,7 @@ function AppRoutes() {
         <Route path="price-lists/:id" element={<PermGuard perm={["prices.view", "sales.create", "prices.manage"]}><PriceListDetail /></PermGuard>} />
         <Route path="brands" element={<CatalogCrud table="brands" title={tr("brands")} />} />
         <Route path="part-types" element={<CatalogCrud table="part_types" title={tr("partTypes")} />} />
-        <Route path="categories" element={<CatalogCrud table="categories" title={tr("categories")} />} />
+        <Route path="categories" element={<PermGuard perm="categories.manage"><QualitiesPage /></PermGuard>} />
         <Route path="models" element={<CatalogCrud table="models" title={tr("models")} />} />
         <Route path="locations" element={<PermGuard perm="locations.manage"><LocationsPage /></PermGuard>} />
         <Route path="transfers" element={<PermGuard perm="transfers.view"><TransfersPage /></PermGuard>} />

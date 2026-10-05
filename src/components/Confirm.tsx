@@ -91,8 +91,8 @@ export function ActionBtns({
   const { tr } = useApp();
   return (
     <div className="flex flex-wrap gap-2">
-      {canEdit && onEdit ? <button type="button" className="text-sm font-bold text-cyan-700" onClick={onEdit}>{tr("edit")}</button> : null}
-      {canDelete && onDelete ? <button type="button" className="text-sm font-bold text-rose-600" onClick={onDelete}>{tr("delete")}</button> : null}
+      {canEdit && onEdit ? <button type="button" className="filter-link text-sm" onClick={onEdit}>{tr("edit")}</button> : null}
+      {canDelete && onDelete ? <button type="button" className="filter-link is-danger text-sm" onClick={onDelete}>{tr("delete")}</button> : null}
     </div>
   );
 }

@@ -4,6 +4,8 @@ import { requirePerm } from "../lib/auth";
 import { csvBody } from "../lib/csv";
 import { reconcile } from "../lib/reconcile";
 import { applyDate, applyEq, applyInvoiceListFilters, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
+import { listFilteredProducts } from "../lib/product-query";
+import { productToImportCells, productsImportWorkbook } from "../lib/product-import";
 
 function salesGroupSql(group: string) {
   if (group === "customer") {
@@ -378,16 +380,13 @@ reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.
     headers = ["number", "date", "customer", "type", "status", "method", "total", "paid", "remaining", "profit"];
     rows = (results || []).map((r) => [r.number, r.date, r.customer_name, r.type, r.status, r.payment_method, r.total, r.paid, r.remaining, r.profit]);
   } else if (kind === "products") {
-    const { results } = await c.env.DB
-      .prepare(
-        `SELECT sku, barcode, name_ar, name_en, kind, current_stock, reserved_stock, min_stock, selling_price, purchase_price
-         FROM products WHERE deleted_at IS NULL AND (name_ar LIKE ? OR name_en LIKE ? OR sku LIKE ? OR IFNULL(barcode,'') LIKE ?)
-         ORDER BY name_ar LIMIT 3000`,
-      )
-      .bind(like, like, like, like)
-      .all<Record<string, unknown>>();
-    headers = ["sku", "barcode", "name_ar", "name_en", "kind", "stock", "reserved", "min", "selling", "purchase"];
-    rows = (results || []).map((r) => [r.sku, r.barcode, r.name_ar, r.name_en, r.kind, r.current_stock, r.reserved_stock, r.min_stock, r.selling_price, r.purchase_price]);
+    const products = await listFilteredProducts(c.env.DB, url, 8000);
+    const hideCost = user.role_slug !== "admin" && !user.permissions.includes("costs.view") && !user.permissions.includes("products.edit");
+    const xlsx = productsImportWorkbook(products.map((r) => productToImportCells(r, hideCost)));
+    return c.body(new Uint8Array(xlsx), 200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="products.xlsx"`,
+    });
   } else if (kind === "customers") {
     const { results } = await c.env.DB
       .prepare(
@@ -400,15 +399,15 @@ reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.
     headers = ["name", "phone", "city", "area", "type", "balance", "credit_limit"];
     rows = (results || []).map((r) => [r.name, r.phone, r.city, r.area, r.customer_type, r.current_balance, r.credit_limit]);
   } else if (kind === "inventory") {
-    const { results } = await c.env.DB
-      .prepare(
-        `SELECT p.sku, p.name_ar, p.current_stock, p.reserved_stock, (p.current_stock - p.reserved_stock) as available, p.min_stock, sl.name as location
-         FROM products p LEFT JOIN storage_locations sl ON sl.id = p.location_id
-         WHERE p.deleted_at IS NULL AND COALESCE(p.kind,'product') != 'service' ORDER BY p.name_ar LIMIT 3000`,
-      )
-      .all<Record<string, unknown>>();
-    headers = ["sku", "name", "stock", "reserved", "available", "min", "location"];
-    rows = (results || []).map((r) => [r.sku, r.name_ar, r.current_stock, r.reserved_stock, r.available, r.min_stock, r.location]);
+    const exportUrl = new URL(url);
+    exportUrl.searchParams.set("kind", "product");
+    const products = await listFilteredProducts(c.env.DB, exportUrl, 8000);
+    const hideCost = user.role_slug !== "admin" && !user.permissions.includes("costs.view") && !user.permissions.includes("products.edit");
+    const xlsx = productsImportWorkbook(products.map((r) => productToImportCells(r, hideCost)));
+    return c.body(new Uint8Array(xlsx), 200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="inventory.xlsx"`,
+    });
   } else if (kind === "expenses") {
     const where = ["e.voided_at IS NULL"];
     const params: (string | number)[] = [];

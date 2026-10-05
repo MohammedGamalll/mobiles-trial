@@ -8,10 +8,9 @@ import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
-import { AssignCourierModal } from "../components/AssignCourierModal";
 
 export function DeliveryBoard() {
-  const { tr, lang, lookups, can, user, settings } = useApp();
+  const { tr, lang, can, user, settings } = useApp();
   const [tab, setTab] = useState<"orders" | "map" | "agents">(user?.role_slug === "delivery" ? "orders" : "orders");
   const f = useListQuery("delivery");
   const [rows, setRows] = useState<any[]>([]);
@@ -22,7 +21,6 @@ export function DeliveryBoard() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 });
   const { confirmDelete, dialog } = useConfirm();
-  const [assignInv, setAssignInv] = useState<{ id: number; number?: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function loadOrders() {
@@ -100,11 +98,6 @@ export function DeliveryBoard() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{tr("delivery")}</h1>
         <div className="no-print flex gap-2">
-          {can("delivery.update") ? (
-            <Link className="rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-800" to="/delivery/settle">
-              {tr("settleCourier")}
-            </Link>
-          ) : null}
           {can("delivery.view", "delivery.mark") ? (
             <Link className="rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-800" to="/delivery/track">
               {tr("liveTrack")}
@@ -124,7 +117,7 @@ export function DeliveryBoard() {
       {tab === "orders" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "status", label: "status", type: "select", quick: true, options: ["pending_delivery", "out_for_delivery", "pending_settlement", "delivered", "customer_refused", "returned_to_warehouse", "damaged", "rescheduled", "customer_unavailable", "partially_delivered", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+            { key: "status", label: "status", type: "select", quick: true, options: ["held", "completed", "partial", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
             { key: "agent_id", label: "agent", type: "select", quick: true, lookup: "delivery_agents" },
             { key: "area", label: "area", type: "text" },
           ]} />
@@ -154,14 +147,8 @@ export function DeliveryBoard() {
                       <td>{`${r.delivery_agent_name || ""} (${r.delivery_agent_code || ""})`}</td>
                       <td>{r.area}</td>
                       <td>{money(r.total, lang)}</td>
-                      <td><span className={statusClass(r.delivery_status)}>{statusLabel(r.delivery_status, lang)}</span></td>
-                      <td>
-                        {can("delivery.update") && !r.settled_at && !["delivered", "customer_refused", "returned_to_warehouse", "damaged", "cancelled"].includes(String(r.delivery_status || "")) ? (
-                          <button type="button" className="text-sm font-bold text-cyan-700" onClick={() => setAssignInv({ id: r.id, number: r.number })}>
-                            {tr("assignCourier")}
-                          </button>
-                        ) : null}
-                      </td>
+                      <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
+                      <td></td>
                     </tr>
                   ))}
                 </tbody>
@@ -301,12 +288,6 @@ export function DeliveryBoard() {
           {dialog}
         </div>
       ) : null}
-      <AssignCourierModal
-        open={Boolean(assignInv)}
-        invoice={assignInv}
-        onClose={() => setAssignInv(null)}
-        onDone={() => { loadOrders().catch(() => {}); }}
-      />
     </div>
   );
 }
