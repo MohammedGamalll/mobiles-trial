@@ -46,7 +46,36 @@ function applyMigrations() {
   }
 }
 
+function bootHandler(_req: IncomingMessage, res: ServerResponse) {
+  res.writeHead(503, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Retry-After": "1",
+  });
+  res.end(JSON.stringify({ error: "starting" }));
+}
+
 async function main() {
+  let handler: NodeHandler = bootHandler;
+  const proxy: NodeHandler = (req, res) => handler(req, res);
+
+  const attach = (globalThis as typeof globalThis & { __motamayezAttach?: (fn: NodeHandler) => void }).__motamayezAttach;
+  if (typeof attach === "function") {
+    attach(proxy);
+  } else {
+    const port = resolvePort(8787);
+    const hostname = process.env.HOST || "0.0.0.0";
+    const server = createServer(proxy);
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, hostname, () => {
+        const addr = server.address();
+        const actual = typeof addr === "object" && addr ? addr.port : port;
+        console.log(`المتميز listening on http://${hostname}:${actual}`);
+        resolve();
+      });
+    });
+  }
+
   applyMigrations();
   const db = await openMysql();
   const app = createApiApp();
@@ -63,9 +92,12 @@ async function main() {
       rewriteRequestPath: (requestPath: string) => requestPath.replace(/^\/+/, ""),
     };
     app.use("/assets/*", serveStatic(staticOpts));
+    app.get("/assets/*", (c) => c.text("asset not found", 404));
     app.use("/favicon.svg", serveStatic(staticOpts));
     app.get("*", (c) => {
-      if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/uploads/")) return c.json({ error: "not_found" }, 404);
+      if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/uploads/") || c.req.path.startsWith("/assets/")) {
+        return c.json({ error: "not_found" }, 404);
+      }
       const index = path.join(staticDir, "index.html");
       if (!fs.existsSync(index)) return c.text("UI not built. Run npm run build.", 503);
       return c.html(fs.readFileSync(index, "utf8"), 200, {
@@ -74,21 +106,8 @@ async function main() {
     });
   }
 
-  const listener = getRequestListener((req) => app.fetch(req, env));
-  const attach = (globalThis as typeof globalThis & { __motamayezAttach?: (fn: NodeHandler) => void }).__motamayezAttach;
-  if (typeof attach === "function") {
-    attach(listener);
-    return;
-  }
-
-  const port = resolvePort(8787);
-  const hostname = process.env.HOST || "0.0.0.0";
-  const server = createServer(listener);
-  server.listen(port, hostname, () => {
-    const addr = server.address();
-    const actual = typeof addr === "object" && addr ? addr.port : port;
-    console.log(`المتميز listening on http://${hostname}:${actual}`);
-  });
+  handler = getRequestListener((req) => app.fetch(req, env));
+  console.log("المتميز ready");
 }
 
 main().catch((err) => {

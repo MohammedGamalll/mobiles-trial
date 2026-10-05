@@ -20,7 +20,8 @@ function loginErrKey(error: unknown) {
 }
 
 export default function Login() {
-  const { login, tr, lang, setLang, theme, setTheme } = useApp();
+  const { login, tr, lang, setLang, theme, setTheme, uiLayout } = useApp();
+  const classic = uiLayout === "classic_easy";
   const nav = useNavigate();
   const saved = localStorage.getItem(REMEMBER_KEY) === "1";
   const [err, setErr] = useState("");
@@ -42,23 +43,27 @@ export default function Login() {
   }, [lang]);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#07111f] p-6">
-      <div className="pointer-events-none absolute -top-24 start-1/4 h-72 w-72 rounded-full bg-[#c9a227]/25 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 end-1/4 h-72 w-72 rounded-full bg-[#123047]/50 blur-3xl" />
-      <div className="absolute start-6 top-6 flex items-center gap-3 text-white">
+    <div className={`relative flex min-h-screen items-center justify-center overflow-hidden p-6 ${classic ? "bg-[#07111f]" : "bg-[var(--bg)] text-[var(--text)]"}`}>
+      {classic ? (
+        <>
+          <div className="pointer-events-none absolute -top-24 start-1/4 h-72 w-72 rounded-full bg-[#c9a227]/25 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-24 end-1/4 h-72 w-72 rounded-full bg-[#123047]/50 blur-3xl" />
+        </>
+      ) : null}
+      <div className={`absolute start-6 top-6 flex items-center gap-3 ${classic ? "text-white" : "text-[var(--text)]"}`}>
         <PixelMark />
         <span className="text-xl font-black tracking-wide">{tr("app")}</span>
       </div>
       <div className="absolute end-6 top-6 flex gap-2">
-        <button className="rounded-xl bg-white/10 px-3 py-2 text-sm text-white" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+        <button className={`rounded-xl px-3 py-2 text-sm ${classic ? "bg-white/10 text-white" : "border border-[var(--border)] bg-[var(--surface)] text-[var(--text)]"}`} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
           {theme === "dark" ? tr("lightMode") : tr("darkMode")}
         </button>
-        <button className="rounded-xl bg-white/10 px-3 py-2 text-sm text-white" onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
+        <button className={`rounded-xl px-3 py-2 text-sm ${classic ? "bg-white/10 text-white" : "border border-[var(--border)] bg-[var(--surface)] text-[var(--text)]"}`} onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
           {tr("language")}
         </button>
       </div>
       <form
-        className="relative w-full max-w-md rounded-3xl border border-white/10 bg-white p-8 shadow-2xl"
+        className={`relative w-full max-w-md rounded-3xl p-8 shadow-2xl ${classic ? "border border-white/10 bg-white" : "border border-[var(--border)] bg-[var(--surface)]"}`}
         autoComplete="off"
         onSubmit={async (e) => {
           e.preventDefault();

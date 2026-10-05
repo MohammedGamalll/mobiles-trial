@@ -77,6 +77,7 @@ fs.writeFileSync(
 - Node: 22
 - تثبيت الحزم: npm install (من غير --omit=dev عشان Vite)
 - PORT: سيب هوستنجر تحطه لوحدها. متقفلش على 8787.
+- متشغّلش dist/server.mjs كملف دخول. هوستنجر محتاجة listen() خلال 3 ثواني؛ app.cjs بيعمل كده فوراً.
 
 متغيرات البيئة (hPanel، مش ملف جوه Git):
 MYSQL_HOST=127.0.0.1
