@@ -5,6 +5,7 @@ import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
+import { useConfirm } from "../components/Confirm";
 import { rememberResumeInvoice } from "../hooks/usePOSLogic";
 import { PaymentModal } from "../components/PaymentModal";
 
