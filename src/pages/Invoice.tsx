@@ -5,7 +5,7 @@ import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
-import { useConfirm } from "../components/Confirm";
+import { rememberResumeInvoice } from "../hooks/usePOSLogic";
 import { PaymentModal } from "../components/PaymentModal";
 
 export default function Invoice() {
@@ -61,7 +61,7 @@ export default function Invoice() {
             <Btn kind="ghost" onClick={() => setRetOpen(true)}>{tr("returnCreate")}</Btn>
           ) : null}
           {["held", "quote", "order"].includes(inv.status) && can("sales.create") ? (
-            <Btn onClick={() => { window.location.href = `/pos?held=${inv.id}`; }}>{tr("resumeHeld")}</Btn>
+            <Btn onClick={() => { rememberResumeInvoice(inv.id); window.location.href = `/pos?held=${inv.id}`; }}>{tr("resumeHeld")}</Btn>
           ) : null}
           {["held", "quote", "order"].includes(inv.status) && can("sales.create") ? (
             <Btn kind="soft" onClick={() => {

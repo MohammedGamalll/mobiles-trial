@@ -412,9 +412,7 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
     .prepare(`${productSelectSql(stockExpr.availSql, stockExpr.join)} ${whereSql} ${order} LIMIT ? OFFSET ?`)
     .bind(...queryBinds, pageSize, offset)
     .all();
-  const countQ = posMode
-    ? Promise.resolve({ n: 0 } as { n: number })
-    : c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...queryBinds).first<{ n: number }>();
+  const countQ = c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...queryBinds).first<{ n: number }>();
   const totalsQ = posMode
     ? Promise.resolve({ qty: 0, value: 0 } as { qty: number; value: number })
     : c.env.DB

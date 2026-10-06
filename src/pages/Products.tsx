@@ -427,6 +427,7 @@ export default function Products() {
           <table>
             <thead>
               <tr>
+                <th>#</th>
                 <PosHeaderFilter
                   column="name"
                   label={tr("name")}
@@ -497,8 +498,9 @@ export default function Products() {
               </tr>
             </thead>
             <tbody>
-              {catalogRows.map((p) => (
+              {catalogRows.map((p, i) => (
                 <tr key={p.id}>
+                  <td className="font-mono text-xs text-slate-400">{(f.page - 1) * 80 + i + 1}</td>
                   <td>
                     <div className="font-semibold">{lang === "ar" ? p.name_ar : p.name_en}</div>
                     <div className="text-xs text-slate-400">

@@ -17,6 +17,7 @@ import { matchScanned, playSound } from "../lib/sounds";
 import { MapPin } from "lucide-react";
 import {
   PosHeaderFilter,
+  ColFilterHint,
   applyPosHeaderFilters,
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
@@ -80,7 +81,15 @@ export function SalesList() {
       />
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
-        cols={[tr("invoiceNo"), tr("customer"), tr("date"), tr("total"), tr("remaining"), tr("status"), ""]}
+        cols={[
+          tr("invoiceNo"),
+          <ColFilterHint label={tr("customer")} hint={f.values.customer_id ? (rows.find((r) => String(r.customer_id) === String(f.values.customer_id))?.customer_name || rows[0]?.customer_name || String(f.values.customer_id)) : ""} />,
+          tr("date"),
+          tr("total"),
+          tr("remaining"),
+          <ColFilterHint label={tr("status")} hint={f.values.status ? statusLabel(f.values.status, lang) : ""} />,
+          "",
+        ]}
         rows={rows.map((r) => {
           const payStatus = Number(r.remaining) > 0 && Number(r.paid) <= 0 && r.status === "partial" ? "unpaid_sale" : r.status;
           return [

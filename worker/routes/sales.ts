@@ -223,6 +223,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     extra_amount?: number;
     cash_account_id?: number | null;
     location_id?: number | null;
+    resume_id?: number | null;
     items: CartItem[];
   }>();
   if (!b.items?.length) return c.json({ error: "no_items" }, 400);
@@ -342,11 +343,90 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   const payState = remaining <= 0 ? "completed" : "partial";
   const status = b.order ? "order" : b.quote ? "quote" : hold ? "held" : payState;
   const deliveryStatus = null;
+  const resumeId = Number((b as { resume_id?: unknown }).resume_id || 0) || 0;
+  let resume: {
+    id: number;
+    number: string;
+    status: string;
+    items: { id: number; product_id: number }[];
+    item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number }[];
+  } | null = null;
+  if (resumeId) {
+    const existing = await loadInvoice(c.env.DB, resumeId);
+    if (!existing) return c.json({ error: "not_found" }, 404);
+    const row = existing as unknown as typeof resume & { status: string };
+    if (row.status !== "held" && row.status !== "quote" && row.status !== "order") {
+      return c.json({ error: "not_held" }, 400);
+    }
+    resume = row;
+  }
   let invoiceId = 0;
   let number = "";
   try {
     const created = await c.env.DB.transaction(async (tx) => {
-      const invNumber = await nextNumber(tx, "sales");
+      let id: number;
+      let invNumber: string;
+      if (resume) {
+        id = resume.id;
+        invNumber = resume.number;
+        for (const item of resume.items) {
+          const alloc = resume.item_batches
+            .filter((b) => b.invoice_item_id === item.id && b.qty > 0)
+            .map((b) => ({ batch_id: b.batch_id, batch_code: "", qty: b.qty, unit_cost: b.unit_cost }));
+          if (alloc.length) await releaseReserve(tx, alloc, item.product_id);
+        }
+        await tx.prepare("UPDATE product_serials SET status='in_stock', invoice_id=NULL, invoice_item_id=NULL WHERE invoice_id=? AND status='reserved'").bind(id).run();
+        const itemIds = resume.items.map((it) => Number(it.id)).filter((n) => n > 0);
+        if (itemIds.length) {
+          await tx.prepare(`DELETE FROM sales_item_batches WHERE invoice_item_id IN (${itemIds.map(() => "?").join(",")})`).bind(...itemIds).run();
+        }
+        await tx.prepare("DELETE FROM sales_invoice_items WHERE invoice_id = ?").bind(id).run();
+        await tx
+          .prepare(
+            `UPDATE sales_invoices SET
+              type=?, status=?, delivery_status=?, customer_id=?, customer_name=?, customer_phone=?, customer_whatsapp=?,
+              address=?, area=?, delivery_agent_id=?, delivery_agent_name=?, delivery_agent_code=?, delivery_agent_phone=?,
+              expected_delivery_time=?, payment_method=?, subtotal=?, discount=?, total=?, paid=?, remaining=?, cost_total=?, profit=?,
+              due_date=?, notes=?, completed_at=?, tax_rate=?, tax_amount=?, price_list_id=?, held_at=?, branch_id=?, voided_at=NULL
+            WHERE id=?`,
+          )
+          .bind(
+            type,
+            status,
+            deliveryStatus,
+            customer?.id || null,
+            b.customer_name || customer?.name || null,
+            b.customer_phone || customer?.phone || null,
+            b.customer_whatsapp || customer?.whatsapp || customer?.phone || null,
+            b.address || customer?.address || null,
+            b.area || customer?.area || null,
+            agent?.id || null,
+            agent?.name || null,
+            agent?.code || null,
+            agent?.phone || null,
+            b.expected_delivery_time || null,
+            b.payment_method || "cash",
+            subtotal,
+            discount,
+            total,
+            paid,
+            remaining,
+            costTotal,
+            profit,
+            b.due_date || null,
+            b.notes || null,
+            hold || type !== "normal" || remaining > 0 ? null : todayIso(),
+            taxRate,
+            taxAmount,
+            b.price_list_id || customer?.price_list_id || null,
+            hold ? todayIso() : null,
+            b.branch_id || 1,
+            id,
+          )
+          .run();
+      } else {
+      const invNumberNew = await nextNumber(tx, "sales");
+      invNumber = invNumberNew;
       const ins = await tx
         .prepare(
           `INSERT INTO sales_invoices (
@@ -393,8 +473,9 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
           b.client_token || null,
         )
         .run();
-      const id = ins.meta.last_row_id;
-      if (extra || b.cash_account_id || saleLocationId) {
+      id = ins.meta.last_row_id;
+      }
+      if (resume || extra || b.cash_account_id || saleLocationId) {
         await tx
           .prepare("UPDATE sales_invoices SET extra_amount = ?, cash_account_id = ?, location_id = COALESCE(?, location_id) WHERE id = ?")
           .bind(extra, b.cash_account_id || null, saleLocationId, id)
@@ -516,19 +597,21 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   if (!hold && status === "completed") {
     await accrueCommission(c.env.DB, invoiceId);
   }
-  await audit(c.env.DB, user, "create_invoice", "invoice", invoiceId, `Create ${number}`);
-  await notify(
-    c.env.DB,
-    type === "delivery" ? "new_delivery" : "new_sale",
-    type === "delivery" ? "طلب توصيل جديد" : "عملية بيع جديدة",
-    type === "delivery" ? "New delivery order" : "New sale",
-    `${number} — ${formatLite(total)}`,
-    `${number} — ${formatLite(total)}`,
-    "invoice",
-    invoiceId,
-    type === "delivery" ? "/delivery" : `/sales/${invoiceId}`,
-  );
-  if (type === "delivery" && hold && agent?.id) {
+  await audit(c.env.DB, user, resume ? "update_invoice" : "create_invoice", "invoice", invoiceId, `${resume ? "Update" : "Create"} ${number}`);
+  if (!(resume && hold)) {
+    await notify(
+      c.env.DB,
+      type === "delivery" ? "new_delivery" : "new_sale",
+      type === "delivery" ? "طلب توصيل جديد" : "عملية بيع جديدة",
+      type === "delivery" ? "New delivery order" : "New sale",
+      `${number} — ${formatLite(total)}`,
+      `${number} — ${formatLite(total)}`,
+      "invoice",
+      invoiceId,
+      type === "delivery" ? "/delivery" : `/sales/${invoiceId}`,
+    );
+  }
+  if (type === "delivery" && hold && agent?.id && !resume) {
     await safeNotify(async () => {
       const courierUserId = await userIdForAgent(c.env.DB, Number(agent.id));
       await sendNotification(c.env.DB, courierUserId, {
@@ -677,13 +760,17 @@ async function zeroItemBatches(db: AppDb, invoiceId: number) {
   await db.prepare("UPDATE sales_item_batches SET qty = 0 WHERE invoice_item_id IN (SELECT id FROM sales_invoice_items WHERE invoice_id = ?)").bind(invoiceId).run();
 }
 
-salesRoutes.post("/invoices/:id/cancel", requirePerm("sales.cancel"), async (c) => {
+salesRoutes.post("/invoices/:id/cancel", requirePerm("sales.cancel", "sales.create"), async (c) => {
   const id = Number(c.req.param("id"));
   const inv = await loadInvoice(c.env.DB, id);
   if (!inv) return c.json({ error: "not_found" }, 404);
   const row = inv as unknown as { id: number; number: string; status: string; type: string; remaining: number; customer_id: number | null; finance_committed_at?: string | null; items: { id: number; product_id: number; quantity: number }[]; item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number; location_id?: number | null }[] };
   if (row.status === "cancelled") return c.json({ error: "already_cancelled" }, 400);
   const user = c.get("user");
+  const mayVoidPaid = user.role_slug === "admin" || user.permissions.includes("sales.cancel");
+  if (!mayVoidPaid && row.status !== "held" && row.status !== "quote" && row.status !== "order") {
+    return c.json({ error: "forbidden" }, 403);
+  }
   try {
     await c.env.DB.transaction(async (tx) => {
       if (row.status === "held" || row.status === "quote" || row.status === "order") {

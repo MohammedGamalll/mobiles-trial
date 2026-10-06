@@ -14,6 +14,7 @@ import {
   Star,
   Maximize2,
   MoreVertical,
+  ChevronDown,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../context";
@@ -25,12 +26,106 @@ import { EasyHomeLink } from "../components/EasyLauncher";
 import { SahlMenu } from "../components/SahlMenu";
 import { ModernModules } from "../components/ModernModules";
 import { isFav, loadFavs, loadRecent, pushRecent, toggleFav, type FavItem } from "../lib/shortcuts";
-import { allNavItems, classicNav, matchNavTo, modernNav } from "./nav";
+import { allNavItems, classicNav, matchNavTo, modernNav, type NavGroup } from "./nav";
 import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
 import { useCourierGps } from "../hooks/useCourierGps";
 import { useNotifications } from "../hooks/useNotifications";
 import { apiMessage } from "../lib/errors";
+
+function AppNav({
+  slim = false,
+  classic,
+  groups,
+  can,
+  user,
+  tr,
+  activeTo,
+  openGroup,
+  setOpenGroup,
+  setCollapsed,
+  closeMenu,
+}: {
+  slim?: boolean;
+  classic: boolean;
+  groups: NavGroup[];
+  can: (perm: string) => boolean;
+  user: { delivery_agent_id?: number | null; role_slug?: string } | null | undefined;
+  tr: (k: Msg) => string;
+  activeTo: string | null;
+  openGroup: Msg | null;
+  setOpenGroup: (v: Msg | null | ((cur: Msg | null) => Msg | null)) => void;
+  setCollapsed: (v: boolean) => void;
+  closeMenu: () => void;
+}) {
+  return (
+    <nav className="app-nav space-y-2 px-3 pb-8">
+      {groups.map((g) => {
+        const visible = g.items.filter((i) => can(i.perm) && (!i.agentOnly || user?.delivery_agent_id || user?.role_slug === "admin"));
+        if (!visible.length) return null;
+        const open = openGroup === g.label;
+        const GroupIcon = visible[0].icon;
+        function toggleGroup() {
+          if (slim) {
+            setCollapsed(false);
+            localStorage.setItem("motamayez_sidebar", "0");
+            setOpenGroup(g.label);
+            return;
+          }
+          setOpenGroup((cur) => (cur === g.label ? null : g.label));
+        }
+        return (
+          <div key={g.label}>
+            <button
+              type="button"
+              title={tr(g.label)}
+              onClick={toggleGroup}
+              aria-expanded={open}
+              className={`mb-1 flex w-full items-center rounded-xl px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] transition-colors ${
+                slim ? "justify-center" : "justify-between gap-2"
+              } ${classic ? "text-slate-400 hover:bg-slate-50" : "text-[var(--muted)] hover:bg-[var(--surface-2)]"} ${
+                open && !slim ? (classic ? "text-slate-700" : "text-[var(--text)]") : ""
+              }`}
+            >
+              {slim ? <GroupIcon size={16} /> : (
+                <>
+                  <span className="truncate">{tr(g.label)}</span>
+                  <ChevronDown size={14} className={`shrink-0 transition-transform duration-300 ease-in-out ${open ? "rotate-180" : ""}`} />
+                </>
+              )}
+            </button>
+            <div
+              className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${open && !slim ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+            >
+              <div className={`overflow-hidden ${classic ? "space-y-0" : "space-y-0.5"}`}>
+                {visible.map((i) => {
+                  const Icon = i.icon;
+                  const on = i.to === activeTo;
+                  return (
+                    <NavLink
+                      key={i.to}
+                      to={i.to}
+                      end={i.to === "/"}
+                      title={tr(i.key)}
+                      onClick={closeMenu}
+                      aria-current={on ? "page" : undefined}
+                      className={`app-nav-link flex items-center ${slim ? "justify-center px-2" : classic ? "gap-2.5 px-3" : "gap-3 px-3"} ${
+                        classic ? "rounded-md py-1.5 text-[13px]" : "rounded-xl py-2 text-sm"
+                      } font-semibold ${on ? "is-active" : ""}`}
+                    >
+                      <Icon size={16} />
+                      {slim ? null : tr(i.key)}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
 
 export default function AppLayout() {
   const { tr, lang, setLang, theme, setTheme, uiLayout, user, logout, can, lookups, branchId, setBranchId, warehouseId, setWarehouseId, settings } = useApp();
@@ -49,6 +144,7 @@ export default function AppLayout() {
   const [menuShown, setMenuShown] = useState(false);
   const menuTimer = useRef<number>(0);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("motamayez_sidebar") === "1");
+  const [openGroup, setOpenGroup] = useState<Msg | null>(null);
   const [quick, setQuick] = useState(false);
   const [wareOpen, setWareOpen] = useState(false);
   const [more, setMore] = useState(false);
@@ -65,6 +161,11 @@ export default function AppLayout() {
   const navItems = allNavItems(groups);
   const activeTo = matchNavTo(loc.pathname, loc.search, navItems);
   const pageKey = (navItems.find((i) => i.to === activeTo)?.key || "dashboard") as Msg;
+
+  useEffect(() => {
+    const g = groups.find((group) => group.items.some((i) => i.to === activeTo));
+    setOpenGroup(g?.label ?? null);
+  }, [activeTo, groups]);
 
   useEffect(() => {
     if (loc.pathname === "/login") return;
@@ -115,45 +216,22 @@ export default function AppLayout() {
     };
   }, [menu, more]);
 
-  const Nav = ({ slim = false }: { slim?: boolean }) => (
-    <nav className={`app-nav px-3 pb-8 ${classic ? "space-y-2" : "space-y-4"}`}>
-      {groups.map((g) => {
-        const visible = g.items.filter((i) => can(i.perm) && (!i.agentOnly || user?.delivery_agent_id || user?.role_slug === "admin"));
-        if (!visible.length) return null;
-        return (
-          <div key={g.label}>
-            {slim ? null : <div className={`mb-1 px-3 text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? "text-slate-400" : "text-[var(--muted)]"}`}>{tr(g.label)}</div>}
-            <div className={classic ? "space-y-0" : "space-y-0.5"}>
-              {visible.map((i) => {
-                const Icon = i.icon;
-                const on = i.to === activeTo;
-                return (
-                  <NavLink
-                    key={i.to}
-                    to={i.to}
-                    end={i.to === "/"}
-                    title={tr(i.key)}
-                    onClick={closeMenu}
-                    aria-current={on ? "page" : undefined}
-                    className={`app-nav-link flex items-center ${slim ? "justify-center px-2" : classic ? "gap-2.5 px-3" : "gap-3 px-3"} ${
-                      classic ? "rounded-md py-1.5 text-[13px]" : "rounded-xl py-2 text-sm"
-                    } font-semibold ${on ? "is-active" : ""}`}
-                  >
-                    <Icon size={16} />
-                    {slim ? null : tr(i.key)}
-                  </NavLink>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </nav>
-  );
+  const navProps = {
+    classic,
+    groups,
+    can,
+    user,
+    tr,
+    activeTo,
+    openGroup,
+    setOpenGroup,
+    setCollapsed,
+    closeMenu,
+  };
 
   return (
     <div className={`app-shell flex ${pos ? "is-pos h-dvh overflow-hidden" : "min-h-screen"}`}>
-      <aside className={`${classic || pos ? "hidden" : "hidden md:flex md:flex-col"} app-sidebar sidebar-scroll sticky top-0 h-screen shrink-0 overflow-y-auto transition-[width] ${
+      <aside className={`${classic || pos ? "hidden" : "hidden md:flex md:flex-col"} app-sidebar sidebar-scroll sticky top-0 h-screen shrink-0 overflow-y-auto overflow-x-hidden transition-[width] duration-300 ease-in-out ${
         classic
           ? `border-e border-slate-200 bg-white text-slate-800 ${collapsed ? "w-[68px]" : "w-[220px]"}`
           : `bg-[var(--surface)] text-[var(--text)] border-e border-[var(--border)] ${collapsed ? "w-[76px]" : "w-[248px]"}`
@@ -184,7 +262,7 @@ export default function AppLayout() {
               ))}
             </div>
           ) : null}
-          <Nav slim={collapsed} />
+          <AppNav slim={collapsed} {...navProps} />
         </div>
         <button className={`m-3 p-2 ${classic ? "rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50" : "rounded-xl border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)]"}`} title={collapsed ? tr("expand") : tr("collapse")} onClick={toggleCollapse}>
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
@@ -205,7 +283,7 @@ export default function AppLayout() {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <Nav />
+              <AppNav {...navProps} />
             </div>
             <div className={`shrink-0 space-y-2 border-t px-4 py-3 ${classic ? "border-slate-200" : "border-[var(--border)]"}`}>
               <div className="text-sm font-bold">{user?.full_name}</div>

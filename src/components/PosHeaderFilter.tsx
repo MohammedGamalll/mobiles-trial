@@ -118,14 +118,22 @@ export function PosHeaderFilter({
       <button
         ref={btnRef}
         type="button"
-        className="inline-flex max-w-full items-center gap-1 text-start font-black"
+        className="inline-flex max-w-full flex-col items-start gap-0.5 text-start font-black leading-tight"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="listbox"
         data-col={column}
       >
-        <span className="truncate">{label}</span>
-        {value ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-600" /> : null}
+        <span className="min-w-0 truncate">{label}</span>
+        <span
+          className={`max-w-[8.5rem] truncate text-[11px] leading-tight ${
+            value
+              ? "rounded-md bg-amber-400 px-1.5 py-0.5 font-black text-black shadow-sm"
+              : "font-semibold text-current opacity-75"
+          }`}
+        >
+          {value || tr("all")}
+        </span>
       </button>
       {open
         ? createPortal(
@@ -156,5 +164,14 @@ export function PosHeaderFilter({
           )
         : null}
     </th>
+  );
+}
+
+export function ColFilterHint({ label, hint }: { label: string; hint?: string }) {
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5 leading-tight">
+      <span>{label}</span>
+      {hint ? <span className="max-w-[9rem] truncate rounded-md bg-amber-400 px-1.5 py-0.5 text-[11px] font-black text-black">{hint}</span> : null}
+    </span>
   );
 }

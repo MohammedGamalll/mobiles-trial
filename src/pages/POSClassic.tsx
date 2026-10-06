@@ -25,7 +25,7 @@ import { ProductSuggestList } from "../components/ProductSuggest";
 import { ProductDialogClassic } from "../components/classic/ProductDialogClassic";
 import { AccountDialogClassic } from "../components/classic/AccountDialogClassic";
 import { emptyProduct, type ProductForm } from "../hooks/useProductCatalog";
-import { usePOSLogic, type Product } from "../hooks/usePOSLogic";
+import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PosHeaderFilter, applyPosHeaderFilters, uniqueFilterValues } from "../components/PosHeaderFilter";
 import { binText, lastSupplierName } from "../lib/place";
 
@@ -68,19 +68,20 @@ export default function POSClassic() {
     discount, setDiscount, discMode, setDiscMode, invDate, setInvDate,
     extrasOpen, setExtrasOpen, extraAmount, setExtraAmount, notes, setNotes,
     due, setDue, pays, setPays,
-    held, heldOpen, setHeldOpen, heldTab, setHeldTab, todayInv, todayStats,
+    held, heldOpenCount, heldOpen, setHeldOpen, heldTab, setHeldTab, todayInv, todayStats,
     doneOpen, setDoneOpen, doneInv, waOpen, setWaOpen, waPreview, waMsg, setWaMsg,
     brandFilter, setBrandFilter, picked, clock,
     listId, setListId, err, setErr, busy, custOpen, setCustOpen,
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind,
-    catalogLoading, catalogError, reloadCatalog,
+    catalogLoading, catalogError, catalogPage, setCatalogPage, catalogTotal, catalogPageSize, reloadCatalog,
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
     printRows, printInvoice, waEnabled, cartQty, applyParty, saveAccount,
     loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice,
+    beginResumeHeld,
     forceGoods, setForceGoods, setStockTick,
   } = pos;
   const [railOpen, setRailOpen] = useState(true);
@@ -167,7 +168,7 @@ export default function POSClassic() {
               <button type="button" className={`pos-classic-rail-btn ${desk === "held" ? "is-on" : ""}`} onClick={() => openDesk("held")}>
                 <Pause size={18} />
                 <span>{tr("heldInvoices")}</span>
-                {held.length ? <small>{held.length}</small> : null}
+                {heldOpenCount ? <small>{heldOpenCount}</small> : null}
               </button>
               <button type="button" className={`pos-classic-rail-btn ${desk === "sold" ? "is-on" : ""}`} onClick={() => openDesk("sold")}>
                 <FileText size={18} />
@@ -269,7 +270,7 @@ export default function POSClassic() {
           <div className="pos-classic-docs">
             <button type="button" className={desk === "sale" ? "is-on" : ""} onClick={() => setDesk("sale")}>{tr("posBackDesk")}</button>
             <button type="button" className={desk === "cart" ? "is-on" : ""} onClick={() => openDesk("cart")}>{tr("posCurrentCart")}{cart.length ? ` (${cart.length})` : ""}</button>
-            <button type="button" className={desk === "held" ? "is-on" : ""} onClick={() => openDesk("held")}>{tr("heldInvoices")}{held.length ? ` (${held.length})` : ""}</button>
+            <button type="button" className={desk === "held" ? "is-on" : ""} onClick={() => openDesk("held")}>{tr("heldInvoices")}{heldOpenCount ? ` (${heldOpenCount})` : ""}</button>
             <button type="button" className={desk === "sold" ? "is-on" : ""} onClick={() => openDesk("sold")}>{tr("posSoldInvoices")}</button>
             <button type="button" className={desk === "control" ? "is-on" : ""} onClick={() => openDesk("control")}>{tr("posInvoiceControl")}</button>
           </div>
@@ -345,29 +346,36 @@ export default function POSClassic() {
                     <tr>
                       <th>{tr("invoiceNo")}</th>
                       <th>{tr("customer")}</th>
+                      <th>{tr("agent")}</th>
                       <th>{tr("total")}</th>
                       <th>{tr("status")}</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(held || []).map((h) => (
-                      <tr key={h.id}>
+                    {(held || []).map((h) => {
+                      const open = isOpenHeld(h.status);
+                      return (
+                      <tr key={h.id} style={open ? undefined : { opacity: 0.5 }}>
                         <td>{h.number}</td>
                         <td>{h.customer_name || tr("walkIn")}</td>
+                        <td>{h.delivery_agent_name || "—"}</td>
                         <td className="is-price">{money(h.total, lang)}</td>
                         <td>{statusLabel(h.status, lang)}</td>
                         <td>
+                          {open ? (
                           <div className="held-act">
                           <button type="button" className="is-pay" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "pay")}>{tr("completeHeldPay")}</button>
                           <button type="button" className="is-credit" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "credit")}>{tr("completeHeldCredit")}</button>
-                          <button type="button" onClick={() => { setDesk("sale"); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
+                          <button type="button" onClick={() => { beginResumeHeld(h.id); setDesk("sale"); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
                           <button type="button" onClick={() => nav(`/sales/${h.id}`)}>{tr("view")}</button>
                           <button type="button" onClick={() => void cancelHeld(h.id)}>{tr("delete")}</button>
                           </div>
+                          ) : null}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 {!held.length ? <div className="pos-classic-empty">{tr("noData")}</div> : null}
@@ -433,6 +441,7 @@ export default function POSClassic() {
                 <table>
                   <thead>
                     <tr>
+                      <th>#</th>
                       <PosHeaderFilter column="sku" label={tr("posColSku")} values={uniqueFilterValues(visible, "sku", lang, pickPrice)} value={headerFilters.sku || ""} onChange={(v) => setHeaderFilter("sku", v)} />
                       <PosHeaderFilter column="name" label={tr("posColName")} values={uniqueFilterValues(visible, "name", lang, pickPrice)} value={headerFilters.name || ""} onChange={(v) => setHeaderFilter("name", v)} />
                       <th>{tr("posColTotalQty")}</th>
@@ -452,7 +461,7 @@ export default function POSClassic() {
                     </tr>
                   </thead>
                   <tbody>
-                    {catalogRows.map((p) => {
+                    {catalogRows.map((p, i) => {
                       const inCart = cartQty(p.id);
                       return (
                         <tr
@@ -461,6 +470,7 @@ export default function POSClassic() {
                           onClick={() => pickProduct(p)}
                           onDoubleClick={() => add(p)}
                         >
+                          <td>{(catalogPage - 1) * catalogPageSize + i + 1}</td>
                           <td>{p.sku}</td>
                           <td className="is-name">{nameOf(p)}{inCart ? ` (${inCart})` : ""}</td>
                           <td>{num(p.current_stock ?? p.available, lang)}</td>
@@ -483,12 +493,19 @@ export default function POSClassic() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={2}>{tr("posGoods")}</td>
+                      <td colSpan={3}>{tr("posGoods")}</td>
                       <td>{num(visible.reduce((s, p) => s + Number(p.current_stock ?? p.available ?? 0), 0), lang)}</td>
                       <td colSpan={showCost ? 13 : 11}>{cart.length ? `${tr("total")}: ${money(total, lang)} · ${num(cart.reduce((s, l) => s + l.qty, 0), lang)}` : ""}</td>
                     </tr>
                   </tfoot>
                 </table>
+                {catalogTotal > 0 ? (
+                  <div className="pos-classic-empty" style={{ display: "flex", gap: 8, justifyContent: "flex-end", opacity: 1 }}>
+                    <span>{num((catalogPage - 1) * catalogPageSize + (visible.length ? 1 : 0), lang)}–{num((catalogPage - 1) * catalogPageSize + visible.length, lang)} {tr("of")} {num(catalogTotal, lang)}</span>
+                    <button type="button" disabled={catalogPage <= 1 || catalogLoading} onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}>{tr("prev")}</button>
+                    <button type="button" disabled={catalogLoading || catalogPage >= Math.max(1, Math.ceil(catalogTotal / catalogPageSize))} onClick={() => setCatalogPage((n) => n + 1)}>{tr("next")}</button>
+                  </div>
+                ) : null}
                 {catalogLoading && !visible.length ? <div className="pos-classic-empty">{tr("loadingProducts")}</div> : catalogError && !visible.length ? (
                   <div className="pos-classic-empty">
                     <div>{catalogError}</div>
@@ -725,7 +742,7 @@ export default function POSClassic() {
                       <div className="held-act">
                         <button type="button" className="is-pay" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "pay")}>{tr("completeHeldPay")}</button>
                         <button type="button" className="is-credit" disabled={busy || !can("sales.create")} onClick={() => void finalizeHeld(h.id, "credit")}>{tr("completeHeldCredit")}</button>
-                        <button type="button" onClick={() => { setHeldOpen(false); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
+                        <button type="button" onClick={() => { beginResumeHeld(h.id); setHeldOpen(false); nav(`/pos?held=${h.id}`); }}>{tr("restoreHeld")}</button>
                         <button type="button" className="is-del" onClick={() => void cancelHeld(h.id)}>{tr("delete")}</button>
                       </div>
                     </td>

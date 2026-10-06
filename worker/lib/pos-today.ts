@@ -44,7 +44,7 @@ export async function loadPosToday(db: AppDb, day = todayIso(), limit = 40) {
     .first<{ n: unknown }>();
   const invoices = await db
     .prepare(
-      `SELECT si.id, si.number, si.customer_name, si.total, si.paid, si.remaining, si.status, si.date, si.payment_method
+      `SELECT si.id, si.number, si.customer_name, si.delivery_agent_name, si.total, si.paid, si.remaining, si.status, si.date, si.payment_method
        FROM sales_invoices si
        WHERE si.deleted_at IS NULL AND ${live} AND DATE(si.date) = ?
        ORDER BY si.id DESC

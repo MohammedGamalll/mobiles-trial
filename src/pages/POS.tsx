@@ -14,7 +14,7 @@ import {
   applyPosHeaderFilters,
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
-import { usePOSLogic, type Product } from "../hooks/usePOSLogic";
+import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 
 export default function POS() {
   const {
@@ -76,6 +76,7 @@ export default function POS() {
     pays,
     setPays,
     held,
+    heldOpenCount,
     heldOpen,
     setHeldOpen,
     heldTab,
@@ -115,6 +116,10 @@ export default function POS() {
     setPriceField,
     catalogLoading,
     catalogError,
+    catalogPage,
+    setCatalogPage,
+    catalogTotal,
+    catalogPageSize,
     reloadCatalog,
     searchRef,
     customerRef,
@@ -147,6 +152,7 @@ export default function POS() {
     previewWa,
     submit,
     holdInvoice,
+    beginResumeHeld,
   } = usePOSLogic("modern");
   const [cartOpen, setCartOpen] = useState(false);
   const [headerFilters, setHeaderFilters] = useState<Record<string, string>>(
@@ -264,9 +270,9 @@ export default function POS() {
               onClick={() => void openHeld()}
             >
               {tr("heldInvoices")}
-              {held.length ? (
+              {heldOpenCount ? (
                 <span className="ms-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">
-                  {held.length}
+                  {heldOpenCount}
                 </span>
               ) : null}
               <kbd className="ms-1 rounded border border-slate-200 px-1 text-[10px] font-normal text-slate-500">
@@ -320,6 +326,7 @@ export default function POS() {
             >
               <thead className="sticky top-0 z-10">
                 <tr className="text-[11px]">
+                  <th className="text-start font-black">#</th>
                   <PosHeaderFilter
                     column="name"
                     label={tr("posColName")}
@@ -453,7 +460,7 @@ export default function POS() {
                 </tr>
               </thead>
               <tbody>
-                {catalogRows.map((p) => {
+                {catalogRows.map((p, i) => {
                   const sell = canSell(p);
                   return (
                     <tr
@@ -465,6 +472,7 @@ export default function POS() {
                       }}
                       className={`cursor-pointer ${sell ? "" : "is-oos cursor-not-allowed"} ${picked === p.id ? "ring-2 ring-inset ring-[var(--ink)]" : ""}`}
                     >
+                      <td className="font-mono text-xs text-slate-400">{(catalogPage - 1) * catalogPageSize + i + 1}</td>
                       <td className="font-bold">
                         {lang === "ar" ? p.name_ar : p.name_en}
                       </td>
@@ -517,6 +525,16 @@ export default function POS() {
               </tbody>
             </table>
             )}
+            {catalogTotal > 0 ? (
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 px-3 py-2 text-xs font-bold">
+                <span className="text-slate-500">
+                  {num((catalogPage - 1) * catalogPageSize + (visible.length ? 1 : 0), lang)}
+                  –{num((catalogPage - 1) * catalogPageSize + visible.length, lang)} {tr("of")} {num(catalogTotal, lang)}
+                </span>
+                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogPage <= 1 || catalogLoading} onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}>{tr("prev")}</button>
+                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogLoading || catalogPage >= Math.max(1, Math.ceil(catalogTotal / catalogPageSize))} onClick={() => setCatalogPage((n) => n + 1)}>{tr("next")}</button>
+              </div>
+            ) : null}
             {!catalogLoading && !catalogError && !catalogRows.length ? (
               <div className="py-16 text-center text-sm text-slate-400">
                 {tr("noResults")}
@@ -1002,7 +1020,7 @@ export default function POS() {
                 ) : null}
                 <div className="grid w-full grid-cols-1 gap-2">
                   <Btn
-                    kind="ghost"
+                    kind="danger"
                     className="w-full whitespace-nowrap"
                     disabled={busy || !cart.length}
                     onClick={holdInvoice}
@@ -1335,19 +1353,24 @@ export default function POS() {
                 <tr>
                   <th>{tr("invoiceNo")}</th>
                   <th>{tr("customer")}</th>
+                  <th>{tr("agent")}</th>
                   <th>{tr("total")}</th>
                   <th>{tr("status")}</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {(held || []).map((h) => (
-                  <tr key={h.id}>
+                {(held || []).map((h) => {
+                  const open = isOpenHeld(h.status);
+                  return (
+                  <tr key={h.id} className={open ? "" : "opacity-50"}>
                     <td>{h.number}</td>
                     <td>{h.customer_name || tr("walkIn")}</td>
+                    <td>{h.delivery_agent_name || "—"}</td>
                     <td className="font-bold">{money(h.total, lang)}</td>
                     <td>{statusLabel(h.status, lang)}</td>
                     <td>
+                      {open ? (
                       <div className="held-act">
                         <button
                           type="button"
@@ -1368,6 +1391,7 @@ export default function POS() {
                         <button
                           type="button"
                           onClick={() => {
+                            beginResumeHeld(h.id);
                             setHeldOpen(false);
                             nav(`/pos?held=${h.id}`);
                           }}
@@ -1405,9 +1429,11 @@ export default function POS() {
                           {tr("delete")}
                         </button>
                       </div>
+                      ) : null}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {!held.length ? (

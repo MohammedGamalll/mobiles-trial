@@ -3114,15 +3114,15 @@ html[data-ui="modern"] .login-gold {
 .pos-classic-black button.is-hold {
   height: 28px;
   padding: 0 14px;
-  background: #f59e0b;
-  color: #111;
-  border: 1px solid #fbbf24;
+  background: #e11d48;
+  color: #fff;
+  border: 1px solid #fb7185;
   font-size: 12px;
   font-weight: 900;
 }
 
 .pos-classic-black button.is-hold:hover {
-  background: #fbbf24;
+  background: #be123c;
 }
 
 .pos-classic-black button.is-hold:disabled {
@@ -3645,7 +3645,7 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-black button.is-hold {
-  color: #111 !important;
+  color: #fff !important;
 }
 
 .pos-classic .product-suggest-list,
