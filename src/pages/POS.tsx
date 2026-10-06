@@ -98,6 +98,7 @@ export default function POS() {
     err,
     setErr,
     busy,
+    resuming,
     custOpen,
     setCustOpen,
     retOpen,
@@ -1022,7 +1023,7 @@ export default function POS() {
                   <Btn
                     kind="danger"
                     className="w-full whitespace-nowrap"
-                    disabled={busy || !cart.length}
+                    disabled={busy || resuming || !cart.length}
                     onClick={holdInvoice}
                   >
                     {tr("posHold")}

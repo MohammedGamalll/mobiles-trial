@@ -26,6 +26,7 @@ const ERR_KEYS: Record<string, Msg> = {
   already_approved: "errAlreadyApproved",
   cannot_approve: "errCannotApprove",
   not_draft: "errNotDraft",
+  not_held: "errNotHeld",
   cannot_reject: "errCannotReject",
   no_items: "errNoItems",
   missing: "errMissing",

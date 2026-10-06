@@ -71,7 +71,7 @@ export default function POSClassic() {
     held, heldOpenCount, heldOpen, setHeldOpen, heldTab, setHeldTab, todayInv, todayStats,
     doneOpen, setDoneOpen, doneInv, waOpen, setWaOpen, waPreview, waMsg, setWaMsg,
     brandFilter, setBrandFilter, picked, clock,
-    listId, setListId, err, setErr, busy, custOpen, setCustOpen,
+    listId, setListId, err, setErr, busy, resuming, custOpen, setCustOpen,
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind,
@@ -655,7 +655,7 @@ export default function POSClassic() {
             {can("settings.edit") ? <button type="button" onClick={() => nav("/settings")}><Settings size={12} /> {tr("settings")}</button> : null}
             <button type="button" onClick={() => nav("/")}>{tr("posClose")}</button>
             <span className="pos-classic-black-gap" />
-            <button type="button" className="is-hold" disabled={busy || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>
+            <button type="button" className="is-hold" disabled={busy || resuming || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>
           </div>
         </div>
       </div>

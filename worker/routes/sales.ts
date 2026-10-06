@@ -356,9 +356,10 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     if (!existing) return c.json({ error: "not_found" }, 404);
     const row = existing as unknown as typeof resume & { status: string };
     if (row.status !== "held" && row.status !== "quote" && row.status !== "order") {
-      return c.json({ error: "not_held" }, 400);
+      resume = null;
+    } else {
+      resume = row;
     }
-    resume = row;
   }
   let invoiceId = 0;
   let number = "";

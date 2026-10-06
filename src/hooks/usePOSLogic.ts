@@ -169,8 +169,11 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogTotal, setCatalogTotal] = useState(0);
   const catalogPageSize = 80;
-  const [resumeInvoiceId, setResumeInvoiceId] = useState<number | null>(() => peekResumeInvoice() || null);
-  const resumeRef = useRef<number | null>(peekResumeInvoice() || null);
+  const heldFromUrl = Number(params.get("held") || 0) || 0;
+  const [resumeInvoiceId, setResumeInvoiceId] = useState<number | null>(heldFromUrl || null);
+  const resumeRef = useRef<number | null>(heldFromUrl || null);
+  const resumeReadyRef = useRef(false);
+  const [resuming, setResuming] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const customerRef = useRef<HTMLInputElement>(null);
   const qtyRef = useRef<HTMLInputElement>(null);
@@ -231,10 +234,19 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     const heldId = Number(params.get("held") || 0);
     if (!heldId) return;
     beginResumeHeld(heldId);
+    let live = true;
     get<{ data: any }>(`/api/invoices/${heldId}`).then((r) => {
+      if (!live) return;
       const inv = r.data;
-      if (!["held", "quote", "order"].includes(inv?.status)) return;
-      beginResumeHeld(inv.id);
+      if (!["held", "quote", "order"].includes(inv?.status)) {
+        resumeReadyRef.current = false;
+        resumeRef.current = null;
+        setResumeInvoiceId(null);
+        clearResumeInvoice();
+        setResuming(false);
+        setErr(apiMessage(tr, { message: "not_held" }));
+        return;
+      }
       setType(inv.type === "delivery" ? "delivery" : "normal");
       setDiscount(inv.discount || 0);
       setDiscMode("egp");
@@ -261,27 +273,47 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       setArea(inv.area || "");
       setAgentId(inv.delivery_agent_id || "");
       setSalesAgentId(inv.sales_agent_id || "");
-      setMethod(inv.payment_method || "cash");
-      setCart((inv.items || []).map((it: any) => ({
-        id: it.product_id,
-        name_ar: it.product_name,
-        name_en: it.product_name,
-        sku: it.sku,
-        selling_price: it.unit_price,
-        wholesale_price: it.unit_price,
-        min_selling_price: 0,
-        available: 9999,
-        stock_status: "in",
-        kind: it.item_kind,
-        qty: it.quantity,
-        unit_price: it.unit_price,
-        discount: it.discount || 0,
-        batch_id: null,
-        serials: [],
-        unit_name: it.unit_name || "",
-        unit_factor: Number(it.unit_factor || 1) || 1,
-      })));
-    }).catch(() => {});
+      setMethod(inv.payment_method === "credit" ? "credit" : (inv.payment_method || "cash"));
+      setCart((inv.items || []).map((it: any) => {
+        const pid = Number(it.product_id || 0);
+        const cat = catalogRef.current.find((p) => p.id === pid);
+        return {
+          ...(cat || {
+            name_ar: it.product_name,
+            name_en: it.product_name,
+            sku: it.sku,
+            selling_price: it.unit_price,
+            wholesale_price: it.unit_price,
+            min_selling_price: 0,
+            available: 9999,
+            stock_status: "in",
+            kind: it.item_kind,
+          }),
+          id: pid,
+          name_ar: it.product_name || cat?.name_ar || "",
+          name_en: it.product_name || cat?.name_en || "",
+          sku: it.sku || cat?.sku || "",
+          qty: Number(it.quantity) || 0,
+          unit_price: Number(it.unit_price) || 0,
+          discount: it.discount || 0,
+          batch_id: null,
+          serials: [],
+          unit_name: it.unit_name || cat?.unit || "",
+          unit_factor: Number(it.unit_factor || cat?.units?.[0]?.factor || 1) || 1,
+        };
+      }));
+      resumeReadyRef.current = true;
+      setResuming(false);
+    }).catch((e) => {
+      if (!live) return;
+      resumeReadyRef.current = false;
+      resumeRef.current = null;
+      setResumeInvoiceId(null);
+      clearResumeInvoice();
+      setResuming(false);
+      setErr(apiMessage(tr, e));
+    });
+    return () => { live = false; };
   }, [params.get("held")]);
 
   useEffect(() => {
@@ -439,8 +471,12 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     const n = Number(id) || 0;
     if (!n) return;
     resumeRef.current = n;
+    resumeReadyRef.current = false;
     setResumeInvoiceId(n);
     rememberResumeInvoice(n);
+    setCart([]);
+    setResuming(true);
+    setErr("");
   }
 
   function clearHeldQuery() {
@@ -463,7 +499,9 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     setForceGoods(false);
     setPicked(null);
     resumeRef.current = null;
+    resumeReadyRef.current = false;
     setResumeInvoiceId(null);
+    setResuming(false);
     clearResumeInvoice();
     clearHeldQuery();
     searchRef.current?.focus();
@@ -634,7 +672,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     setErr("");
     const paidAmt = opts?.paid ?? paid;
     const asQuote = !!(opts?.quote || quoteMode);
-    const resumeId = Number(resumeRef.current || resumeInvoiceId || params.get("held") || peekResumeInvoice() || 0) || 0;
+    const resumeId = resumeReadyRef.current ? (Number(resumeRef.current || resumeInvoiceId || 0) || 0) : 0;
     try {
       const body = {
         type,
@@ -667,10 +705,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         resume_id: resumeId || null,
       };
       const res = await post<{ data: any }>("/api/invoices", body);
-      const savedId = Number(res.data?.id || 0);
-      if (resumeId && savedId && savedId !== resumeId) {
-        await post(`/api/invoices/${resumeId}/cancel`).catch(() => {});
-      }
       if (opts?.hold) {
         playSound("ok");
         clearCart();
@@ -718,7 +752,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   }
 
   async function holdInvoice() {
-    if (!cart.length) return;
+    if (!cart.length || resuming) return;
     await submit({ hold: true });
   }
 
@@ -903,7 +937,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     held, heldOpenCount: held.filter((h) => isOpenHeld(h.status)).length, heldOpen, setHeldOpen, heldTab, setHeldTab, todayInv, todayStats,
     doneOpen, setDoneOpen, doneInv, waOpen, setWaOpen, waPreview, waMsg, setWaMsg,
     brandFilter, setBrandFilter, catFilter, setCatFilter, picked, setPicked, clock,
-    listId, setListId, err, setErr, busy, custOpen, setCustOpen,
+    err, setErr, busy, resuming, custOpen, setCustOpen,
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind, accountCode, setAccountCode, supplier, setSupplier,
