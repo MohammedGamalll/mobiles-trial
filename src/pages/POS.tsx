@@ -3,7 +3,8 @@ import { ChevronDown, Minus, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintBtn, Stat, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, Stat, inputCls } from "../components/ui";
+import { binText, lastSupplierName } from "../lib/place";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
@@ -112,6 +113,9 @@ export default function POS() {
     setQtyField,
     priceField,
     setPriceField,
+    catalogLoading,
+    catalogError,
+    reloadCatalog,
     searchRef,
     customerRef,
     qtyRef,
@@ -302,6 +306,14 @@ export default function POS() {
             className="min-h-0 w-full min-w-0 flex-1 overflow-auto overscroll-none"
             dir="ltr"
           >
+            {catalogLoading && !catalogRows.length ? (
+              <PageLoading label={tr("loadingProducts")} />
+            ) : catalogError && !catalogRows.length ? (
+              <div className="px-4 py-12 text-center">
+                <ErrorNote message={catalogError} />
+                <Btn className="mt-3" onClick={() => reloadCatalog()}>{tr("retry")}</Btn>
+              </div>
+            ) : (
             <table
               className="pos-modern-table w-full text-sm"
               dir={lang === "ar" ? "rtl" : "ltr"}
@@ -363,6 +375,13 @@ export default function POS() {
                     values={uniqueFilterValues(visible, "sku", lang, pickPrice)}
                     value={headerFilters.sku || ""}
                     onChange={(v) => setHeaderFilter("sku", v)}
+                  />
+                  <PosHeaderFilter
+                    column="supplier"
+                    label={tr("supplier")}
+                    values={uniqueFilterValues(visible, "supplier", lang, pickPrice)}
+                    value={headerFilters.supplier || ""}
+                    onChange={(v) => setHeaderFilter("supplier", v)}
                   />
                   <PosHeaderFilter
                     column="warehouse"
@@ -470,11 +489,12 @@ export default function POS() {
                       <td className="font-mono text-xs text-slate-500">
                         {[p.sku, p.barcode].filter(Boolean).join(" / ") || "—"}
                       </td>
+                      <td className="text-slate-500">{lastSupplierName(p) || "—"}</td>
                       <td className="text-slate-500">
                         {p.warehouse || p.location_name || "—"}
                       </td>
                       <td className="text-slate-500">{p.box || "—"}</td>
-                      <td className="text-slate-500">{p.shelf || "—"}</td>
+                      <td className="text-slate-500">{binText(p) || "—"}</td>
                       <td className="is-sell">{money(pickPrice(p), lang)}</td>
                       <td>
                         {p.min_selling_price
@@ -496,9 +516,15 @@ export default function POS() {
                 })}
               </tbody>
             </table>
-            {!catalogRows.length ? (
+            )}
+            {!catalogLoading && !catalogError && !catalogRows.length ? (
               <div className="py-16 text-center text-sm text-slate-400">
                 {tr("noResults")}
+              </div>
+            ) : catalogError && catalogRows.length ? (
+              <div className="px-3 py-2">
+                <ErrorNote message={catalogError} />
+                <Btn kind="ghost" className="mt-2" onClick={() => reloadCatalog()}>{tr("retry")}</Btn>
               </div>
             ) : null}
           </div>

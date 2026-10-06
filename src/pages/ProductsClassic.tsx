@@ -8,6 +8,7 @@ import { PrintLetterhead, printPage } from "../components/ui";
 import { downloadExport } from "../lib/export";
 import { ProductDialogClassic } from "../components/classic/ProductDialogClassic";
 import { emptyProduct, useProductCatalog, type ProductForm } from "../hooks/useProductCatalog";
+import { lastSupplierName } from "../lib/place";
 
 function FilterBox({
   label,
@@ -146,7 +147,12 @@ export default function ProductsClassic() {
         </aside>
 
         <div className="inv-classic-grid">
-          {cat.loading ? <div className="px-4 py-8 text-center font-bold">{tr("loading")}</div> : null}
+          {cat.loading ? <div className="px-4 py-8 text-center font-bold">{tr("loadingProducts")}</div> : cat.err ? (
+            <div className="px-4 py-8 text-center font-bold">
+              <div>{cat.err}</div>
+              <button type="button" onClick={() => cat.reload()}>{tr("retry")}</button>
+            </div>
+          ) : null}
           <table>
             <thead>
               <tr>
@@ -187,7 +193,7 @@ export default function ProductsClassic() {
                   <td>{p.quality || ""}</td>
                   <td>{(lang === "ar" ? p.part_type_ar : p.part_type_en) || ""}</td>
                   <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || ""}</td>
-                  <td>{p.supplier_name || ""}</td>
+                  <td>{lastSupplierName(p)}</td>
                 </tr>
               ))}
             </tbody>

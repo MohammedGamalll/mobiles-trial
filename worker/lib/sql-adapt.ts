@@ -33,7 +33,9 @@ export function adaptSql(sql: string) {
   s = s.replace(/\bBEGIN IMMEDIATE\b/gi, "START TRANSACTION");
   s = s.replace(/julianday\('now'\)\s*-\s*julianday\(([^)]+)\)/gi, "DATEDIFF(CURDATE(), $1)");
   s = s.replace(/julianday\(([^)]+)\)\s*-\s*julianday\(([^)]+)\)/gi, "DATEDIFF($1, $2)");
-  s = s.replace(/\bCAST\(([^)]+)\s+AS\s+INT\)/gi, "CAST($1 AS SIGNED)");
+  s = s.replace(/\bAS\s+INT\b/gi, "AS SIGNED");
+  s = s.replace(/\bdate\(\?,\s*'-'\s*\|\|\s*\?\s*\|\|\s*' days'\)/gi, "DATE_SUB(?, INTERVAL ? DAY)");
+  s = s.replace(/\bdate\(\?,\s*'-1 day'\)/gi, "DATE_SUB(?, INTERVAL 1 DAY)");
   s = s.replace(/\b(datetime|date)\(([^)]*)\)/gi, (full, fn: string, inner: string) => {
     const converted = sqliteNowToMysql(fn, inner);
     if (converted) return converted;

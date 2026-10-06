@@ -122,6 +122,7 @@ function withoutCost<T extends Record<string, unknown>>(user: { role_slug: strin
     const next = { ...row };
     delete next.purchase_price;
     delete next.last_purchase_price;
+    delete next.last_buy_price;
     return next;
   });
 }
@@ -476,7 +477,8 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
       };
     })
     : await attachStockReport(c.env.DB, scoped as { id: number }[], stockIds);
-  const data = withoutCost(user, reported as Record<string, unknown>[]);
+  const withBuy = await attachLastBuy(c.env.DB, reported as { id: number; supplier_name?: string; last_purchase_price?: number; purchase_price?: number }[]);
+  const data = withoutCost(user, withBuy as Record<string, unknown>[]);
   if (!showCost) {
     for (const row of data) delete row.cost_value;
   }

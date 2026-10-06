@@ -4,8 +4,10 @@ import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
+import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { useLiveList } from "../hooks/useLiveList";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 
 function Page({ title, action, children }: { title: string; action?: any; children: any }) {
@@ -51,9 +53,7 @@ export function CashAccountsPage() {
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/ledger/cash?${f.qs}`)).data || []);
   }
-  useEffect(() => {
-    load().catch(() => {});
-  }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   useEffect(() => {
     get<{ data: any[] }>("/api/ledger/accounts").then((r) => setAccounts(r.data || [])).catch(() => {});
   }, []);
@@ -67,6 +67,7 @@ export function CashAccountsPage() {
       <SmartFilter f={f} date={false} fields={[
         { key: "kind", label: "kind", type: "select", quick: true, options: [{ value: "cash", label: tr("cashBox") }, { value: "bank", label: tr("bank") }] },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("kind"), tr("name"), tr("accountCode"), tr("opening"), tr("acctBalance"), tr("status"), ""]}
         rows={rows.map((r) => [
@@ -81,11 +82,12 @@ export function CashAccountsPage() {
               canEdit
               canDelete
               onEdit={() => { setForm({ ...form, ...r }); setOpen(true); }}
-              onDelete={() => confirmDelete(r.name, async () => { await del(`/api/ledger/cash/${r.id}`); load(); })}
+              onDelete={() => confirmDelete(r.name, async () => { await del(`/api/ledger/cash/${r.id}`); list.reload(); })}
             />
           ) : null,
         ])}
       />
+      </ListGate>
       <Modal open={open} title={tr("cashBanks")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("kind")}>
@@ -105,7 +107,7 @@ export function CashAccountsPage() {
           <Btn onClick={async () => {
             if ((form as any).id) await put(`/api/ledger/cash/${(form as any).id}`, form);
             else await post("/api/ledger/cash", form);
-            setOpen(false); load();
+            setOpen(false); list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>
@@ -128,7 +130,7 @@ export function CashAccountsPage() {
           <Btn onClick={async () => {
             await post("/api/ledger/cash-transfer", { from_id: Number(xfer.from_id), to_id: Number(xfer.to_id), amount: xfer.amount, notes: xfer.notes });
             setXferOpen(false);
-            load();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>
@@ -141,12 +143,15 @@ export function ChartPage() {
   const { tr, lang } = useApp();
   const f = useListQuery("trial", { period: "this_year" });
   const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => { get<{ data: any[] }>(`/api/ledger/trial?${f.qs}`).then((r) => setRows(r.data || [])).catch(() => {}); }, [f.qs]);
+  const list = useLiveList(async () => {
+    setRows((await get<{ data: any[] }>(`/api/ledger/trial?${f.qs}`)).data || []);
+  }, [f.qs]);
   return (
     <Page title={tr("chartAccounts")}>
       <SmartFilter f={f} fields={[
         { key: "type", label: "kind", type: "select", quick: true, options: ["asset", "liability", "equity", "income", "expense"].map((t) => ({ value: t, label: statusLabel(t, lang) })) },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("accountCode"), tr("name"), tr("kind"), tr("debit"), tr("creditAmt"), tr("acctBalance")]}
         rows={rows.map((r) => {
@@ -161,6 +166,7 @@ export function ChartPage() {
           ];
         })}
       />
+      </ListGate>
     </Page>
   );
 }
@@ -171,7 +177,9 @@ export function JournalPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<any>(null);
-  useEffect(() => { get<{ data: any[] }>(`/api/ledger/journal?${f.qs}&pageSize=80`).then((r) => setRows(r.data || [])).catch(() => {}); }, [f.qs]);
+  const list = useLiveList(async () => {
+    setRows((await get<{ data: any[] }>(`/api/ledger/journal?${f.qs}&pageSize=80`)).data || []);
+  }, [f.qs]);
   return (
     <Page title={tr("journal")} action={<Btn kind="ghost" onClick={() => setOpen(true)}>{tr("view")}</Btn>}>
       <SmartFilter f={f} fields={[
@@ -180,7 +188,7 @@ export function JournalPage() {
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
         { key: "dc", label: "debit", type: "select", options: [{ value: "debit", label: tr("debit") }, { value: "credit", label: tr("creditAmt") }] },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("invoiceNo"), tr("date"), tr("description"), tr("source"), tr("total"), tr("status")]}
         rows={rows.map((r) => [
@@ -192,7 +200,7 @@ export function JournalPage() {
           <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
         ])}
       />
-      )}
+      </ListGate>
       <Modal open={!!detail} title={detail?.number || tr("journal")} onClose={() => setDetail(null)} wide>
         {detail ? (
           <Table
@@ -219,9 +227,9 @@ export function VouchersPage() {
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/ledger/vouchers?${f.qs}&pageSize=80`)).data || []);
   }
-  useEffect(() => {
-    load().catch(() => {});
-    get<{ data: any[] }>("/api/ledger/cash").then((r) => setCash(r.data || [])).catch(() => {});
+  const list = useLiveList(async () => {
+    await load();
+    setCash((await get<{ data: any[] }>("/api/ledger/cash")).data || []);
   }, [f.qs]);
   return (
     <Page title={tr("vouchers")} action={can("vouchers.create") ? <Btn onClick={() => setOpen(true)}>{tr("newVoucher")}</Btn> : null}>
@@ -230,6 +238,7 @@ export function VouchersPage() {
         { key: "cash_account_id", label: "cashBox", type: "select", options: cash.map((c) => ({ value: String(c.id), label: c.name })) },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("invoiceNo"), tr("kind"), tr("date"), tr("name"), tr("cashBox"), tr("amount"), ""]}
         rows={rows.map((r) => [
@@ -239,9 +248,10 @@ export function VouchersPage() {
           r.party_name || "-",
           r.cash_name,
           money(r.amount, lang),
-          can("ledger.manage") && !r.voided_at ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/ledger/vouchers/${r.id}/void`, {}); load(); })}>{tr("delete")}</button> : null,
+          can("ledger.manage") && !r.voided_at ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/ledger/vouchers/${r.id}/void`, {}); list.reload(); })}>{tr("delete")}</button> : null,
         ])}
       />
+      </ListGate>
       <Modal open={open} title={tr("newVoucher")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("kind")}>
@@ -277,7 +287,7 @@ export function VouchersPage() {
           <Btn onClick={async () => {
             await post("/api/ledger/vouchers", { ...form, party_id: form.party_id ? Number(form.party_id) : undefined });
             setOpen(false);
-            load();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
-import { get, getCached, post } from "../lib/api";
+import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { playSound } from "../lib/sounds";
 import { useProductSuggest } from "../components/ProductSuggest";
@@ -41,6 +41,7 @@ export type Product = {
   drawer?: string;
   box?: string;
   supplier_name?: string;
+  last_supplier_name?: string;
   current_stock?: number;
   reserved_stock?: string | number;
   purchase_price?: number;
@@ -142,6 +143,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [supplier, setSupplier] = useState<any>(null);
   const [forceGoods, setForceGoods] = useState(false);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const customerRef = useRef<HTMLInputElement>(null);
   const qtyRef = useRef<HTMLInputElement>(null);
@@ -176,13 +179,20 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       if (brandFilter) p.set("brand_id", String(brandFilter));
       if (catFilter) p.set("category_id", String(catFilter));
       if (warehouseId) p.set("location_id", String(warehouseId));
-      getCached<{ data: Product[] }>(`/api/products?${p}`).then((r) => {
+      setCatalogLoading(true);
+      setCatalogError("");
+      get<{ data: Product[] }>(`/api/products?${p}`).then((r) => {
         if (!live) return;
         setCatalog(r.data || []);
-      }).catch(() => {});
+      }).catch((e) => {
+        if (!live) return;
+        setCatalogError(apiMessage(tr, e));
+      }).finally(() => {
+        if (live) setCatalogLoading(false);
+      });
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [q, listId, kindFilter, typeFilter, brandFilter, catFilter, stockTick, warehouseId]);
+  }, [q, listId, kindFilter, typeFilter, brandFilter, catFilter, stockTick, warehouseId, tr]);
 
   useEffect(() => {
     const heldId = Number(params.get("held") || 0);
@@ -805,6 +815,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind, accountCode, setAccountCode, supplier, setSupplier,
     forceGoods, setForceGoods, showGoods, partyHits, applyParty, saveAccount, addPicked,
+    catalogLoading, catalogError, reloadCatalog: () => setStockTick((n) => n + 1),
     searchRef, customerRef, qtyRef, priceRef, extraRef, custBlurRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
     subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer,

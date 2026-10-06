@@ -3,9 +3,11 @@ import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PageLoading, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { useLiveList } from "../hooks/useLiveList";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 
@@ -21,16 +23,10 @@ export function DeliveryBoard() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 });
   const { confirmDelete, dialog } = useConfirm();
-  const [loading, setLoading] = useState(false);
 
   async function loadOrders() {
-    setLoading(true);
-    try {
-      const r = await get<{ data: any[] }>(`/api/delivery/orders?${f.qs}`);
-      setRows(r.data);
-    } finally {
-      setLoading(false);
-    }
+    const r = await get<{ data: any[] }>(`/api/delivery/orders?${f.qs}`);
+    setRows(r.data);
   }
   async function loadLive(agentId = trailAgentId) {
     const q = agentId ? `?trail_agent_id=${agentId}` : "";
@@ -49,18 +45,17 @@ export function DeliveryBoard() {
     setAgents(r.data);
   }
 
-  useEffect(() => {
-    loadOrders().catch(() => {});
-  }, [f.qs]);
+  const orders = useLiveList(loadOrders, [f.qs]);
+  const agentsList = useLiveList(async () => {
+    if (tab !== "agents") return;
+    await loadAgents();
+  }, [tab]);
   useEffect(() => {
     if (tab !== "map") return;
     loadLive().catch(() => setLiveErr("unreachable"));
     const t = setInterval(() => loadLive().catch(() => setLiveErr("unreachable")), 10000);
     return () => clearInterval(t);
   }, [tab, trailAgentId]);
-  useEffect(() => {
-    if (tab === "agents") loadAgents().catch(() => {});
-  }, [tab]);
 
   const shop = {
     lat: Number(settings.workplace_lat || 30.0566),
@@ -121,41 +116,41 @@ export function DeliveryBoard() {
             { key: "agent_id", label: "agent", type: "select", quick: true, lookup: "delivery_agents" },
             { key: "area", label: "area", type: "text" },
           ]} />
-          {loading ? <PageLoading /> : !rows.length ? <EmptyFilterState onClear={f.clear} /> : (
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{tr("invoiceNo")}</th>
-                    <th>{tr("customer")}</th>
-                    <th>{tr("agent")}</th>
-                    <th>{tr("area")}</th>
-                    <th>{tr("total")}</th>
-                    <th>{tr("status")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id}>
-                      <td><Link className="font-bold text-cyan-800" to={`/sales/${r.id}`}>{r.number}</Link></td>
-                      <td>
-                        {r.customer_name}
-                        <div className="text-xs text-slate-400">{r.customer_phone}</div>
-                      </td>
-                      <td>{`${r.delivery_agent_name || ""} (${r.delivery_agent_code || ""})`}</td>
-                      <td>{r.area}</td>
-                      <td>{money(r.total, lang)}</td>
-                      <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
-                      <td></td>
+          <ListGate loading={orders.loading} err={orders.err} onRetry={orders.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
+            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{tr("invoiceNo")}</th>
+                      <th>{tr("customer")}</th>
+                      <th>{tr("agent")}</th>
+                      <th>{tr("area")}</th>
+                      <th>{tr("total")}</th>
+                      <th>{tr("status")}</th>
+                      <th></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id}>
+                        <td><Link className="font-bold text-cyan-800" to={`/sales/${r.id}`}>{r.number}</Link></td>
+                        <td>
+                          {r.customer_name}
+                          <div className="text-xs text-slate-400">{r.customer_phone}</div>
+                        </td>
+                        <td>{`${r.delivery_agent_name || ""} (${r.delivery_agent_code || ""})`}</td>
+                        <td>{r.area}</td>
+                        <td>{money(r.total, lang)}</td>
+                        <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
+                        <td></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-          )}
+          </ListGate>
         </>
       ) : null}
 
@@ -217,45 +212,47 @@ export function DeliveryBoard() {
           {can("settings.edit", "hr.manage") ? (
             <Btn className="no-print mb-3" onClick={() => { setForm({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 }); setOpen(true); }}>{tr("addCourier")}</Btn>
           ) : null}
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{tr("code")}</th>
-                    <th>{tr("name")}</th>
-                    <th>{tr("phone")}</th>
-                    <th>{tr("roleType")}</th>
-                    <th>{tr("area")}</th>
-                    <th>{tr("status")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agents.map((a) => (
-                    <tr key={a.id}>
-                      <td className="font-bold">{a.code}</td>
-                      <td>{a.name}</td>
-                      <td>{a.phone}</td>
-                      <td>{a.role_type === "sales" ? tr("roleSales") : a.role_type === "both" ? tr("roleBoth") : tr("roleDelivery")}</td>
-                      <td>{a.area || "-"}</td>
-                      <td><span className={statusClass(a.status === "active" ? "in" : "out")}>{a.status === "active" ? tr("active") : tr("inactive")}</span></td>
-                      <td>
-                        {can("settings.edit", "hr.manage") ? (
-                          <ActionBtns
-                            canEdit
-                            canDelete
-                            onEdit={() => { setForm({ ...a, notes: a.notes || "", role_type: a.role_type || "delivery", commission_rate: a.commission_rate || 0, area: a.area || "" }); setOpen(true); }}
-                            onDelete={() => confirmDelete(a.name, async () => { await del(`/api/delivery/agents/${a.id}`); loadAgents(); })}
-                          />
-                        ) : null}
-                      </td>
+          <ListGate loading={agentsList.loading} err={agentsList.err} onRetry={agentsList.reload} empty={!agents.length} emptyFallback={<div className="rounded-2xl bg-white p-8 text-center text-slate-400">{tr("noData")}</div>}>
+            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{tr("code")}</th>
+                      <th>{tr("name")}</th>
+                      <th>{tr("phone")}</th>
+                      <th>{tr("roleType")}</th>
+                      <th>{tr("area")}</th>
+                      <th>{tr("status")}</th>
+                      <th></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {agents.map((a) => (
+                      <tr key={a.id}>
+                        <td className="font-bold">{a.code}</td>
+                        <td>{a.name}</td>
+                        <td>{a.phone}</td>
+                        <td>{a.role_type === "sales" ? tr("roleSales") : a.role_type === "both" ? tr("roleBoth") : tr("roleDelivery")}</td>
+                        <td>{a.area || "-"}</td>
+                        <td><span className={statusClass(a.status === "active" ? "in" : "out")}>{a.status === "active" ? tr("active") : tr("inactive")}</span></td>
+                        <td>
+                          {can("settings.edit", "hr.manage") ? (
+                            <ActionBtns
+                              canEdit
+                              canDelete
+                              onEdit={() => { setForm({ ...a, notes: a.notes || "", role_type: a.role_type || "delivery", commission_rate: a.commission_rate || 0, area: a.area || "" }); setOpen(true); }}
+                              onDelete={() => confirmDelete(a.name, async () => { await del(`/api/delivery/agents/${a.id}`); agentsList.reload(); })}
+                            />
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          </ListGate>
           <Modal open={open} title={form.id ? tr("edit") : tr("addCourier")} onClose={() => setOpen(false)}>
             <div className="space-y-3">
               <Field label={tr("name")}><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -281,7 +278,7 @@ export function DeliveryBoard() {
                 if (form.id) await put(`/api/delivery/agents/${form.id}`, form);
                 else await post("/api/delivery/agents", form);
                 setOpen(false);
-                loadAgents();
+                agentsList.reload();
               }}>{tr("save")}</Btn>
             </div>
           </Modal>

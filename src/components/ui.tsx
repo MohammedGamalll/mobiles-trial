@@ -64,12 +64,33 @@ export function ErrorNote({ message }: { message?: string }) {
   );
 }
 
+export function Spinner({ className = "h-8 w-8 text-[var(--btn)]" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <g className="spinner-ticks" fill="currentColor">
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.14" transform="rotate(0 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.21" transform="rotate(30 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.29" transform="rotate(60 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.36" transform="rotate(90 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.43" transform="rotate(120 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.5" transform="rotate(150 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.57" transform="rotate(180 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.64" transform="rotate(210 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.71" transform="rotate(240 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.79" transform="rotate(270 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="0.86" transform="rotate(300 12 12)" />
+        <rect x="11" y="1" width="2" height="5" rx="1" opacity="1" transform="rotate(330 12 12)" />
+      </g>
+    </svg>
+  );
+}
+
 export function PageLoading({ label }: { label?: string }) {
   const { tr } = useApp();
   return (
-    <div className="page-loading flex items-center justify-center gap-2 px-4 py-10 text-sm font-bold text-slate-500">
-      <span className="page-loading-dot" />
-      {label || tr("loading")}
+    <div className="page-loading flex flex-col items-center justify-center gap-3 px-4 py-16 text-sm font-bold text-slate-500">
+      <Spinner />
+      <span>{label || tr("loading")}</span>
     </div>
   );
 }
@@ -245,6 +266,7 @@ export function Btn({
   kind = "primary",
   type = "button",
   disabled,
+  loading,
   className = "",
 }: {
   children: ReactNode;
@@ -252,6 +274,7 @@ export function Btn({
   kind?: "primary" | "ghost" | "danger" | "soft";
   type?: "button" | "submit";
   disabled?: boolean;
+  loading?: boolean;
   className?: string;
 }) {
   const map = {
@@ -261,7 +284,8 @@ export function Btn({
     soft: "bg-teal-50 text-teal-800 hover:bg-teal-200 hover:text-teal-950 dark:bg-teal-900/40 dark:text-teal-100 dark:hover:bg-[#134e4a] dark:hover:text-white",
   };
   return (
-    <button type={type} disabled={disabled} onClick={onClick} className={`ui-btn inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold transition-all duration-300 ease-in-out disabled:opacity-50 ${map[kind]} ${className}`}>
+    <button type={type} disabled={disabled || loading} onClick={onClick} className={`ui-btn inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold transition-all duration-300 ease-in-out disabled:opacity-50 ${map[kind]} ${className}`}>
+      {loading ? <Spinner className="h-4 w-4 text-current" /> : null}
       {children}
     </button>
   );

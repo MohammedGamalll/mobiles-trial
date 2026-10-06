@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../context";
-import { del, get, getCached, post, put } from "../lib/api";
-import { peekCached } from "../lib/query-cache";
+import { del, get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { playSound } from "../lib/sounds";
 
@@ -104,31 +103,23 @@ export function useProductCatalog() {
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
     const path = `/api/products?${qs}`;
-    const stale = peekCached<{ data: any[]; total?: number }>(path);
-    if (stale?.data) {
-      setRows(stale.data);
-      setTotal(Number(stale.total) || stale.data.length);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+    setLoading(true);
+    setErr("");
     try {
-      const r = await getCached<{ data: any[]; total?: number }>(path);
+      const r = await get<{ data: any[]; total?: number }>(path);
       if (gen !== loadGen.current) return;
       setRows(r.data || []);
       setTotal(Number(r.total) || (r.data || []).length);
+    } catch (e) {
+      if (gen !== loadGen.current) return;
+      setErr(apiMessage(tr, e));
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
-  }, [qs]);
+  }, [qs, tr]);
 
   useEffect(() => {
-    load().catch(() => {
-      if (loadGen.current) {
-        setRows([]);
-        setLoading(false);
-      }
-    });
+    load().catch(() => {});
   }, [load, tick]);
 
   const selected = rows.find((r) => r.id === picked) || null;
@@ -213,7 +204,7 @@ export function useProductCatalog() {
     const p = new URLSearchParams(qs);
     p.set("page", "1");
     p.set("pageSize", "5000");
-    const r = await getCached<{ data: any[] }>(`/api/products?${p}`);
+    const r = await get<{ data: any[] }>(`/api/products?${p}`);
     setRows(r.data || []);
     return r.data || [];
   }

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useApp } from "../context";
 import { get } from "../lib/api";
-import { money } from "../lib/format";
+import { money, num } from "../lib/format";
+import { placeLabel } from "../lib/place";
 import { productDisplayName, rankProductHits } from "../lib/product-suggest";
 
 const EMPTY: any[] = [];
@@ -107,23 +108,36 @@ export function ProductSuggestList({
   const { lang, tr } = useApp();
   if (!open) return null;
   return (
-    <div className="product-suggest-list absolute start-0 end-0 z-50 mt-1 max-h-64 overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-lg">
-      {hits.map((p, i) => (
-        <button
-          key={p.id}
-          type="button"
-          className={`block w-full px-3 py-2 text-start text-sm text-[var(--text)] ${i === hi ? "bg-[var(--surface-2)]" : "hover:bg-[var(--surface-2)]"}`}
-          onMouseDown={(e) => e.preventDefault()}
-          onMouseEnter={() => onHover?.(i)}
-          onClick={() => onPick(p)}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 font-bold">{productDisplayName(p, lang)}</div>
-            {showPrice ? <div className="shrink-0 text-xs font-black">{money(p.selling_price, lang)}</div> : null}
-          </div>
-          <div className="text-[11px] text-slate-500">{[p.sku, p.barcode, lang === "ar" ? p.brand_ar : p.brand_en].filter(Boolean).join(" · ")}</div>
-        </button>
-      ))}
+    <div className="product-suggest-list absolute start-0 z-50 mt-1 max-h-80 min-w-full w-max max-w-[min(40rem,90vw)] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-lg">
+      {hits.map((p, i) => {
+        const type = (lang === "ar" ? p.part_type_ar : p.part_type_en) || p.part_type_ar || "";
+        const models = (p.models || []).map((m: { name?: string }) => m.name).filter(Boolean).join(" · ");
+        const category = [p.quality, lang === "ar" ? p.category_ar : p.category_en].filter(Boolean).join(" · ");
+        const qty = p.kind === "service" || p.non_stock ? "∞" : num(p.available, lang);
+        const place = placeLabel(p);
+        return (
+          <button
+            key={p.id}
+            type="button"
+            className={`block w-full px-3 py-2.5 text-start text-sm text-[var(--text)] ${i === hi ? "bg-[var(--surface-2)]" : "hover:bg-[var(--surface-2)]"}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseEnter={() => onHover?.(i)}
+            onClick={() => onPick(p)}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 font-bold">{productDisplayName(p, lang)}</div>
+              {showPrice ? <div className="shrink-0 text-xs font-black">{money(p.selling_price, lang)}</div> : null}
+            </div>
+            <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
+              {type ? <span>{type}</span> : null}
+              {models ? <span>{models}</span> : null}
+              {category ? <span>{category}</span> : null}
+              <span>{tr("available")}: {qty}</span>
+              {place ? <span>{place}</span> : null}
+            </div>
+          </button>
+        );
+      })}
       {!hits.length ? <div className="px-3 py-3 text-sm text-slate-400">{tr("noResults")}</div> : null}
     </div>
   );

@@ -187,7 +187,7 @@ export default function DeliverySettle() {
         </div>
       )}
       <div className="mt-4">
-        <Btn disabled={!canSubmit || loading} onClick={() => void submit()}>{busy ? tr("loading") : tr("submitSettlement")}</Btn>
+        <Btn loading={busy} disabled={!canSubmit || loading} onClick={() => void submit()}>{busy ? tr("loading") : tr("submitSettlement")}</Btn>
       </div>
     </div>
   );

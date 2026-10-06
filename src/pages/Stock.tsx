@@ -6,8 +6,10 @@ import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
+import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { useLiveList } from "../hooks/useLiveList";
 import { Barcode } from "../components/Barcode";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { playSound } from "../lib/sounds";
@@ -226,7 +228,7 @@ export function LocationsPage() {
     const r = await get<{ data: any[] }>("/api/inventory/locations/tree");
     setRows(r.data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, []);
+  const list = useLiveList(load, []);
 
   const forest = useMemo(
     () => buildLocationForest(rows, { other: tr("otherAisle"), aisle: tr("kindBay") }),
@@ -311,7 +313,7 @@ export function LocationsPage() {
         setPicked(null);
         setContents([]);
       }
-      load();
+      list.reload();
       refreshLookups();
     });
   }
@@ -340,7 +342,8 @@ export function LocationsPage() {
           <div className="text-sm font-bold text-slate-600">{tr("warehouses")}</div>
           <Btn kind="soft" onClick={() => window.print()}>{tr("printLabel")}</Btn>
         </div>
-        {!visible.length ? <EmptyFilterState onClear={f.clear} /> : visible.map((wh) => {
+        <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!visible.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
+        {visible.map((wh) => {
           const whOpen = expanded[wh.key] !== false;
           return (
             <section key={wh.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -406,6 +409,7 @@ export function LocationsPage() {
             </section>
           );
         })}
+        </ListGate>
       </div>
 
       {picked ? (
@@ -476,7 +480,7 @@ export function LocationsPage() {
             act.clear();
             setOpen(false);
             setForm(blankForm());
-            load();
+            list.reload();
             refreshLookups();
           } catch (e) {
             act.fail(e);
@@ -505,7 +509,7 @@ export function TransfersPage() {
     const t = await get<{ data: any[] }>("/api/inventory/locations/tree");
     setLocs(t.data);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   async function loadBatches(locationId: string) {
     if (!locationId) { setBatchHits([]); return; }
     const r = await get<{ data: any[] }>(`/api/inventory/by-location?location_id=${locationId}`);
@@ -520,7 +524,7 @@ export function TransfersPage() {
         { key: "to_location_id", label: "destWarehouse", type: "select", lookup: "locations" },
         { key: "product_id", label: "products", type: "async", asyncPath: "/api/products", asyncLabel: (r) => `${r.sku} — ${r.name_ar}` },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("invoiceNo"), tr("date"), tr("fromLocation"), tr("toLocation"), tr("status"), ""]}
         rows={rows.map((r) => [
@@ -531,13 +535,13 @@ export function TransfersPage() {
           <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
           r.status === "draft" ? (
             <span className="flex flex-wrap gap-2">
-              <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/transfers/${r.id}/complete`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("completeTransfer")}</button>
-              <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/transfers/${r.id}/cancel`, {}); load(); })}>{tr("delete")}</button>
+              <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/transfers/${r.id}/complete`, {}); playSound("done"); list.reload(); } catch (e) { act.fail(e); } }}>{tr("completeTransfer")}</button>
+              <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/transfers/${r.id}/cancel`, {}); list.reload(); })}>{tr("delete")}</button>
             </span>
           ) : null,
         ])}
       />
-      )}
+      </ListGate>
       <Modal open={open} title={tr("newTransfer")} onClose={() => { setOpen(false); act.clear(); }} wide>
         <div className="grid gap-2 md:grid-cols-2">
           <Field label={tr("fromLocation")}>
@@ -586,7 +590,7 @@ export function TransfersPage() {
             act.clear();
             setOpen(false);
             setForm({ from_location_id: "", to_location_id: "", notes: "", items: [] });
-            load();
+            list.reload();
           } catch (e) {
             act.fail(e);
           }
@@ -628,7 +632,7 @@ export function StocktakesPage() {
     setRows((await get<{ data: any[] }>(`/api/inventory/stocktakes?${f.qs}`)).data);
     setLocs((await get<{ data: any[] }>("/api/inventory/locations/tree")).data);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("stocktake")} action={<Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("newStocktake")}</Btn>}>
       <ErrorNote message={act.message} />
@@ -639,6 +643,7 @@ export function StocktakesPage() {
         { key: "shortage", label: "shortage", type: "select", options: [{ value: "1", label: tr("shortage") }] },
         { key: "surplus", label: "surplus", type: "select", options: [{ value: "1", label: tr("surplus") }] },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("invoiceNo"), tr("date"), tr("location"), tr("status"), ""]}
         rows={rows.map((r) => [
@@ -649,11 +654,12 @@ export function StocktakesPage() {
           <span className="flex flex-wrap gap-2">
             <Link to={`/stocktake/${r.id}`}>{tr("view")}</Link>
             {r.status !== "approved" && r.status !== "cancelled" && can("stocktake.create") ? (
-              <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/stocktakes/${r.id}/cancel`, {}); load(); })}>{tr("delete")}</button>
+              <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/stocktakes/${r.id}/cancel`, {}); list.reload(); })}>{tr("delete")}</button>
             ) : null}
           </span>,
         ])}
       />
+      </ListGate>
       <Modal open={open} title={tr("newStocktake")} onClose={() => { setOpen(false); act.clear(); }}>
         <Field label={tr("location")}>
           <select className={inputCls} value={locationId} onChange={(e) => setLocationId(e.target.value)}>

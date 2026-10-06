@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { useLiveList } from "../hooks/useLiveList";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { formatDuration, getGps, haversineMeters } from "../lib/geo";
@@ -25,10 +27,14 @@ export function EmployeesPage() {
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/hr/employees?${f.qs}`)).data || []);
   }
-  useEffect(() => {
-    load().catch(() => {});
-    get<{ data: any[] }>("/api/hr/users-lite").then((r) => setUsers(r.data || [])).catch(() => {});
-    get<{ data: any[] }>("/api/hr/shifts").then((r) => setShifts(r.data || [])).catch(() => {});
+  const list = useLiveList(async () => {
+    await load();
+    const [u, s] = await Promise.all([
+      get<{ data: any[] }>("/api/hr/users-lite"),
+      get<{ data: any[] }>("/api/hr/shifts"),
+    ]);
+    setUsers(u.data || []);
+    setShifts(s.data || []);
   }, [f.qs]);
 
   return (
@@ -48,7 +54,7 @@ export function EmployeesPage() {
         { key: "work_type", label: "workType", type: "select", options: [{ value: "office", label: tr("workOffice") }, { value: "delivery", label: tr("workDelivery") }] },
         { key: "shift_id", label: "shift", type: "select", options: shifts.map((s) => ({ value: String(s.id), label: s.name })) },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : null}
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         <div className="table-wrap">
           <table>
@@ -84,7 +90,7 @@ export function EmployeesPage() {
                         canEdit
                         canDelete
                         onEdit={() => { setForm({ ...e, user_id: e.user_id || "", delivery_agent_id: e.delivery_agent_id || "", shift_id: e.shift_id || "" }); setOpen(true); }}
-                        onDelete={() => confirmDelete(e.name, async () => { await del(`/api/hr/employees/${e.id}`); load(); })}
+                        onDelete={() => confirmDelete(e.name, async () => { await del(`/api/hr/employees/${e.id}`); list.reload(); })}
                       />
                     ) : null}
                   </td>
@@ -94,6 +100,7 @@ export function EmployeesPage() {
           </table>
         </div>
       </div>
+      </ListGate>
       <Modal open={open} title={form.id ? tr("edit") : tr("addEmployee")} onClose={() => setOpen(false)} wide>
         {form.id ? (
           <div className="detail-strip mb-4 grid gap-2 md:grid-cols-5">
@@ -147,7 +154,7 @@ export function EmployeesPage() {
           if (form.id) await put(`/api/hr/employees/${form.id}`, body);
           else await post("/api/hr/employees", body);
           setOpen(false);
-          load();
+          list.reload();
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -174,7 +181,7 @@ export function AttendancePage() {
     setRows(r.data || []);
   }
   useEffect(() => { loadMe().catch(() => {}); }, []);
-  useEffect(() => { loadRows().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(loadRows, [f.qs]);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -231,7 +238,7 @@ export function AttendancePage() {
       if (kind === "in") await post("/api/hr/attendance/clock-in", body);
       else await post("/api/hr/attendance/clock-out", body);
       await loadMe();
-      await loadRows();
+      await list.reload();
     } catch (e: any) {
       setMsg(e.message === "outside_geofence" ? `${tr("outsideGeofence")} (${e.payload?.distance || ""}m)` : e.message || tr("error"));
     } finally {
@@ -274,40 +281,42 @@ export function AttendancePage() {
         { key: "early_out", label: "earlyOut", type: "select", options: [{ value: "1", label: tr("earlyOut") }] },
         { key: "geofence", label: "geofence", type: "select", options: [{ value: "in", label: tr("insideFence") }, { value: "out", label: tr("outsideFence") }] },
       ]} />
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{tr("name")}</th>
-                <th>{tr("date")}</th>
-                <th>{tr("clockIn")}</th>
-                <th>{tr("clockOut")}</th>
-                <th>{tr("shiftTimer")}</th>
-                <th>{tr("outsideTime")}</th>
-                <th>{tr("status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.employee_name}<div className="text-xs text-slate-400">{r.employee_code}</div></td>
-                  <td>{r.work_date}</td>
-                  <td className="text-xs">{r.clock_in_at}</td>
-                  <td className="text-xs">{r.clock_out_at || "-"}</td>
-                  <td>{formatDuration(r.status === "open" ? workSec : r.work_seconds)}</td>
-                  <td>{formatDuration(r.outside_seconds)}</td>
-                  <td>
-                    <span className={statusClass(r.currently_outside ? "out" : r.late ? "low" : "in")}>
-                      {r.currently_outside ? tr("leftZone") : r.late ? tr("late") : r.status === "open" ? tr("onShift") : tr("present")}
-                    </span>
-                  </td>
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
+        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{tr("name")}</th>
+                  <th>{tr("date")}</th>
+                  <th>{tr("clockIn")}</th>
+                  <th>{tr("clockOut")}</th>
+                  <th>{tr("shiftTimer")}</th>
+                  <th>{tr("outsideTime")}</th>
+                  <th>{tr("status")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.employee_name}<div className="text-xs text-slate-400">{r.employee_code}</div></td>
+                    <td>{r.work_date}</td>
+                    <td className="text-xs">{r.clock_in_at}</td>
+                    <td className="text-xs">{r.clock_out_at || "-"}</td>
+                    <td>{formatDuration(r.status === "open" ? workSec : r.work_seconds)}</td>
+                    <td>{formatDuration(r.outside_seconds)}</td>
+                    <td>
+                      <span className={statusClass(r.currently_outside ? "out" : r.late ? "low" : "in")}>
+                        {r.currently_outside ? tr("leftZone") : r.late ? tr("late") : r.status === "open" ? tr("onShift") : tr("present")}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      </ListGate>
     </div>
   );
 }
@@ -323,7 +332,7 @@ export function PayrollPage() {
   async function load() {
     setRuns((await get<{ data: any[] }>(`/api/hr/payroll?${f.qs}`)).data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
 
   async function openRun(id: number) {
     const r = await get<{ data: any }>(`/api/hr/payroll/${id}`);
@@ -348,7 +357,7 @@ export function PayrollPage() {
           <Btn onClick={async () => {
             try {
               const r = await post<{ id: number }>("/api/hr/payroll", { month });
-              await load();
+              await list.reload();
               await openRun(r.id);
             } catch (e: any) {
               if (e.payload?.id) openRun(e.payload.id);
@@ -358,27 +367,29 @@ export function PayrollPage() {
         </div>
       ) : null}
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>{tr("month")}</th><th>{tr("status")}</th></tr></thead>
-              <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id} className="cursor-pointer" onClick={() => openRun(r.id)}>
-                    <td className="font-bold">{r.month}</td>
-                    <td><span className={statusClass(r.status === "paid" ? "in" : "open")}>{r.status === "paid" ? tr("salaryPaid") : tr("draft")}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!runs.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
+          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>{tr("month")}</th><th>{tr("status")}</th></tr></thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id} className="cursor-pointer" onClick={() => openRun(r.id)}>
+                      <td className="font-bold">{r.month}</td>
+                      <td><span className={statusClass(r.status === "paid" ? "in" : "open")}>{r.status === "paid" ? tr("salaryPaid") : tr("draft")}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </ListGate>
         {detail ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-black">{detail.run.month}</h2>
               {can("hr.payroll") && detail.run.status !== "paid" ? (
-                <Btn className="no-print" onClick={() => confirm(tr("paySalaries"), tr("deleteConfirm"), async () => { await post(`/api/hr/payroll/${detail.run.id}/pay`, {}); await load(); await openRun(detail.run.id); })}>{tr("paySalaries")}</Btn>
+                <Btn className="no-print" onClick={() => confirm(tr("paySalaries"), tr("deleteConfirm"), async () => { await post(`/api/hr/payroll/${detail.run.id}/pay`, {}); await list.reload(); await openRun(detail.run.id); })}>{tr("paySalaries")}</Btn>
               ) : null}
             </div>
             <div className="grid gap-3 md:grid-cols-3">
@@ -464,7 +475,7 @@ export function ShiftsPage() {
     const q = (f.values.q || "").toLowerCase();
     setRows(q ? all.filter((s) => `${s.name} ${s.name_en || ""}`.toLowerCase().includes(q)) : all);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <div>
       <PrintLetterhead title={tr("shifts")} />
@@ -476,6 +487,7 @@ export function ShiftsPage() {
         </div>
       </div>
       <SmartFilter f={f} date={false} fields={[]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       {rows.length ? (
         <div className="mb-4 overflow-hidden rounded-2xl border border-slate-100 bg-white">
           <div className="px-3 py-2 text-sm font-black">{tr("weeklyShifts")}</div>
@@ -531,7 +543,7 @@ export function ShiftsPage() {
                         canEdit
                         canDelete
                         onEdit={() => { setForm({ ...emptyShift(), ...s, weekdays: s.weekdays || "0,1,2,3,4,5,6" }); setOpen(true); }}
-                        onDelete={() => confirmDelete(s.name, async () => { await del(`/api/hr/shifts/${s.id}`); load(); })}
+                        onDelete={() => confirmDelete(s.name, async () => { await del(`/api/hr/shifts/${s.id}`); list.reload(); })}
                       />
                     ) : null}
                   </td>
@@ -541,6 +553,7 @@ export function ShiftsPage() {
           </table>
         </div>
       </div>
+      </ListGate>
       <Modal open={open} title={tr("shifts")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("name")}><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -559,7 +572,7 @@ export function ShiftsPage() {
             if (form.id) await put(`/api/hr/shifts/${form.id}`, form);
             else await post("/api/hr/shifts", form);
             setOpen(false);
-            load();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>
@@ -576,16 +589,10 @@ export function LeavesPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ employee_id: "", type: "annual", date_from: new Date().toISOString().slice(0, 10), date_to: new Date().toISOString().slice(0, 10), reason: "" });
   const { confirmDelete, dialog } = useConfirm();
-  const [loading, setLoading] = useState(false);
   async function load() {
-    setLoading(true);
-    try {
-      setRows((await get<{ data: any[] }>(`/api/hr/leaves?${f.qs}`)).data || []);
-    } finally {
-      setLoading(false);
-    }
+    setRows((await get<{ data: any[] }>(`/api/hr/leaves?${f.qs}`)).data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   useEffect(() => {
     if (can("hr.view", "leaves.manage")) get<{ data: any[] }>("/api/hr/employees").then((r) => setEmps(r.data || [])).catch(() => {});
   }, []);
@@ -608,6 +615,7 @@ export function LeavesPage() {
         { key: "type", label: "leaveType", type: "select", options: ["annual", "sick", "unpaid", "emergency"].map((t) => ({ value: t, label: statusLabel(t, lang) })) },
         { key: "employee_id", label: "employees", type: "select", options: emps.map((e) => ({ value: String(e.id), label: `${e.code} — ${e.name}` })) },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
         <div className="table-wrap">
           <table>
@@ -635,22 +643,22 @@ export function LeavesPage() {
                     <span className="flex flex-wrap gap-2">
                       {r.status === "pending" && can("leaves.manage") ? (
                         <>
-                          <button className="font-bold text-cyan-700" onClick={async () => { await post(`/api/hr/leaves/${r.id}/approve`, {}); load(); }}>{tr("approve")}</button>
-                          <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await post(`/api/hr/leaves/${r.id}/reject`, {}); load(); })}>{tr("reject")}</button>
+                          <button className="font-bold text-cyan-700" onClick={async () => { await post(`/api/hr/leaves/${r.id}/approve`, {}); list.reload(); }}>{tr("approve")}</button>
+                          <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await post(`/api/hr/leaves/${r.id}/reject`, {}); list.reload(); })}>{tr("reject")}</button>
                         </>
                       ) : null}
                       {r.status === "pending" && can("leaves.manage", "leaves.own") ? (
-                        <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await del(`/api/hr/leaves/${r.id}`); load(); })}>{tr("delete")}</button>
+                        <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await del(`/api/hr/leaves/${r.id}`); list.reload(); })}>{tr("delete")}</button>
                       ) : null}
                     </span>
                   </td>
                 </tr>
               ))}
-              {loading ? <tr><td colSpan={7}><PageLoading /></td></tr> : !rows.length ? <tr><td colSpan={7} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
             </tbody>
           </table>
         </div>
       </div>
+      </ListGate>
       <Modal open={open} title={tr("newLeave")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           {can("leaves.manage") ? (
@@ -675,7 +683,7 @@ export function LeavesPage() {
           <Btn onClick={async () => {
             await post("/api/hr/leaves", { ...form, employee_id: form.employee_id ? Number(form.employee_id) : undefined });
             setOpen(false);
-            load();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>
@@ -695,19 +703,13 @@ export function AdvancesPage() {
   const [form, setForm] = useState({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
   const [ot, setOt] = useState({ employee_id: "", hours: 1, date: new Date().toISOString().slice(0, 10), notes: "" });
   const { confirmDelete, dialog } = useConfirm();
-  const [loading, setLoading] = useState(false);
   const month = f.values.month || new Date().toISOString().slice(0, 7);
   const agents = (lookups?.delivery_agents || []).filter((a: any) => a.status !== "inactive");
   async function load() {
-    setLoading(true);
-    try {
-      setRows((await get<{ data: any[] }>(`/api/hr/advances?${f.qs}`)).data || []);
-      setOts((await get<{ data: any[] }>(`/api/hr/overtime?month=${month}`)).data || []);
-    } finally {
-      setLoading(false);
-    }
+    setRows((await get<{ data: any[] }>(`/api/hr/advances?${f.qs}`)).data || []);
+    setOts((await get<{ data: any[] }>(`/api/hr/overtime?month=${month}`)).data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   useEffect(() => {
     get<{ data: any[] }>("/api/hr/employees").then((r) => setEmps(r.data || [])).catch(() => {});
   }, []);
@@ -731,6 +733,7 @@ export function AdvancesPage() {
         { key: "employee_id", label: "employees", type: "select", options: emps.map((e) => ({ value: String(e.id), label: `${e.code} — ${e.name}` })) },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length && !ots.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
         <div className="table-wrap">
           <table>
@@ -754,12 +757,12 @@ export function AdvancesPage() {
                   <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
                   <td>
                     {r.status === "open" && can("advances.manage", "hr.payroll") ? (
-                      <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await post(`/api/hr/advances/${r.id}/cancel`, {}); load(); })}>{tr("delete")}</button>
+                      <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await post(`/api/hr/advances/${r.id}/cancel`, {}); list.reload(); })}>{tr("delete")}</button>
                     ) : null}
                   </td>
                 </tr>
               ))}
-              {loading ? <tr><td colSpan={6}><PageLoading /></td></tr> : !rows.length ? <tr><td colSpan={6} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
+              {!rows.length ? <tr><td colSpan={6} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -788,7 +791,7 @@ export function AdvancesPage() {
                   <td>{r.rate}x</td>
                   <td>{money(r.amount, lang)}</td>
                   <td>{r.source === "attendance" ? tr("attendance") : tr("manual")}</td>
-                  <td>{can("hr.payroll") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await del(`/api/hr/overtime/${r.id}`); load(); })}>{tr("delete")}</button> : null}</td>
+                  <td>{can("hr.payroll") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await del(`/api/hr/overtime/${r.id}`); list.reload(); })}>{tr("delete")}</button> : null}</td>
                 </tr>
               ))}
               {!ots.length ? <tr><td colSpan={7} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
@@ -796,6 +799,7 @@ export function AdvancesPage() {
           </table>
         </div>
       </div>
+      </ListGate>
       <Modal open={open} title={tr("newAdvance")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("employees")}>
@@ -824,7 +828,7 @@ export function AdvancesPage() {
             });
             setOpen(false);
             setForm({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
-            load();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>
@@ -842,7 +846,7 @@ export function AdvancesPage() {
           <Btn onClick={async () => {
             await post("/api/hr/overtime", { ...ot, employee_id: Number(ot.employee_id) });
             setOtOpen(false);
-            load();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>

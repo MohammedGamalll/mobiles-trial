@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useApp } from "../context";
 import { dict } from "../i18n";
 import type { Product } from "../hooks/usePOSLogic";
+import { binText, lastSupplierName } from "../lib/place";
 
 export function productFilterValue(
   p: Product,
@@ -17,7 +18,7 @@ export function productFilterValue(
   if (col === "sku") return [p.sku, p.barcode].filter(Boolean).join(" / ");
   if (col === "warehouse") return p.warehouse || p.location_name || "";
   if (col === "box") return p.box || "";
-  if (col === "shelf") return p.shelf || "";
+  if (col === "shelf") return binText(p);
   if (col === "selling") {
     const n = pickPrice(p);
     return n ? String(n) : "";
@@ -27,8 +28,8 @@ export function productFilterValue(
   if (col === "kind") return p.kind === "service" ? t.services : p.kind ? t.products : "";
   if (col === "partType") return (lang === "ar" ? p.part_type_ar : p.part_type_en) || p.part_type_ar || "";
   if (col === "brand") return (lang === "ar" ? p.brand_ar : p.brand_en) || p.brand_ar || "";
-  if (col === "supplier") return p.supplier_name || "";
-  if (col === "bin") return [p.rack, p.shelf, p.drawer].filter(Boolean).join("+");
+  if (col === "supplier") return lastSupplierName(p);
+  if (col === "bin") return binText(p);
   if (col === "model") return (p.models || []).map((m) => m.name).filter(Boolean).join(", ");
   if (col === "location") return p.location_name || p.warehouse || "";
   if (col === "reserved") return String(Number(p.reserved_stock || 0) || 0);

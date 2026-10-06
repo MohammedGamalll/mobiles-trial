@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
-import { get, getCached, post, put, del } from "../lib/api";
-import { invalidateGetCache, peekCached } from "../lib/query-cache";
+import { get, post, put, del } from "../lib/api";
+import { invalidateGetCache } from "../lib/query-cache";
 import { authHeaders } from "../lib/session";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, ErrorNote, ExportBtn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls, printPage } from "../components/ui";
-import { useActionError } from "../lib/errors";
+import { Btn, ErrorNote, ExportBtn, Field, Modal, PageLoading, PrintBtn, PrintLetterhead, Stat, inputCls, printPage } from "../components/ui";
+import { apiMessage, useActionError } from "../lib/errors";
+import { placeLabel } from "../lib/place";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { Barcode } from "../components/Barcode";
@@ -101,6 +102,7 @@ export default function Products() {
   const [form, setForm] = useState<any>(empty());
   const [view, setView] = useState<"list" | "board">("list");
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState("");
   const [catalogQualities, setCatalogQualities] = useState<string[]>([]);
   const loadGen = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -174,19 +176,16 @@ export default function Products() {
       p.delete("fork_id");
     }
     const path = `/api/products?${p}`;
-    const stale = peekCached<{ data: any[]; totals?: any }>(path);
-    if (stale?.data) {
-      setData(stale.data);
-      setTotals(stale.totals || {});
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+    setLoading(true);
+    setLoadErr("");
     try {
-      const r = await getCached<{ data: any[]; totals?: any }>(path);
+      const r = await get<{ data: any[]; totals?: any }>(path);
       if (gen !== loadGen.current) return;
       setData(r.data);
       setTotals(r.totals || {});
+    } catch (e) {
+      if (gen !== loadGen.current) return;
+      setLoadErr(apiMessage(tr, e));
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
@@ -210,7 +209,7 @@ export default function Products() {
 
   useEffect(() => {
     let live = true;
-    load().then(() => { if (!live) return; }).catch(() => { if (live) { setData([]); setLoading(false); } });
+    load().then(() => { if (!live) return; }).catch(() => {});
     return () => { live = false; };
   }, [f.qs, warehouseId]);
 
@@ -237,7 +236,7 @@ export default function Products() {
   }
 
   async function printFiltered() {
-    const r = await getCached<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
+    const r = await get<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
     setData(r.data || []);
     requestAnimationFrame(() => printPage());
   }
@@ -363,7 +362,12 @@ export default function Products() {
           { value: "moved", label: tr("mostMoved") },
         ]}
       />
-      {loading ? <div className="rounded-2xl border border-slate-100 bg-white px-4 py-8 text-center text-sm font-bold text-slate-500">{tr("loading")}</div> : !data.length ? <EmptyFilterState onClear={f.clear} /> : view === "board" ? (
+      {loading ? <PageLoading label={tr("loadingProducts")} /> : loadErr ? (
+        <div className="rounded-2xl border border-rose-100 bg-white px-4 py-8 text-center">
+          <ErrorNote message={loadErr} />
+          <Btn className="mt-3" onClick={() => void load()}>{tr("retry")}</Btn>
+        </div>
+      ) : !data.length ? <EmptyFilterState onClear={f.clear} /> : view === "board" ? (
       <div className="acc-board">
         {[...data.reduce((m, p) => {
             const k = (lang === "ar" ? p.brand_ar : p.brand_en) || tr("brands");
@@ -518,7 +522,7 @@ export default function Products() {
                   <td className="text-xs">
                     {(p.warehouses || []).length
                       ? (p.warehouses as { warehouse: string; qty: number }[]).map((w) => `${w.warehouse}${w.qty ? `: ${num(w.qty, lang)}` : ""}`).join(" · ")
-                      : [p.warehouse, p.box ? `باكيه ${p.box}` : "", [p.rack, p.shelf, p.drawer].filter(Boolean).join("-") || p.location_name].filter(Boolean).join(" · ") || "—"}
+                      : placeLabel(p) || "—"}
                   </td>
                   <td>{money(p.selling_price, lang)}</td>
                   <td className="text-xs">{p.location_name}</td>

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
-import { get, getCached, post, put, del } from "../lib/api";
+import { get, post, put, del } from "../lib/api";
+import { ListGate } from "../components/ListGate";
+import { useLiveList } from "../hooks/useLiveList";
 import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
 import { mergeWarehouseCards } from "../lib/warehouses";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls, printPage } from "../components/ui";
@@ -26,7 +28,6 @@ export function SalesList() {
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
   const { confirmDelete, dialog } = useConfirm();
-  const [loading, setLoading] = useState(true);
   async function load() {
     const p = new URLSearchParams(f.qs);
     p.set("pageSize", "50");
@@ -40,19 +41,11 @@ export function SalesList() {
       p.delete("bin_id");
       p.delete("fork_id");
     }
-    const r = await getCached<{ data: any[]; totals?: any }>(`/api/invoices?${p}`);
-    return r;
+    const r = await get<{ data: any[]; totals?: any }>(`/api/invoices?${p}`);
+    setRows(r.data || []);
+    setTotals(r.totals || {});
   }
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    load().then((r) => {
-      if (!live || !r) return;
-      setRows(r.data);
-      setTotals(r.totals || {});
-    }).catch(() => {}).finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [f.qs, warehouseId]);
+  const list = useLiveList(load, [f.qs, warehouseId]);
   return (
     <Page title={tr("sales")} action={<ExportBtn kind="invoices" query={f.qs} />}>
       <div className="mb-3 grid gap-3 md:grid-cols-4">
@@ -85,7 +78,7 @@ export function SalesList() {
           { value: "name_az", label: tr("nameAZ") },
         ]}
       />
-      {loading ? <PageLoading /> : !rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("invoiceNo"), tr("customer"), tr("date"), tr("total"), tr("remaining"), tr("status"), ""]}
         rows={rows.map((r) => {
@@ -102,13 +95,13 @@ export function SalesList() {
               canEdit={can("sales.edit")}
               onEdit={() => { window.location.href = `/sales/${r.id}`; }}
               canDelete={can("sales.cancel") && r.status !== "cancelled"}
-              onDelete={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); load(); })}
+              onDelete={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); list.reload(); })}
             />
           </div>,
           ];
         })}
       />
-      )}
+      </ListGate>
       {dialog}
     </Page>
   );
@@ -198,16 +191,21 @@ export function InventoryPage() {
     return p.toString();
   }
 
-  function reload() {
+  async function reload() {
     const qs = listFilterQuery();
-    get(`/api/inventory/summary?${qs}`).then(setSum).catch(() => {});
-    get<{ data: any[] }>(`/api/products?${listFilterQuery({ pageSize: "80" })}`).then((r) => setRows(r.data || [])).catch(() => {});
-    get<{ data: any[] }>(`/api/inventory/movements?${m.qs}&pageSize=20`).then((r) => setMoves(r.data || [])).catch(() => {});
+    const [sumR, prodR, moveR] = await Promise.all([
+      get(`/api/inventory/summary?${qs}`),
+      get<{ data: any[] }>(`/api/products?${listFilterQuery({ pageSize: "80" })}`),
+      get<{ data: any[] }>(`/api/inventory/movements?${m.qs}&pageSize=20`),
+    ]);
+    setSum(sumR);
+    setRows(prodR.data || []);
+    setMoves(moveR.data || []);
   }
-  useEffect(() => { reload(); }, [f.qs, m.qs, warehouseId]);
+  const list = useLiveList(reload, [f.qs, m.qs, warehouseId]);
 
   async function printFiltered() {
-    const r = await getCached<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
+    const r = await get<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
     setRows(r.data || []);
     requestAnimationFrame(() => printPage());
   }
@@ -269,7 +267,7 @@ export function InventoryPage() {
           { key: "qty", label: "qtyRange", type: "range", minKey: "qty_min", maxKey: "qty_max" },
         ]}
       />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         <div className="table-wrap">
           <table>
@@ -307,7 +305,7 @@ export function InventoryPage() {
                         <button type="button" className="rounded-full bg-cyan-700 px-3 py-1 text-xs font-bold text-white hover:bg-cyan-800" onClick={() => { window.location.href = `/products/${p.id}`; }}>{tr("edit")}</button>
                       ) : null}
                       {can("products.delete") ? (
-                        <button type="button" className="rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white hover:bg-rose-700" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); reload(); })}>{tr("delete")}</button>
+                        <button type="button" className="rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white hover:bg-rose-700" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); list.reload(); })}>{tr("delete")}</button>
                       ) : null}
                     </div>
                   </td>
@@ -317,7 +315,7 @@ export function InventoryPage() {
           </table>
         </div>
       </div>
-      )}
+      </ListGate>
       <h3 className="mb-2 mt-6 font-bold">{tr("movements")}</h3>
       <SmartFilter
         f={m}
@@ -367,7 +365,7 @@ export function InventoryPage() {
             playSound("done");
             act.clear();
             setAdjOpen(false);
-            reload();
+            list.reload();
           } catch (e) {
             act.fail(e);
           }
@@ -381,9 +379,11 @@ export function BatchesPage() {
   const { tr, lang } = useApp();
   const f = useListQuery("batches");
   const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => {
-    get<{ data: any[] }>(`/api/inventory/batches?${f.qs}&pageSize=80`).then((r) => setRows(r.data)).catch(() => {});
-  }, [f.qs]);
+  async function load() {
+    const r = await get<{ data: any[] }>(`/api/inventory/batches?${f.qs}&pageSize=80`);
+    setRows(r.data || []);
+  }
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("batches")}>
       <SmartFilter f={f} date={false} fields={[
@@ -391,7 +391,7 @@ export function BatchesPage() {
         { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
         { key: "qty", label: "qtyRange", type: "range", minKey: "qty_min", maxKey: "qty_max" },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={["Batch", tr("name"), "PO", tr("location"), tr("cost"), tr("available"), tr("reserved"), tr("date")]}
         rows={rows.map((b) => [
@@ -405,7 +405,7 @@ export function BatchesPage() {
           b.purchase_date,
         ])}
       />
-      )}
+      </ListGate>
     </Page>
   );
 }
@@ -420,10 +420,10 @@ export function PurchasesPage() {
   const act = useActionError();
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/inventory/purchases?${f.qs}`);
-    setRows(r.data);
+    setRows(r.data || []);
     setTotals(r.totals || {});
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} />{can("purchases.create") ? <Btn onClick={() => nav("/purchases/new")}>{tr("newPurchase")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
@@ -441,7 +441,7 @@ export function PurchasesPage() {
         { key: "product_id", label: "products", type: "async", asyncPath: "/api/products", asyncLabel: (r) => `${r.sku} — ${r.name_ar}` },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("invoiceNo"), tr("supplier"), tr("date"), tr("total"), tr("status"), ""]}
         rows={rows.map((r) => [
@@ -452,13 +452,13 @@ export function PurchasesPage() {
           <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
           <span className="flex flex-wrap gap-2">
             <Link className="font-bold text-cyan-700" to={`/purchases/${r.id}`}>{tr("view")}</Link>
-            {r.status === "draft" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/submit`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("submitPurchase")}</button> : null}
-            {r.status === "draft" || r.status === "submitted" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/approve`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("approve")}</button> : null}
-            {r.status === "submitted" || r.status === "draft" ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/purchases/${r.id}/void`, {}); load(); })}>{tr("delete")}</button> : null}
+            {r.status === "draft" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/submit`, {}); playSound("done"); list.reload(); } catch (e) { act.fail(e); } }}>{tr("submitPurchase")}</button> : null}
+            {r.status === "draft" || r.status === "submitted" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/approve`, {}); playSound("done"); list.reload(); } catch (e) { act.fail(e); } }}>{tr("approve")}</button> : null}
+            {r.status === "submitted" || r.status === "draft" ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/purchases/${r.id}/void`, {}); list.reload(); })}>{tr("delete")}</button> : null}
           </span>,
         ])}
       />
-      )}
+      </ListGate>
       {dialog}
     </Page>
   );
@@ -479,8 +479,11 @@ function ProductPick({ resetKey, onChange }: { resetKey: number; onChange: (p: {
       setHits([]);
       return;
     }
-    const t = setTimeout(() => get<{ data: any[] }>(`/api/products/search?q=${encodeURIComponent(q)}`).then((r) => setHits(r.data || [])).catch(() => setHits([])), 120);
-    return () => clearTimeout(t);
+    let live = true;
+    const t = setTimeout(() => get<{ data: any[] }>(`/api/products/search?q=${encodeURIComponent(q)}`)
+      .then((r) => { if (live) setHits(r.data || []); })
+      .catch(() => { if (live) setHits([]); }), 120);
+    return () => { live = false; clearTimeout(t); };
   }, [q]);
   function pick(p: any) {
     playSound("ok");
@@ -599,10 +602,10 @@ export function CustomersPage() {
   const shop = { lat: Number(settings.workplace_lat || 30.0566), lng: Number(settings.workplace_lng || 31.33) };
   async function load() {
     const r = await get<{ data: any[]; totals?: any }>(`/api/customers?${f.qs}`);
-    setRows(r.data);
+    setRows(r.data || []);
     setTotals(r.totals || {});
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm(emptyCust()); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
@@ -623,7 +626,7 @@ export function CustomersPage() {
       ]}
         sorts={[{ value: "name_az", label: tr("nameAZ") }, { value: "balance_high", label: tr("highestBalance") }, { value: "balance_low", label: tr("lowestBalance") }]}
       />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("name"), tr("phone"), tr("city"), tr("area"), tr("balance"), tr("accountKind"), ""]}
         rows={rows.map((c) => [
@@ -639,12 +642,12 @@ export function CustomersPage() {
               canEdit={can("customers.edit")}
               canDelete={can("customers.edit")}
               onEdit={() => { act.clear(); setForm({ ...form, ...c, id: c.id, price_list_id: c.price_list_id || "", account_kind: c.account_kind || "debit" }); setOpen(true); }}
-              onDelete={() => confirmDelete(c.name, async () => { await del(`/api/customers/${c.id}`); load(); })}
+              onDelete={() => confirmDelete(c.name, async () => { await del(`/api/customers/${c.id}`); list.reload(); })}
             />
           </span>,
         ])}
       />
-      )}
+      </ListGate>
       <Modal open={open} title={form.id ? tr("edit") : tr("addCustomer")} onClose={() => setOpen(false)}>
         {["name","phone","email","company","national_id","tax_id","city","address","area"].map((k) => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
         <Field label={tr("customerType")}>
@@ -691,7 +694,7 @@ export function CustomersPage() {
             const payload = { ...form, price_list_id: form.price_list_id || null, current_balance: Number(form.current_balance || 0), lat: form.lat || null, lng: form.lng || null };
             if (form.id) await put(`/api/customers/${form.id}`, payload);
             else await post("/api/customers", payload);
-            setOpen(false); act.clear(); load();
+            setOpen(false); act.clear(); list.reload();
           } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -707,7 +710,7 @@ export function CustomersPage() {
             await post(`/api/customers/${payOpen.id}/payments`, { amount: r.paid, surplus_mode: r.surplus_mode });
             setPayOpen(null);
             act.clear();
-            load();
+            list.reload();
           } catch (e) {
             act.fail(e);
           }
@@ -794,8 +797,8 @@ export function SuppliersPage() {
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   const rate = Number(form.fx_rate || settings.usd_egp_rate || 50);
-  async function load() { setRows((await get<{ data: any[] }>(`/api/suppliers?${f.qs}`)).data); }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  async function load() { setRows((await get<{ data: any[] }>(`/api/suppliers?${f.qs}`)).data || []); }
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("suppliers")} action={<Btn onClick={() => { act.clear(); setForm(emptySup()); setOpen(true); }}>{tr("add")}</Btn>}>
       <SmartFilter f={f} date={false} fields={[
@@ -804,7 +807,7 @@ export function SuppliersPage() {
         { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
         { key: "balance", label: "balanceRange", type: "range", minKey: "balance_min", maxKey: "balance_max" },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table cols={[tr("name"), tr("phone"), tr("city"), tr("balance"), ""]} rows={rows.map((s) => [
         <Link className="font-bold" to={`/suppliers/${s.id}`}>{s.name}</Link>,
         s.phone,
@@ -814,10 +817,10 @@ export function SuppliersPage() {
           canEdit={can("suppliers.manage")}
           canDelete={can("suppliers.manage")}
           onEdit={() => { setForm({ ...emptySup(), ...s, id: s.id, fx_rate: settings.usd_egp_rate || "50", opening_balance: "" }); setOpen(true); }}
-          onDelete={() => confirmDelete(s.name, async () => { await del(`/api/suppliers/${s.id}`); load(); })}
+          onDelete={() => confirmDelete(s.name, async () => { await del(`/api/suppliers/${s.id}`); list.reload(); })}
         />,
       ])} />
-      )}
+      </ListGate>
       <Modal open={open} title={form.id ? tr("edit") : tr("suppliers")} onClose={() => setOpen(false)}>
         {["name","contact_name","phone","email","tax_id","city","address","notes"].map((k) => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
         <Field label={tr("currency")}>
@@ -839,7 +842,7 @@ export function SuppliersPage() {
           try {
             if (form.id) await put(`/api/suppliers/${form.id}`, form);
             else await post("/api/suppliers", form);
-            setOpen(false); act.clear(); load();
+            setOpen(false); act.clear(); list.reload();
           } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -905,19 +908,21 @@ export function PriceListsPage() {
     const q = (f.values.q || "").toLowerCase();
     setLists(q ? all.filter((l) => `${l.name} ${l.name_en || ""}`.toLowerCase().includes(q)) : all);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("priceLists")} action={can("prices.manage") ? <Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("add")}</Btn> : null}>
       <ErrorNote message={act.message} />
       <SmartFilter f={f} date={false} fields={[]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!lists.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table cols={[tr("name"), tr("status"), ""]} rows={lists.map((l) => [
         lang==="ar"?l.name:(l.name_en||l.name),
         l.active ? tr("active") : tr("inactive"),
         <span className="flex gap-2">
           <Link className="font-bold text-cyan-700" to={`/price-lists/${l.id}`}>{tr("edit")}</Link>
-          {can("prices.manage") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(l.name, async () => { await del(`/api/price-lists/${l.id}`); load(); })}>{tr("delete")}</button> : null}
+          {can("prices.manage") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(l.name, async () => { await del(`/api/price-lists/${l.id}`); list.reload(); })}>{tr("delete")}</button> : null}
         </span>,
       ])} />
+      </ListGate>
       <Modal open={open} title={tr("priceLists")} onClose={() => setOpen(false)}>
         <Field label={tr("name")}><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <ErrorNote message={act.message} />
@@ -925,7 +930,7 @@ export function PriceListsPage() {
           if (!name.trim()) { act.fail(undefined, "errNameRequired"); return; }
           try {
             await post("/api/price-lists", { name, name_en: name });
-            setOpen(false); setName(""); act.clear(); load();
+            setOpen(false); setName(""); act.clear(); list.reload();
           } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -977,12 +982,12 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
   const act = useActionError();
   const path = table === "models" ? "/api/models" : `/api/${table}`;
   const apiTable = table === "models" ? "device_models" : table;
-  async function load() { setRows((await get<{ data: any[] }>(`${path}?${f.qs}`)).data); }
-  useEffect(() => { load().catch(() => {}); }, [table, f.qs]);
+  async function load() { setRows((await get<{ data: any[] }>(`${path}?${f.qs}`)).data || []); }
+  const list = useLiveList(load, [table, f.qs]);
   return (
     <Page title={title} action={<Btn onClick={() => { act.clear(); setForm({ name_ar: "", name_en: "", name: "", code: "", warehouse: "", rack: "", shelf: "", drawer: "", box: "", brand_id: "", year: "", id: 0 }); setOpen(true); }}>{tr("add")}</Btn>}>
       <SmartFilter f={f} date={false} fields={table === "models" ? [{ key: "brand_id", label: "brand", type: "select", quick: true, lookup: "brands" }] : []} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("name"), tr("code"), tr("status"), ""]}
         rows={rows.map((r) => [
@@ -993,11 +998,11 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
             canEdit
             canDelete
             onEdit={() => { act.clear(); setForm({ ...r, year: r.year || "", brand_id: r.brand_id || "" }); setOpen(true); }}
-            onDelete={() => confirmDelete(r.name || r.name_ar || r.code, async () => { await del(`/api/${apiTable}/${r.id}`); load(); refreshLookups(); })}
+            onDelete={() => confirmDelete(r.name || r.name_ar || r.code, async () => { await del(`/api/${apiTable}/${r.id}`); list.reload(); refreshLookups(); })}
           />,
         ])}
       />
-      )}
+      </ListGate>
       <Modal open={open} title={form.id ? tr("edit") : title} onClose={() => { setOpen(false); act.clear(); }}>
         {table === "storage_locations" ? (
           ["name","warehouse","section","rack","shelf","drawer","box"].map((k) => <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)
@@ -1020,7 +1025,7 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
             if (form.id) await put(`/api/${apiTable}/${form.id}`, form);
             else await post(`/api/${apiTable}`, form);
             act.clear();
-            setOpen(false); load(); refreshLookups();
+            setOpen(false); list.reload(); refreshLookups();
           } catch (e) {
             act.fail(e);
           }
@@ -1060,7 +1065,7 @@ export function QualitiesPage() {
       setRows([...counts.entries()].sort((a, b) => a[0].localeCompare(b[0], "ar")).map(([name, products]) => ({ name, products })));
     }
   }
-  useEffect(() => { load().catch(() => {}); }, []);
+  const list = useLiveList(load, []);
 
   const shown = rows.filter((r) => !q.trim() || r.name.toLowerCase().includes(q.trim().toLowerCase()));
 
@@ -1071,7 +1076,7 @@ export function QualitiesPage() {
       <div className="mb-3">
         <input className={`${inputCls} max-w-md`} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("search")} />
       </div>
-      {!shown.length ? <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] py-10 text-center text-sm text-slate-400">{tr("noData")}</div> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!shown.length} emptyFallback={<div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] py-10 text-center text-sm text-slate-400">{tr("noData")}</div>}>
         <Table
           cols={[tr("quality"), tr("qualityUsedOn"), ""]}
           rows={shown.map((r) => [
@@ -1094,7 +1099,7 @@ export function QualitiesPage() {
             </div>,
           ])}
         />
-      )}
+      </ListGate>
       <Modal open={open} title={tr("renameQuality")} onClose={() => { setOpen(false); act.clear(); }}>
         <Field label={tr("quality")}>
           <input className={inputCls} value={to} onChange={(e) => setTo(e.target.value)} />
@@ -1145,7 +1150,7 @@ export function ExpensesPage() {
       /* shift stays 0 if POS today is forbidden */
     }
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   useEffect(() => {
     if (cashAccounts.length && !cashAccounts.some((a) => a.id === form.cash_account_id)) {
       setForm((prev) => ({ ...prev, cash_account_id: cashAccounts[0].id }));
@@ -1165,16 +1170,16 @@ export function ExpensesPage() {
         { key: "cost_center", label: "costCenter", type: "text" },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table cols={[tr("date"), tr("expensesCat"), tr("amount"), tr("costCenter"), tr("description"), ""]} rows={rows.map((e) => [
         e.date,
         lang==="ar"?e.category_ar:e.category_en,
         money(e.amount, lang),
         e.cost_center || (e.recurring ? tr("recurring") : "-"),
         e.description,
-        can("expenses.void", "expenses.create") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(e.description || String(e.amount), async () => { await post(`/api/expenses/${e.id}/void`, {}); load(); })}>{tr("delete")}</button> : null,
+        can("expenses.void", "expenses.create") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(e.description || String(e.amount), async () => { await post(`/api/expenses/${e.id}/void`, {}); list.reload(); })}>{tr("delete")}</button> : null,
       ])} />
-      )}
+      </ListGate>
       <Modal open={open} title={tr("newExpense")} onClose={() => setOpen(false)}>
         <ErrorNote message={expErr} />
         <select className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: Number(e.target.value) })}>
@@ -1196,7 +1201,7 @@ export function ExpensesPage() {
           try {
             await post("/api/expenses", form);
             setOpen(false);
-            load();
+            list.reload();
           } catch (err) {
             failExp(err);
           }
@@ -1218,7 +1223,7 @@ export function PaymentsPage() {
     setRows(r.data);
     setTotals(r.totals || {});
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("payments")} action={<ExportBtn kind="payments" query={f.qs} />}>
       <Stat label={tr("total")} value={money(totals.total, lang)} />
@@ -1228,16 +1233,16 @@ export function PaymentsPage() {
         { key: "payment_method", label: "payMethod", type: "select", lookup: "payment_methods" },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
-      {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table cols={[tr("date"), tr("invoice"), tr("customer"), tr("amount"), tr("payMethod"), ""]} rows={rows.map((p) => [
         p.date,
         p.invoice_number,
         p.customer_name,
         money(p.amount, lang),
         p.method,
-        can("payments.void", "payments.create") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(money(p.amount, lang), async () => { await del(`/api/payments/${p.id}`); load(); })}>{tr("delete")}</button> : null,
+        can("payments.void", "payments.create") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(money(p.amount, lang), async () => { await del(`/api/payments/${p.id}`); list.reload(); })}>{tr("delete")}</button> : null,
       ])} />
-      )}
+      </ListGate>
       {dialog}
     </Page>
   );
@@ -1277,7 +1282,7 @@ export function ReportsPage() {
     setAsof(await get(`/api/reports/stock-asof?${f.qs}`));
     setExpiry(await get(`/api/reports/expiry?days=30`));
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs, group]);
+  const list = useLiveList(load, [f.qs, group]);
   const tabs: { id: typeof tab; key: any }[] = [
     { id: "sales", key: "sales" },
     { id: "profit", key: "profit" },
@@ -1293,6 +1298,7 @@ export function ReportsPage() {
   const exportKind = tab === "compare" ? "sales" : tab === "inventory" ? "inventory" : tab;
   return (
     <Page title={tr("reports")} action={<ExportBtn kind={exportKind} query={`${f.qs}&group=${group}`} />}>
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={list.loading && !Object.keys(acc).length} emptyFallback={<PageLoading />}>
       <SmartFilter f={f} search={false} fields={[
         { key: "customer_id", label: "customers", type: "async", quick: true, asyncPath: "/api/customers" },
         { key: "sales_agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
@@ -1389,6 +1395,7 @@ export function ReportsPage() {
           })}
         />
       ) : null}
+      </ListGate>
     </Page>
   );
 }
@@ -1410,7 +1417,7 @@ export function UsersPage() {
   async function loadUsers() {
     setRows((await get<{ data: any[] }>(`/api/users?${f.qs}`)).data);
   }
-  useEffect(() => { loadUsers().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(loadUsers, [f.qs]);
   function applyRoles(data: any) {
     setRoles(data);
     const next: Record<number, number[]> = {};
@@ -1444,6 +1451,7 @@ export function UsersPage() {
       <SmartFilter f={f} date={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [{ value: "active", label: tr("active") }, { value: "inactive", label: tr("inactive") }] },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table cols={[tr("username"), tr("name"), tr("role"), tr("status"), ""]} rows={rows.map((u) => [
         u.username,
         u.full_name,
@@ -1454,10 +1462,11 @@ export function UsersPage() {
             canEdit
             canDelete
             onEdit={() => { setForm({ id: u.id, username: u.username, full_name: u.full_name || "", phone: u.phone || "", role_id: u.role_id, active: u.active ? 1 : 0, password: "" }); setOpen(true); }}
-            onDelete={() => confirmDelete(u.username, async () => { await del(`/api/users/${u.id}`); loadUsers(); })}
+            onDelete={() => confirmDelete(u.username, async () => { await del(`/api/users/${u.id}`); list.reload(); })}
           />
         ) : null,
       ])} />
+      </ListGate>
       <Modal open={open} title={form.id ? tr("edit") : tr("add")} onClose={() => setOpen(false)}>
         <div className="grid gap-3">
           <Field label={tr("username")}><input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></Field>
@@ -1474,7 +1483,7 @@ export function UsersPage() {
             if (form.password) body.password = form.password;
             await put(`/api/users/${form.id}`, body);
             setOpen(false);
-            loadUsers();
+            list.reload();
           }}>{tr("save")}</Btn>
         </div>
       </Modal>
@@ -1561,8 +1570,10 @@ export function AuditPage() {
     if (!can("approvals.view", "purchases.approve", "leaves.manage", "stocktake.approve")) return;
     setPending(await get(`/api/approvals?kind=${encodeURIComponent(kind)}`));
   }
-  useEffect(() => { if (tab === "log" && can("audit.view")) loadLog().catch(() => {}); }, [f.qs, tab]);
-  useEffect(() => { if (tab === "approvals") loadPending().catch(() => {}); }, [tab, kind]);
+  const list = useLiveList(async () => {
+    if (tab === "log" && can("audit.view")) await loadLog();
+    else if (tab === "approvals") await loadPending();
+  }, [f.qs, tab, kind]);
   return (
     <Page title={tab === "approvals" ? tr("approvals") : tr("audit")}>
       <div className="mb-3 flex flex-wrap gap-2 no-print">
@@ -1579,7 +1590,7 @@ export function AuditPage() {
             { key: "entity_id", label: "invoiceNo", type: "text" },
             { key: "user_id", label: "users", type: "text" },
           ]} />
-          {!rows.length ? <EmptyFilterState onClear={f.clear} /> : (
+          <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
           <Table
             cols={[tr("name"), tr("actions"), tr("details"), tr("oldValue"), tr("time")]}
             rows={rows.map((a) => [
@@ -1592,7 +1603,7 @@ export function AuditPage() {
               a.created_at,
             ])}
           />
-          )}
+          </ListGate>
           <Modal open={!!detail} title={detail?.action || ""} onClose={() => setDetail(null)} wide>
             <pre className="whitespace-pre-wrap text-xs">{JSON.stringify({
               old: (() => { try { return detail?.old_value ? JSON.parse(detail.old_value) : null; } catch { return detail?.old_value; } })(),

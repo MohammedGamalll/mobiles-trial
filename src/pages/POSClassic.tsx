@@ -27,10 +27,7 @@ import { AccountDialogClassic } from "../components/classic/AccountDialogClassic
 import { emptyProduct, type ProductForm } from "../hooks/useProductCatalog";
 import { usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PosHeaderFilter, applyPosHeaderFilters, uniqueFilterValues } from "../components/PosHeaderFilter";
-
-function binText(p: Product) {
-  return [p.rack, p.shelf, p.drawer].filter(Boolean).join("+");
-}
+import { binText, lastSupplierName } from "../lib/place";
 
 function ClassicDropUp({
   label,
@@ -78,6 +75,7 @@ export default function POSClassic() {
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind,
+    catalogLoading, catalogError, reloadCatalog,
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
@@ -472,7 +470,7 @@ export default function POSClassic() {
                           <td>{p.quality || ""}</td>
                           <td>{(lang === "ar" ? p.part_type_ar : p.part_type_en) || p.part_type_ar || ""}</td>
                           <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || ""}</td>
-                          <td>{p.supplier_name || ""}</td>
+                          <td>{lastSupplierName(p)}</td>
                           <td>{p.box || ""}</td>
                           <td>{binText(p)}</td>
                           <td className="is-price">{money(pickPrice(p), lang)}</td>
@@ -491,7 +489,17 @@ export default function POSClassic() {
                     </tr>
                   </tfoot>
                 </table>
-                {!visible.length ? <div className="pos-classic-empty">{tr("noResults")}</div> : null}
+                {catalogLoading && !visible.length ? <div className="pos-classic-empty">{tr("loadingProducts")}</div> : catalogError && !visible.length ? (
+                  <div className="pos-classic-empty">
+                    <div>{catalogError}</div>
+                    <button type="button" onClick={() => reloadCatalog()}>{tr("retry")}</button>
+                  </div>
+                ) : !visible.length ? <div className="pos-classic-empty">{tr("noResults")}</div> : catalogError ? (
+                  <div className="pos-classic-empty">
+                    <div>{catalogError}</div>
+                    <button type="button" onClick={() => reloadCatalog()}>{tr("retry")}</button>
+                  </div>
+                ) : null}
               </div>
             </div>
           )}

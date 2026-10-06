@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useApp } from "../context";
@@ -6,8 +6,10 @@ import { get } from "../lib/api";
 import { money, num, statusClass } from "../lib/format";
 import { EasyLauncher } from "../components/EasyLauncher";
 import { PrintBtn, PrintLetterhead, Stat } from "../components/ui";
+import { ListGate } from "../components/ListGate";
 import { SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { useLiveList } from "../hooks/useLiveList";
 
 export default function Dashboard() {
   const { uiLayout } = useApp();
@@ -21,37 +23,37 @@ function ModernDashboard() {
   const dark = theme === "dark";
   const f = useListQuery("dashboard", { period: "this_month" });
   const [d, setD] = useState<any>(null);
-  useEffect(() => {
-    get(`/api/dashboard?${f.qs}`).then(setD).catch(() => {});
+  const list = useLiveList(async () => {
+    setD(await get(`/api/dashboard?${f.qs}`));
   }, [f.qs]);
-  if (!d) return <div className="text-slate-400">{tr("loading")}</div>;
   function vs(curr: number, prev: number) {
     if (!prev && !curr) return "";
     const pct = prev ? Math.round(((curr - prev) / prev) * 1000) / 10 : 100;
     return `${tr("vsLastPeriod")} ${pct > 0 ? "+" : ""}${pct}%`;
   }
+  const data = d || {};
   const cards = [
-    [tr("salesToday"), money(d.sales_today, lang), `${num(d.invoices_today, lang)} ${tr("invoicesCount")}`, "cyan"],
-    [tr("collected"), money(d.collections_today, lang), tr("salesToday"), "emerald"],
-    [tr("accountCredit"), money(d.credit_today, lang), tr("salesToday"), "rose"],
-    [tr("expenses"), money(d.expenses_month, lang), "", "amber"],
-    ...(showCost ? [[tr("totalProfit"), money(d.profit_month ?? d.profit, lang), vs(d.profit_month, d.prev_profit_month), "emerald"] as const] : []),
-    [tr("cashBanks"), money(d.cash_balance, lang), "", "emerald"],
-    [tr("debtors"), money(d.debtors, lang), "", "rose"],
-    [tr("creditors"), money(d.creditors, lang), "", "rose"],
-    [tr("stockValue"), money(d.stock_value, lang), "", "cyan"],
-    [tr("lowStock"), num(d.low_count, lang), "", "amber"],
-    [tr("invoicesCount"), num(d.invoices_today, lang), tr("salesToday"), "indigo"],
-    [tr("presentNow"), `${num(d.present_now, lang)} / ${num(d.staff_active, lang)}`, tr("employees"), "indigo"],
-    [tr("reps"), num(d.reps_count, lang), "", "cyan"],
-    [tr("salesMonth"), money(d.sales_month, lang), vs(d.sales_month, d.prev_sales_month), "indigo"],
-    [tr("totalPurchases"), money(d.purchases, lang), vs(d.purchases, d.prev_purchases), "amber"],
-    [tr("pendingDelivery"), num(d.pending_delivery, lang), "", "amber"],
-    [tr("completedOrders"), num(d.completed_delivery, lang), "", "emerald"],
-    [tr("returnedOrders"), num(d.returned_orders, lang), "", "rose"],
-    [tr("pendingApprovals"), num(d.pending_approvals, lang), "", "rose"],
-    [tr("deadStock"), num(d.dead_stock, lang), "", "amber"],
-    [tr("dueExpenses"), num(d.due_expenses, lang), tr("recurring"), "rose"],
+    [tr("salesToday"), money(data.sales_today, lang), `${num(data.invoices_today, lang)} ${tr("invoicesCount")}`, "cyan"],
+    [tr("collected"), money(data.collections_today, lang), tr("salesToday"), "emerald"],
+    [tr("accountCredit"), money(data.credit_today, lang), tr("salesToday"), "rose"],
+    [tr("expenses"), money(data.expenses_month, lang), "", "amber"],
+    ...(showCost ? [[tr("totalProfit"), money(data.profit_month ?? data.profit, lang), vs(data.profit_month, data.prev_profit_month), "emerald"] as const] : []),
+    [tr("cashBanks"), money(data.cash_balance, lang), "", "emerald"],
+    [tr("debtors"), money(data.debtors, lang), "", "rose"],
+    [tr("creditors"), money(data.creditors, lang), "", "rose"],
+    [tr("stockValue"), money(data.stock_value, lang), "", "cyan"],
+    [tr("lowStock"), num(data.low_count, lang), "", "amber"],
+    [tr("invoicesCount"), num(data.invoices_today, lang), tr("salesToday"), "indigo"],
+    [tr("presentNow"), `${num(data.present_now, lang)} / ${num(data.staff_active, lang)}`, tr("employees"), "indigo"],
+    [tr("reps"), num(data.reps_count, lang), "", "cyan"],
+    [tr("salesMonth"), money(data.sales_month, lang), vs(data.sales_month, data.prev_sales_month), "indigo"],
+    [tr("totalPurchases"), money(data.purchases, lang), vs(data.purchases, data.prev_purchases), "amber"],
+    [tr("pendingDelivery"), num(data.pending_delivery, lang), "", "amber"],
+    [tr("completedOrders"), num(data.completed_delivery, lang), "", "emerald"],
+    [tr("returnedOrders"), num(data.returned_orders, lang), "", "rose"],
+    [tr("pendingApprovals"), num(data.pending_approvals, lang), "", "rose"],
+    [tr("deadStock"), num(data.dead_stock, lang), "", "amber"],
+    [tr("dueExpenses"), num(data.due_expenses, lang), tr("recurring"), "rose"],
   ];
   const links: Record<string, string> = {
     [tr("salesToday")]: "/sales",
@@ -97,6 +99,7 @@ function ModernDashboard() {
         { key: "sales_agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
         { key: "warehouse", label: "warehouse", type: "locations" },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!d}>
       <div className={`dash-kpis grid gap-3 ${uiLayout === "classic_easy" ? "sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6" : "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
         {cards.map(([l, v, h, a]) => {
           const to = links[String(l)];
@@ -109,7 +112,7 @@ function ModernDashboard() {
           <div className="mb-3 font-bold">{tr("lastDays")}</div>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={d.chart || []}>
+              <AreaChart data={data.chart || []}>
                 <XAxis dataKey="d" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
@@ -121,7 +124,7 @@ function ModernDashboard() {
         </div>
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
           <div className="mb-3 font-bold">{tr("topProducts")}</div>
-          {(d.top_products || []).map((p: any) => (
+          {(data.top_products || []).map((p: any) => (
             <div key={p.sku} className="flex items-center justify-between border-b border-[var(--border)] py-2 text-sm">
               <div>
                 <div className="font-semibold">{p.product_name}</div>
@@ -138,7 +141,7 @@ function ModernDashboard() {
           <div className="table-wrap">
             <table>
               <tbody>
-                {(d.low_stock || []).map((p: any) => (
+                {(data.low_stock || []).map((p: any) => (
                   <tr key={p.id}>
                     <td>{lang === "ar" ? p.name_ar : p.name_en}</td>
                     <td>{p.sku}</td>
@@ -156,7 +159,7 @@ function ModernDashboard() {
           <div className="table-wrap">
             <table>
               <tbody>
-                {(d.out_of_stock || []).map((p: any) => (
+                {(data.out_of_stock || []).map((p: any) => (
                   <tr key={p.id}>
                     <td>{lang === "ar" ? p.name_ar : p.name_en}</td>
                     <td>{p.sku}</td>
@@ -170,6 +173,7 @@ function ModernDashboard() {
           </div>
         </div>
       </div>
+      </ListGate>
     </div>
   );
 }

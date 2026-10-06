@@ -185,11 +185,11 @@ reportRoutes.get("/aging", requirePerm("reports.view", "customers.view"), async 
     .prepare(
       `SELECT c.id, c.name, c.phone, c.current_balance as balance,
               CAST(COALESCE((
-                SELECT MIN(julianday('now') - julianday(si.date))
+                SELECT MIN(DATEDIFF(CURDATE(), si.date))
                 FROM sales_invoices si
                 WHERE si.customer_id = c.id AND si.deleted_at IS NULL
                   AND si.remaining > 0 AND si.status NOT IN ('cancelled','draft','held','quote','order')
-              ), 0) AS INT) as days
+              ), 0) AS SIGNED) as days
        FROM customers c
        WHERE c.deleted_at IS NULL AND c.current_balance > 0
        ORDER BY c.current_balance DESC`,
@@ -210,10 +210,10 @@ reportRoutes.get("/compare", requirePerm("reports.view"), async (c) => {
   const url = new URL(c.req.url);
   const from = url.searchParams.get("from") || "2000-01-01";
   const to = url.searchParams.get("to") || "2099-12-31";
-  const span = await c.env.DB.prepare(`SELECT CAST(julianday(?) - julianday(?) AS INT) + 1 as days`).bind(to, from).first<{ days: number }>();
+  const span = await c.env.DB.prepare(`SELECT DATEDIFF(?, ?) + 1 as days`).bind(to, from).first<{ days: number }>();
   const days = Math.max(1, Number(span?.days) || 1);
   const prev = await c.env.DB
-    .prepare(`SELECT date(?, '-' || ? || ' days') as prev_from, date(?, '-1 day') as prev_to`)
+    .prepare(`SELECT DATE_SUB(?, INTERVAL ? DAY) as prev_from, DATE_SUB(?, INTERVAL 1 DAY) as prev_to`)
     .bind(from, days, from)
     .first<{ prev_from: string; prev_to: string }>();
   const prevFrom = prev?.prev_from || from;
@@ -472,11 +472,11 @@ reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.
       .prepare(
         `SELECT c.name, c.phone, c.current_balance as balance,
                 CAST(COALESCE((
-                  SELECT MIN(julianday('now') - julianday(si.date))
+                  SELECT MIN(DATEDIFF(CURDATE(), si.date))
                   FROM sales_invoices si
                   WHERE si.customer_id = c.id AND si.deleted_at IS NULL
                     AND si.remaining > 0 AND si.status NOT IN ('cancelled','draft','held','quote','order')
-                ), 0) AS INT) as days
+                ), 0) AS SIGNED) as days
          FROM customers c WHERE c.deleted_at IS NULL AND c.current_balance > 0 ORDER BY c.current_balance DESC`,
       )
       .all<Record<string, unknown>>();

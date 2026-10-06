@@ -5,8 +5,10 @@ import { get, post, del } from "../lib/api";
 import { money, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, Field, FilterBar, Modal, PrintBtn, PrintLetterhead, SearchPick, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
+import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { useLiveList } from "../hooks/useLiveList";
 import { useConfirm } from "../components/Confirm";
 import { matchScanned, playSound } from "../lib/sounds";
 
@@ -34,13 +36,14 @@ export function SerialsPage() {
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/serials?${f.qs}&pageSize=80`)).data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("serials")} action={can("serials.manage") ? <Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("add")}</Btn> : null}>
       <SmartFilter f={f} date={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: ["in_stock", "reserved", "sold", "returned"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
         { key: "product_id", label: "products", type: "async", asyncPath: "/api/products", asyncLabel: (r) => `${r.sku} — ${r.name_ar}` },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <table className="w-full text-sm">
         <thead><tr className="text-slate-500"><th>{tr("serial")}</th><th>{tr("sku")}</th><th>{tr("products")}</th><th>{tr("status")}</th><th></th></tr></thead>
         <tbody>
@@ -50,11 +53,12 @@ export function SerialsPage() {
               <td>{r.sku}</td>
               <td>{lang === "ar" ? r.name_ar : r.name_en}</td>
               <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
-              <td>{can("serials.manage") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.serial, async () => { await del(`/api/serials/${r.id}`); load(); })}>{tr("delete")}</button> : null}</td>
+              <td>{can("serials.manage") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.serial, async () => { await del(`/api/serials/${r.id}`); list.reload(); })}>{tr("delete")}</button> : null}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      </ListGate>
       <Modal open={open} title={tr("serials")} onClose={() => { setOpen(false); act.clear(); }}>
         <SerialProductSelect value={form.product_id} onChange={(v) => setForm({ ...form, product_id: v })} />
         <Field label={tr("serials")}><textarea className={inputCls} rows={5} value={form.serials} onChange={(e) => setForm({ ...form, serials: e.target.value })} placeholder="IMEI / serial لكل سطر" /></Field>
@@ -91,8 +95,11 @@ function SerialProductSelect({ value, onChange }: { value: string; onChange: (v:
   const [miss, setMiss] = useState("");
   useEffect(() => {
     if (!q.trim()) { setRows([]); return; }
-    const t = setTimeout(() => get<{ data: any[] }>(`/api/products?q=${encodeURIComponent(q)}&pageSize=8`).then((r) => setRows(r.data || [])).catch(() => {}), 150);
-    return () => clearTimeout(t);
+    let live = true;
+    const t = setTimeout(() => get<{ data: any[] }>(`/api/products?q=${encodeURIComponent(q)}&pageSize=8`)
+      .then((r) => { if (live) setRows(r.data || []); })
+      .catch(() => {}), 150);
+    return () => { live = false; clearTimeout(t); };
   }, [q]);
   function pick(p: any) {
     playSound("ok");
@@ -139,7 +146,7 @@ export function ChequesPage() {
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/cheques?${f.qs}`)).data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("cheques")} action={can("cheques.manage") ? <Btn onClick={() => setOpen(true)}>{tr("add")}</Btn> : null}>
       <SmartFilter f={f} fields={[
@@ -147,6 +154,7 @@ export function ChequesPage() {
         { key: "direction", label: "kind", type: "select", options: [{ value: "in", label: "in" }, { value: "out", label: "out" }] },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <table className="w-full text-sm">
         <thead><tr className="text-slate-500"><th>{tr("chequeNo")}</th><th>{tr("customer")}</th><th>{tr("amount")}</th><th>{tr("dueDate")}</th><th>{tr("status")}</th><th></th></tr></thead>
         <tbody>
@@ -160,9 +168,9 @@ export function ChequesPage() {
               <td className="no-print">
                 {r.status === "pending" && can("cheques.manage") ? (
                   <>
-                    <button className="me-2 font-bold text-emerald-700" onClick={async () => { await post(`/api/cheques/${r.id}/collect`, {}); load(); }}>{tr("collect")}</button>
-                    <button className="me-2 font-bold text-rose-600" onClick={async () => { await post(`/api/cheques/${r.id}/bounce`, {}); load(); }}>{tr("bounced")}</button>
-                    <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await del(`/api/cheques/${r.id}`); load(); })}>{tr("delete")}</button>
+                    <button className="me-2 font-bold text-emerald-700" onClick={async () => { await post(`/api/cheques/${r.id}/collect`, {}); list.reload(); }}>{tr("collect")}</button>
+                    <button className="me-2 font-bold text-rose-600" onClick={async () => { await post(`/api/cheques/${r.id}/bounce`, {}); list.reload(); }}>{tr("bounced")}</button>
+                    <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await del(`/api/cheques/${r.id}`); list.reload(); })}>{tr("delete")}</button>
                   </>
                 ) : null}
               </td>
@@ -170,6 +178,7 @@ export function ChequesPage() {
           ))}
         </tbody>
       </table>
+      </ListGate>
       <Modal open={open} title={tr("cheques")} onClose={() => setOpen(false)}>
         <Field label={tr("chequeNo")}><input className={inputCls} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} /></Field>
         <Field label={tr("kind")}>
@@ -199,7 +208,7 @@ export function ChequesPage() {
         <Field label={tr("invoiceNo")}><input className={inputCls} value={form.invoice_id} onChange={(e) => setForm({ ...form, invoice_id: e.target.value })} placeholder="ID" /></Field>
         <Btn className="mt-3" onClick={async () => {
           await post("/api/cheques", { ...form, invoice_id: form.invoice_id ? Number(form.invoice_id) : null });
-          setOpen(false); load();
+          setOpen(false); list.reload();
         }}>{tr("save")}</Btn>
       </Modal>
       {dialog}
@@ -221,7 +230,7 @@ export function InstallmentsPage() {
   async function load() {
     setRows((await get<{ data: any[] }>(`/api/installments?${f.qs}`)).data || []);
   }
-  useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const list = useLiveList(load, [f.qs]);
   async function openPlan(id: number) {
     setDetail((await get<{ data: any }>(`/api/installments/${id}`)).data);
   }
@@ -231,6 +240,7 @@ export function InstallmentsPage() {
         { key: "status", label: "status", type: "select", quick: true, options: ["open", "paid", "overdue"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
         { key: "customer_id", label: "customers", type: "async", asyncPath: "/api/customers" },
       ]} />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <table className="w-full text-sm">
         <thead><tr className="text-slate-500"><th>{tr("invoiceNo")}</th><th>{tr("customer")}</th><th>{tr("total")}</th><th>{tr("status")}</th><th></th></tr></thead>
         <tbody>
@@ -240,11 +250,12 @@ export function InstallmentsPage() {
               <td>{r.customer_name}</td>
               <td>{money(r.total, lang)}</td>
               <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span> · {r.open_dues}</td>
-              <td>{can("installments.manage") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(String(r.invoice_id), async () => { await del(`/api/installments/${r.id}`); load(); setDetail(null); })}>{tr("delete")}</button> : null}</td>
+              <td>{can("installments.manage") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(String(r.invoice_id), async () => { await del(`/api/installments/${r.id}`); list.reload(); setDetail(null); })}>{tr("delete")}</button> : null}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      </ListGate>
       {detail ? (
         <div className="mt-4 rounded-2xl border p-4">
           <div className="mb-2 font-bold">{tr("installments")} #{detail.id}</div>
@@ -273,7 +284,7 @@ export function InstallmentsPage() {
         <Btn className="mt-3" onClick={async () => {
           try {
             await post("/api/installments", { invoice_id: Number(form.invoice_id), down_payment: form.down_payment, count: form.count, start_date: form.start_date, interval_days: form.interval_days });
-            setOpen(false); act.clear(); load();
+            setOpen(false); act.clear(); list.reload();
           } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>
@@ -289,7 +300,7 @@ export function InstallmentsPage() {
             setPayDue(null);
             act.clear();
             await openPlan(detail.id);
-            load();
+            list.reload();
           } catch (e) { act.fail(e); }
         }}>{tr("save")}</Btn>
       </Modal>

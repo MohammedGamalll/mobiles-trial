@@ -3805,26 +3805,15 @@ html[data-ui="modern"] .login-gold {
   print-color-adjust: exact;
 }
 
-.page-loading-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 99px;
-  background: #0f766e;
-  animation: page-loading-pulse 0.9s ease-in-out infinite;
+@keyframes spinner-steps {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-@keyframes page-loading-pulse {
-
-  0%,
-  100% {
-    opacity: 0.3;
-    transform: scale(0.85);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
+.spinner-ticks {
+  transform-origin: 12px 12px;
+  animation: spinner-steps 0.8s steps(12) infinite;
 }
 
 .inv-print-table td.is-n,
