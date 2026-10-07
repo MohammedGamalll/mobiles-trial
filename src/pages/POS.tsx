@@ -15,6 +15,8 @@ import {
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
 import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
+import { PageSizeControl } from "../components/PageSizeControl";
+import { useApp } from "../context";
 
 export default function POS() {
   const {
@@ -121,6 +123,7 @@ export default function POS() {
     setCatalogPage,
     catalogTotal,
     catalogPageSize,
+    setCatalogPageSize,
     reloadCatalog,
     searchRef,
     customerRef,
@@ -152,6 +155,7 @@ export default function POS() {
     finalizeHeld,
     previewWa,
     submit,
+    showCost,
     holdInvoice,
     beginResumeHeld,
   } = usePOSLogic("modern");
@@ -165,9 +169,20 @@ export default function POS() {
     () => applyPosHeaderFilters(visible, headerFilters, lang, pickPrice),
     [visible, headerFilters, lang, pickPrice],
   );
-  const extraPriceCols = (["price_2", "price_3", "price_4"] as const).filter(
-    (k) => visible.some((p) => Number(p[k])),
+  const { settings } = useApp();
+  const extraPriceCols = (["price_2", "price_3", "price_4"] as const).filter((k) =>
+    visible.some((p) => {
+      const v = Number(p[k]) || 0;
+      if (!v) return false;
+      if (k === "price_2" && v === Number(p.last_purchase_price || 0)) return false;
+      return true;
+    }),
   );
+  function extraPriceLabel(k: "price_2" | "price_3" | "price_4") {
+    const named = String(settings?.[`${k}_name`] || "").trim();
+    if (named) return named;
+    return k.replace("price_", "#");
+  }
   const payMethod = method === "visa" ? "cash" : method;
   useEffect(() => {
     if (method === "visa") setMethod("cash");
@@ -309,6 +324,22 @@ export default function POS() {
               ))}
             </div>
           ) : null}
+          <div
+            className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-slate-200 bg-[var(--surface)] px-3 py-1.5 text-xs font-bold"
+            dir={lang === "ar" ? "rtl" : "ltr"}
+          >
+            <PageSizeControl value={catalogPageSize} onChange={setCatalogPageSize} />
+            {catalogTotal > 0 ? (
+              <>
+                <span className="text-slate-500">
+                  {num((catalogPage - 1) * catalogPageSize + (visible.length ? 1 : 0), lang)}
+                  –{num((catalogPage - 1) * catalogPageSize + visible.length, lang)} {tr("of")} {num(catalogTotal, lang)}
+                </span>
+                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogPage <= 1 || catalogLoading} onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}>{tr("prev")}</button>
+                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogLoading || catalogPage >= Math.max(1, Math.ceil(catalogTotal / catalogPageSize))} onClick={() => setCatalogPage((n) => n + 1)}>{tr("next")}</button>
+              </>
+            ) : null}
+          </div>
           <div
             className="min-h-0 w-full min-w-0 flex-1 overflow-auto overscroll-none"
             dir="ltr"
@@ -453,9 +484,11 @@ export default function POS() {
                     value={headerFilters.wholesale || ""}
                     onChange={(v) => setHeaderFilter("wholesale", v)}
                   />
+                  {showCost ? <th className="text-start font-black">{tr("posColAvgBuy")}</th> : null}
+                  {showCost ? <th className="text-start font-black">{tr("posColLastBuy")}</th> : null}
                   {extraPriceCols.map((k) => (
                     <th key={k} className="text-start font-black">
-                      {k.replace("price_", "#")}
+                      {extraPriceLabel(k)}
                     </th>
                   ))}
                 </tr>
@@ -484,7 +517,7 @@ export default function POS() {
                           ? "∞"
                           : num(p.available, lang)}
                       </td>
-                      <td className="text-slate-500">{p.quality || "—"}</td>
+                      <td className="text-slate-500">{p.quality || (lang === "ar" ? p.category_ar : p.category_en) || p.category_ar || "—"}</td>
                       <td className="text-slate-500">
                         {(lang === "ar" ? p.part_type_ar : p.part_type_en) ||
                           p.part_type_ar ||
@@ -515,6 +548,8 @@ export default function POS() {
                           ? money(p.wholesale_price, lang)
                           : "—"}
                       </td>
+                      {showCost ? <td>{money(p.purchase_price || 0, lang)}</td> : null}
+                      {showCost ? <td>{money(p.last_purchase_price || p.purchase_price || 0, lang)}</td> : null}
                       {extraPriceCols.map((k) => (
                         <td key={k}>
                           {Number(p[k]) ? money(Number(p[k]), lang) : "—"}

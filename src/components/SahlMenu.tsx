@@ -26,6 +26,7 @@ const groups: Group[] = [
     key: "easyAccounts",
     items: [
       { to: "/customers", key: "customers", perm: "customers.view" },
+      { to: "/reports/daily-movement", key: "easyDaily", perm: "reports.view" },
       { to: "/suppliers", key: "suppliers", perm: "suppliers.view" },
       { to: "/price-lists", key: "priceLists", perm: "prices.view" },
     ],
@@ -37,6 +38,7 @@ const groups: Group[] = [
       { to: "/purchases", key: "purchases", perm: "purchases.view" },
       { to: "/transfers", key: "transfers", perm: "transfers.view" },
       { to: "/stocktake", key: "stocktake", perm: "stocktake.view" },
+      { to: "/wastage", key: "wastage", perm: "stocktake.view" },
       { to: "/inventory", key: "easyAdjust", perm: "inventory.view" },
     ],
   },
@@ -47,6 +49,7 @@ const groups: Group[] = [
       { to: "/ledger/vouchers", key: "vouchers", perm: "vouchers.create" },
       { to: "/payments", key: "payments", perm: "payments.view" },
       { to: "/expenses", key: "expenses", perm: "expenses.view" },
+      { to: "/partners", key: "partnersEquity", perm: "partners.view" },
       { to: "/cheques", key: "cheques", perm: "cheques.manage" },
       { to: "/installments", key: "installments", perm: "installments.manage" },
     ],
@@ -64,8 +67,8 @@ const groups: Group[] = [
     key: "easyReports",
     items: [
       { to: "/reports", key: "reports", perm: "reports.view" },
+      { to: "/reports/trial-balance", key: "trialBalance", perm: "reports.view" },
       { to: "/reports?tab=sales", key: "easySalesAnalysis", perm: "reports.view" },
-      { to: "/reports?tab=daily", key: "easyDaily", perm: "reports.view" },
       { to: "/reports?tab=expiry", key: "expiryReport", perm: "reports.view" },
     ],
   },

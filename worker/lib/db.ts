@@ -192,6 +192,12 @@ export async function ensureAppSchema(db: AppDb) {
     ["work_shifts", "weekdays TEXT"],
     ["expenses", "cash_account_id INTEGER"],
     ["products", "last_purchase_price REAL NOT NULL DEFAULT 0"],
+    ["purchase_invoice_items", "returned_qty INTEGER NOT NULL DEFAULT 0"],
+    ["purchase_invoices", "wallet_surplus REAL NOT NULL DEFAULT 0"],
+    ["purchase_invoices", "returned_total REAL NOT NULL DEFAULT 0"],
+    ["sales_invoices", "returned_total REAL NOT NULL DEFAULT 0"],
+    ["payments", "supplier_id INTEGER"],
+    ["payments", "purchase_id INTEGER"],
   ];
   for (const [table, def] of alters) await run(`ALTER TABLE ${table} ADD COLUMN ${def}`);
   await run(`INSERT OR IGNORE INTO payment_methods (code, name_ar, name_en, active, sort_order) VALUES
@@ -241,7 +247,67 @@ export async function ensureAppSchema(db: AppDb) {
     WHERE NOT EXISTS (SELECT 1 FROM storage_locations WHERE code = 'DAMAGED')`);
   await run(`INSERT OR IGNORE INTO ledger_accounts (code, name_ar, name_en, type)
     VALUES ('5300', 'تالف ومفقود', 'Damaged / lost inventory', 'expense')`);
-  await run("CREATE UNIQUE INDEX idx_customers_phone_uq ON customers(phone)");
+  await run(`CREATE TABLE IF NOT EXISTS purchase_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number TEXT NOT NULL UNIQUE,
+    purchase_id INTEGER NOT NULL,
+    supplier_id INTEGER,
+    date TEXT NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'completed',
+    total REAL NOT NULL DEFAULT 0,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS purchase_return_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    return_id INTEGER NOT NULL,
+    purchase_item_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL,
+    qty INTEGER NOT NULL,
+    unit_cost REAL NOT NULL,
+    total REAL NOT NULL,
+    batch_id INTEGER
+  )`);
+  await run(`INSERT OR IGNORE INTO permissions (code, module, name_ar, name_en) VALUES
+    ('purchases.return', 'purchases', 'مرتجع مشتريات', 'Purchase return')`);
+  await run(`INSERT INTO role_permissions (role_id, permission_id)
+    SELECT 1, id FROM permissions WHERE code = 'purchases.return'
+    AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = 1 AND rp.permission_id = permissions.id)`);
+  await run(`INSERT INTO role_permissions (role_id, permission_id)
+    SELECT 3, id FROM permissions WHERE code = 'purchases.return'
+    AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = 3 AND rp.permission_id = permissions.id)`);
+  await run(`CREATE TABLE IF NOT EXISTS partners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    equity_percentage REAL NOT NULL,
+    starting_balance REAL NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS partner_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    partner_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    cash_account_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    note TEXT,
+    journal_id INTEGER,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run("CREATE INDEX idx_partner_tx_partner ON partner_transactions(partner_id, type)");
+  await run("CREATE INDEX idx_partners_active ON partners(active, id)");
+  await run(`INSERT OR IGNORE INTO permissions (code, module, name_ar, name_en) VALUES
+    ('partners.view', 'finance', 'عرض الشركاء وحقوق الملكية', 'View partners and equity'),
+    ('partners.manage', 'finance', 'إدارة الشركاء والمسحوبات', 'Manage partners and drawings')`);
+  await run(`INSERT INTO role_permissions (role_id, permission_id)
+    SELECT 1, id FROM permissions WHERE code IN ('partners.view', 'partners.manage')
+    AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = 1 AND rp.permission_id = permissions.id)`);
+  await run(`INSERT INTO role_permissions (role_id, permission_id)
+    SELECT 5, id FROM permissions WHERE code IN ('partners.view', 'partners.manage')
+    AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = 5 AND rp.permission_id = permissions.id)`);
   await run("CREATE INDEX idx_batches_product_loc ON inventory_batches(product_id, location_id)");
   await run("CREATE INDEX idx_batches_loc_product ON inventory_batches(location_id, product_id)");
   await run("CREATE INDEX idx_products_alive ON products(deleted_at, active, id)");

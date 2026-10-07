@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { like, paginate, todayIso, round2, audit, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { postCollectionJournal, tryLedger } from "../lib/ledger";
-import { applyDate, applyEq, applyRange, applySearch, listParams } from "../lib/filters";
+import { applyDate, applyEq, applyRange, applySearch, listParams, sqlText } from "../lib/filters";
 
 export const sahlRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -186,7 +186,7 @@ sahlRoutes.get("/installments", requirePerm("installments.manage", "sales.view")
   const p = listParams(new URL(c.req.url));
   const where = ["1=1"];
   const params: (string | number)[] = [];
-  applySearch(where, params, p.q, ["p.customer_name", "CAST(p.invoice_id AS TEXT)"]);
+  applySearch(where, params, p.q, ["p.customer_name", sqlText("p.invoice_id")]);
   applyEq(where, params, "p.customer_id", p.customer_id, true);
   applyEq(where, params, "p.status", p.status);
   applyDate(where, params, "p.start_date", p);

@@ -117,6 +117,11 @@ export function applyDate(where: string[], params: Bind[], col: string, p: ListQ
   return { from, to };
 }
 
+/** MariaDB rejects CAST(x AS TEXT); CHAR works for LIKE/equality. */
+export function sqlText(expr: string) {
+  return `CAST(${expr} AS CHAR)`;
+}
+
 export function applySearch(where: string[], params: Bind[], q: string | undefined, likeCols: string[], exactCols: string[] = []) {
   const s = (q || "").trim();
   if (!s) return;

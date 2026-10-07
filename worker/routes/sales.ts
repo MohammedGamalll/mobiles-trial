@@ -18,7 +18,7 @@ import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
-import { invoiceTotals, settleReturn } from "../lib/invoice-math";
+import { invoiceTotals, returnLineNet, settleReturn } from "../lib/invoice-math";
 import { splitInvoiceCash } from "../lib/party-money";
 import {
   applyIssue,
@@ -141,8 +141,18 @@ async function loadInvoice(db: AppDb, id: number) {
   if (!inv) return null;
   const items = await db
     .prepare(
-      `SELECT sii.*, p.sku as product_sku, p.name_en as name_en, p.kind as product_kind
-       FROM sales_invoice_items sii JOIN products p ON p.id = sii.product_id WHERE sii.invoice_id = ?`,
+      `SELECT sii.*, p.sku as product_sku, p.name_en as name_en, p.kind as product_kind,
+              p.quality, cat.name_ar as category_ar, cat.name_en as category_en,
+              pt.name_ar as part_type_ar, pt.name_en as part_type_en,
+              b.name_ar as brand_ar, b.name_en as brand_en,
+              s.name as supplier_name
+       FROM sales_invoice_items sii
+       JOIN products p ON p.id = sii.product_id
+       LEFT JOIN categories cat ON cat.id = p.category_id
+       LEFT JOIN part_types pt ON pt.id = p.part_type_id
+       LEFT JOIN brands b ON b.id = p.brand_id
+       LEFT JOIN suppliers s ON s.id = p.supplier_id
+       WHERE sii.invoice_id = ?`,
     )
     .bind(id)
     .all();
@@ -217,6 +227,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     payment_method?: string;
     paid?: number;
     discount?: number;
+    surplus_mode?: string;
     due_date?: string;
     notes?: string;
     client_token?: string;
@@ -330,16 +341,21 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   const profit = round2(total - costTotal);
   const hold = asHold;
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
-  const paid = hold
+  const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
+  const requestedPaid = hold
     ? 0
     : splitPays.length
       ? round2(splitPays.reduce((s, p) => s + p.amount, 0))
       : round2(b.payment_method === "credit" ? b.paid || 0 : b.paid ?? (type === "normal" ? total : 0));
-  const remaining = hold ? 0 : round2(total - paid);
+  const split = hold ? { invoicePaid: 0, remaining: 0, surplus: 0 } : splitInvoiceCash(requestedPaid, total, surplusMode);
+  const paid = split.invoicePaid;
+  const remaining = split.remaining;
+  const surplus = split.surplus;
   if (!hold && type !== "delivery") {
     const cred = creditError(customer, remaining);
     if (cred) return c.json({ error: cred }, 400);
   }
+  if (!hold && surplus > 0 && !customer) return c.json({ error: "customer_required" }, 400);
   const payState = remaining <= 0 ? "completed" : "partial";
   const status = b.order ? "order" : b.quote ? "quote" : hold ? "held" : payState;
   const deliveryStatus = null;
@@ -566,15 +582,35 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
       const escrow = type === "delivery" && !hold;
       if (!hold && paid > 0 && !escrow) {
         const rows = splitPays.length ? splitPays : [{ method: b.payment_method || "cash", amount: paid }];
+        let left = paid;
         for (const pay of rows) {
+          if (left <= 0) break;
+          const amt = round2(Math.min(pay.amount, left));
           await tx
             .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, created_by) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(id, customer?.id || null, pay.method, pay.amount, todayIso(), user.id)
+            .bind(id, customer?.id || null, pay.method, amt, todayIso(), user.id)
             .run();
+          left = round2(left - amt);
         }
       }
       if (!hold && customer && remaining > 0 && !escrow) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance + ?, updated_at = datetime('now') WHERE id = ?").bind(remaining, customer.id).run();
+      }
+      if (!hold && customer && surplus > 0 && !escrow) {
+        const extraPay = await tx
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(null, customer.id, b.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id)
+          .run();
+        await tx.prepare("UPDATE customers SET current_balance = current_balance - ?, updated_at = datetime('now') WHERE id = ?").bind(surplus, customer.id).run();
+        await postCollectionJournal(tx, {
+          paymentId: extraPay.meta.last_row_id,
+          invoiceNumber: invNumber,
+          amount: surplus,
+          method: b.payment_method || "cash",
+          date: todayIso(),
+          cashAccountId: b.cash_account_id || null,
+          userId: user.id,
+        });
       }
       if (salesAgentId) {
         await tx.prepare("UPDATE sales_invoices SET sales_agent_id = ? WHERE id = ?").bind(salesAgentId, id).run();
@@ -854,34 +890,36 @@ salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) 
   let amount = round2(b.amount);
   if (amount <= 0) return c.json({ error: "invalid_amount" }, 400);
   const due = round2(inv.remaining);
-  let surplus = 0;
-  if (amount > due + 0.001) {
-    if (b.surplus_mode === "ignore") amount = due;
-    else if (b.surplus_mode === "wallet") surplus = round2(amount - due);
-    else return c.json({ error: "overpay" }, 400);
-  }
+  const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
+  const split = splitInvoiceCash(amount, due, surplusMode);
+  const invoiceTake = split.invoicePaid;
+  const surplus = split.surplus;
+  amount = round2(invoiceTake + surplus);
+  if (amount <= 0) return c.json({ error: "invalid_amount" }, 400);
   if (surplus > 0 && !inv.customer_id) return c.json({ error: "customer_required" }, 400);
-  const invoiceTake = round2(Math.min(amount, due));
   const paid = round2(inv.paid + invoiceTake);
-  const remaining = round2(Math.max(0, inv.remaining - invoiceTake));
+  const remaining = split.remaining;
   const user = c.get("user");
   let payId = 0;
   try {
     await c.env.DB.transaction(async (tx) => {
-      const payIns = await tx
-        .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(id, inv.customer_id, b.method || "cash", invoiceTake, todayIso(), b.notes || null, user.id)
-        .run();
-      payId = payIns.meta.last_row_id;
+      if (invoiceTake > 0) {
+        const payIns = await tx
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, inv.customer_id, b.method || "cash", invoiceTake, todayIso(), b.notes || null, user.id)
+          .run();
+        payId = payIns.meta.last_row_id;
+      }
       await tx.prepare("UPDATE sales_invoices SET paid = ?, remaining = ? WHERE id = ?").bind(paid, remaining, id).run();
       if (inv.customer_id) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(amount, inv.customer_id).run();
       }
       if (surplus > 0 && inv.customer_id) {
-        await tx
+        const extra = await tx
           .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .bind(null, inv.customer_id, b.method || "cash", surplus, todayIso(), "surplus wallet", user.id)
           .run();
+        if (!payId) payId = extra.meta.last_row_id;
       }
       const nextStatus = remaining <= 0 ? "completed" : "partial";
       await tx
@@ -917,7 +955,12 @@ salesRoutes.post("/invoices/:id/returns", requirePerm("returns.create"), async (
     status: string;
     payment_method?: string | null;
     cash_account_id?: number | null;
-    items: { id: number; product_id: number; quantity: number; delivered_qty: number; returned_qty: number; unit_price: number; item_kind?: string }[];
+    subtotal?: number;
+    discount?: number;
+    tax_amount?: number;
+    extra_amount?: number;
+    returned_total?: number;
+    items: { id: number; product_id: number; quantity: number; delivered_qty: number; returned_qty: number; unit_price: number; discount?: number; item_kind?: string; unit_factor?: number }[];
     item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number; location_id?: number | null }[];
   };
   if (!RETURNABLE_STATUSES.has(row.status)) return c.json({ error: "cannot_return" }, 400);
@@ -933,16 +976,30 @@ salesRoutes.post("/invoices/:id/returns", requirePerm("returns.create"), async (
       const retId = ret.meta.last_row_id;
       let retTotal = 0;
       let cogsBack = 0;
+      const lineDiscounts = round2(row.items.reduce((s, i) => s + Number(i.discount || 0), 0));
+      const goodsBase = round2(Math.max(0, Number(row.subtotal || 0) - lineDiscounts));
+      const headerDiscount = round2(Math.max(0, Number(row.discount || 0) - lineDiscounts));
       for (const line of b.items) {
         const item = row.items.find((i) => i.id === line.invoice_item_id);
         if (!item) continue;
         const maxQty = item.quantity - item.returned_qty;
         const qty = Math.min(line.qty, maxQty);
         if (qty <= 0) continue;
-        const lineTotal = round2(qty * item.unit_price);
+        const lineAfter = round2(item.quantity * item.unit_price - Number(item.discount || 0));
+        const lineTotal = returnLineNet({
+          lineQty: item.quantity,
+          qty,
+          lineNetAfterLineDisc: lineAfter,
+          goodsBase: goodsBase || lineAfter,
+          headerDiscount,
+          taxAmount: Number(row.tax_amount || 0),
+          extraAmount: Number(row.extra_amount || 0),
+          includeExtra: false,
+        });
+        const factor = Number(item.unit_factor || 1) || 1;
         const batches = row.item_batches.filter((x) => x.invoice_item_id === item.id && x.qty > 0);
         const isService = item.item_kind === "service";
-        let left = isService ? 0 : qty;
+        let left = isService ? 0 : qty * factor;
         for (const bt of batches) {
           if (left <= 0) break;
           const take = Math.min(bt.qty, left);
@@ -985,9 +1042,10 @@ salesRoutes.post("/invoices/:id/returns", requirePerm("returns.create"), async (
       const newStatus = allReturned ? "fully_returned" : someReturned ? "partially_returned" : row.status;
       const settled = settleReturn({ total: row.total, paid: row.paid, remaining: row.remaining, retTotal, cogs: cogsBack });
       const nextCost = round2(Math.max(0, Number(row.cost_total || 0) - cogsBack));
+      const returnedTotal = round2(Number(row.returned_total || 0) + retTotal);
       await tx
-        .prepare("UPDATE sales_invoices SET status = ?, delivery_status = ?, total = ?, paid = ?, remaining = ?, cost_total = ?, profit = profit - ? WHERE id = ?")
-        .bind(newStatus, allReturned ? "fully_returned" : someReturned ? "partially_returned" : row.status, settled.newTotal, settled.newPaid, settled.newRemaining, nextCost, settled.profitDrop, id)
+        .prepare("UPDATE sales_invoices SET status = ?, delivery_status = ?, total = ?, paid = ?, remaining = ?, cost_total = ?, profit = profit - ?, returned_total = ? WHERE id = ?")
+        .bind(newStatus, allReturned ? "fully_returned" : someReturned ? "partially_returned" : row.status, settled.newTotal, settled.newPaid, settled.newRemaining, nextCost, settled.profitDrop, returnedTotal, id)
         .run();
       if (row.customer_id && settled.arDrop) {
         await tx.prepare("UPDATE customers SET current_balance = current_balance - ? WHERE id = ?").bind(settled.arDrop, row.customer_id).run();

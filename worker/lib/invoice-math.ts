@@ -27,6 +27,36 @@ export function fifoUnitCost(batches: { qty: number; unit_cost: number }[], qty:
   return taken ? cost / taken : 0;
 }
 
+/**
+ * Net value of returning `qty` from a line. Header discount (and tax) are
+ * allocated once by the line's share of goods — never re-applied in full on
+ * leftover units, and never ignored so a return credits list price.
+ */
+export function returnLineNet(opts: {
+  lineQty: number;
+  qty: number;
+  lineNetAfterLineDisc: number;
+  goodsBase: number;
+  headerDiscount: number;
+  taxAmount?: number;
+  extraAmount?: number;
+  includeExtra?: boolean;
+}) {
+  const lineQty = Number(opts.lineQty) || 0;
+  const qty = Math.max(0, Math.min(Number(opts.qty) || 0, lineQty));
+  if (lineQty <= 0 || qty <= 0) return 0;
+  const lineNet = round2(opts.lineNetAfterLineDisc);
+  const goodsBase = round2(opts.goodsBase);
+  if (goodsBase <= 0) return 0;
+  const headerShare = round2((opts.headerDiscount || 0) * (lineNet / goodsBase));
+  const afterHeader = round2(lineNet - headerShare);
+  const taxBase = round2(Math.max(0, goodsBase - (opts.headerDiscount || 0)));
+  const taxShare = taxBase > 0 ? round2((opts.taxAmount || 0) * (afterHeader / taxBase)) : 0;
+  const extraShare = opts.includeExtra ? round2((opts.extraAmount || 0) * (lineNet / goodsBase)) : 0;
+  const full = round2(afterHeader + taxShare + extraShare);
+  return round2((qty / lineQty) * full);
+}
+
 export function settleReturn(opts: { total: number; paid: number; remaining: number; retTotal: number; cogs: number }) {
   const newTotal = round2(opts.total - opts.retTotal);
   let newPaid = round2(opts.paid);
@@ -53,12 +83,31 @@ export function netPay(opts: {
   advances?: number;
   manualDeduction?: number;
 }) {
-  const daily = opts.daily ?? (opts.basic || 0) / 30;
-  const deductions = round2(
-    (opts.absentDays || 0) * daily + (opts.unpaidDays || 0) * daily + (opts.advances || 0) + (opts.manualDeduction || 0),
-  );
-  const net = round2((opts.basic || 0) + (opts.allowances || 0) + (opts.bonus || 0) + (opts.overtime || 0) - deductions);
-  return { deductions, net };
+  const basic = Number(opts.basic || 0);
+  const allowances = Number(opts.allowances || 0);
+  const overtime = Number(opts.overtime || 0);
+  const bonus = Number(opts.bonus || 0);
+  const gross = round2(basic + allowances + bonus + overtime);
+  const requested = round2(Math.max(0, Number(opts.advances || 0)));
+  const advances = round2(Math.min(requested, Math.max(0, gross)));
+  const afterAdvances = round2(Math.max(0, gross - advances));
+  const requestedManual = round2(Math.max(0, Number(opts.manualDeduction || 0)));
+  const manual = round2(Math.min(requestedManual, afterAdvances));
+  const net = round2(Math.max(0, afterAdvances - manual));
+  const deductions = round2(advances + manual);
+  return { deductions, net, advances, manual };
+}
+
+/** FIFO: take `amount` from open advances in order; leftover remaining stays open. */
+export function applyAdvanceDeduction(advances: { id: number; remaining: number }[], amount: number) {
+  let left = round2(Math.max(0, amount));
+  return advances.map((a) => {
+    const rem = round2(Math.max(0, Number(a.remaining) || 0));
+    const take = round2(Math.min(rem, left));
+    left = round2(left - take);
+    const remaining = round2(rem - take);
+    return { id: a.id, remaining, take, settled: remaining <= 0.005 };
+  });
 }
 
 export function availableQty(onHand: number, reserved: number) {

@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { audit, getSettings, paginate, round2, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { haversineMeters, workplaceFromSettings } from "../lib/geo";
-import { postPayrollJournal, tryLedger } from "../lib/ledger";
+import { postExpenseJournal } from "../lib/ledger";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
 import { notifyAdmins, safeNotify, sendNotification, userIdForEmployee } from "../lib/notifications";
+import { applyAdvanceDeduction, netPay } from "../lib/invoice-math";
 
 export const hrRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -41,6 +42,21 @@ type SessionRow = {
   status: string;
 };
 
+async function settleAdvancesForEmployee(db: AppDb, employeeId: number, amount: number, runId: number) {
+  const { results } = await db
+    .prepare("SELECT id, remaining FROM salary_advances WHERE employee_id = ? AND status = 'open' ORDER BY date, id")
+    .bind(employeeId)
+    .all<{ id: number; remaining: number }>();
+  const plan = applyAdvanceDeduction(results, amount);
+  for (const row of plan) {
+    if (row.take <= 0) continue;
+    await db
+      .prepare("UPDATE salary_advances SET remaining = ?, status = ?, payroll_run_id = ? WHERE id = ?")
+      .bind(row.remaining, row.settled ? "settled" : "open", runId, row.id)
+      .run();
+  }
+}
+
 async function employeeForUser(db: AppDb, userId: number) {
   return db.prepare("SELECT * FROM employees WHERE user_id = ? AND deleted_at IS NULL").bind(userId).first<Employee>();
 }
@@ -58,11 +74,12 @@ function inclusiveDays(from: string, to: string) {
   return Math.max(0, Math.round((b - a) / 86400000) + 1);
 }
 
-function overlapDays(from: string, to: string, month: string) {
+function overlapDays(from: string, to: string, month: string, through?: string) {
   const [y, m] = month.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const start = `${month}-01`;
-  const end = `${month}-${String(last).padStart(2, "0")}`;
+  let end = `${month}-${String(last).padStart(2, "0")}`;
+  if (through && through.startsWith(month) && through < end) end = through;
   const a = from > start ? from : start;
   const b = to < end ? to : end;
   if (a > b) return 0;
@@ -86,15 +103,192 @@ async function shiftForEmployee(db: AppDb, emp: { shift_id?: number | null }) {
   }>();
 }
 
-function fridayCount(month: string) {
+function fridayCount(month: string, through?: string) {
   const [y, m] = month.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  let end = last;
+  if (through && through.startsWith(month)) {
+    const day = Number(through.slice(8, 10));
+    if (day > 0) end = Math.min(last, day);
+  }
   let n = 0;
-  for (let d = 1; d <= last; d++) {
+  for (let d = 1; d <= end; d++) {
     const dt = new Date(Date.UTC(y, m - 1, d));
     if (dt.getUTCDay() === 5) n++;
   }
-  return { days: last, fridays: n, expected: last - n };
+  return { days: end, fridays: n, expected: end - n };
+}
+
+async function computeEmployeeSlip(db: AppDb, e: Employee, month: string, manualDeduction = 0) {
+  const today = todayIso();
+  const through = today.slice(0, 7) === month ? today : undefined;
+  const { expected } = fridayCount(month, through);
+  const { from, to } = monthBounds(month);
+  const until = through && through < to ? through : to;
+  const stats = await db
+    .prepare(
+      `SELECT COUNT(*) as present, SUM(late) as late, SUM(outside_seconds) as outside
+       FROM attendance_sessions WHERE employee_id = ? AND work_date BETWEEN ? AND ? AND status = 'closed'`,
+    )
+    .bind(e.id, from, until)
+    .first<{ present: number; late: number; outside: number }>();
+  const present = Number(stats?.present || 0);
+  const { results: leaves } = await db
+    .prepare("SELECT type, date_from, date_to FROM leave_requests WHERE employee_id = ? AND status = 'approved' AND date_from <= ? AND date_to >= ?")
+    .bind(e.id, until, from)
+    .all<{ type: string; date_from: string; date_to: string }>();
+  let paidLeave = 0;
+  let unpaidLeave = 0;
+  for (const lv of leaves) {
+    const days = overlapDays(lv.date_from, lv.date_to, month, until);
+    if (lv.type === "unpaid") unpaidLeave += days;
+    else paidLeave += days;
+  }
+  const absent = Math.max(0, expected - present - paidLeave);
+  const ot = await db
+    .prepare("SELECT COALESCE(SUM(amount),0) as n FROM overtime_entries WHERE employee_id = ? AND date BETWEEN ? AND ?")
+    .bind(e.id, from, until)
+    .first<{ n: number }>();
+  const adv = await db
+    .prepare("SELECT COALESCE(SUM(COALESCE(remaining, amount)),0) as n FROM salary_advances WHERE employee_id = ? AND status = 'open'")
+    .bind(e.id)
+    .first<{ n: number }>();
+  const overtime = round2(Number(ot?.n || 0));
+  const pay = netPay({
+    basic: Number(e.basic_salary || 0),
+    allowances: Number(e.allowances || 0),
+    overtime,
+    advances: Number(adv?.n || 0),
+    manualDeduction,
+  });
+  return {
+    present,
+    absent,
+    late: Number(stats?.late || 0),
+    outsideMinutes: Math.round(Number(stats?.outside || 0) / 60),
+    paidLeave,
+    unpaidLeave,
+    overtime,
+    advances: pay.advances,
+    deductions: pay.deductions,
+    manual: pay.manual,
+    net: pay.net,
+  };
+}
+
+async function insertPayslip(db: AppDb, runId: number, emp: Employee, month: string) {
+  const calc = await computeEmployeeSlip(db, emp, month);
+  await db
+    .prepare(
+      `INSERT INTO payslips (run_id, employee_id, basic, allowances, present_days, absent_days, late_days, outside_minutes, deductions, net, overtime, advances, leave_days, unpaid_days, paid_amount, advances_settled, manual_deduction)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
+    )
+    .bind(
+      runId,
+      emp.id,
+      emp.basic_salary,
+      emp.allowances,
+      calc.present,
+      calc.absent,
+      calc.late,
+      calc.outsideMinutes,
+      calc.deductions,
+      calc.net,
+      calc.overtime,
+      calc.advances,
+      calc.paidLeave,
+      calc.unpaidLeave,
+    )
+    .run();
+}
+
+async function ensureSlipsForActiveEmployees(db: AppDb, run: { id: number; month: string; status: string }) {
+  if (run.status === "paid") return;
+  const { results: emps } = await db.prepare("SELECT * FROM employees WHERE deleted_at IS NULL AND status = 'active'").all<Employee>();
+  const { results: slips } = await db.prepare("SELECT employee_id FROM payslips WHERE run_id = ?").bind(run.id).all<{ employee_id: number }>();
+  const have = new Set(slips.map((s) => s.employee_id));
+  for (const emp of emps) {
+    if (have.has(emp.id)) continue;
+    await insertPayslip(db, run.id, emp, run.month);
+  }
+}
+
+async function refreshUnpaidSlips(db: AppDb, run: { id: number; month: string; status: string }) {
+  if (run.status === "paid") return;
+  await ensureSlipsForActiveEmployees(db, run);
+  const { results: slips } = await db
+    .prepare("SELECT id, employee_id, paid_amount, manual_deduction FROM payslips WHERE run_id = ?")
+    .bind(run.id)
+    .all<{ id: number; employee_id: number; paid_amount: number; manual_deduction: number }>();
+  const { results: emps } = await db.prepare("SELECT * FROM employees WHERE deleted_at IS NULL").all<Employee>();
+  const byId = new Map(emps.map((e) => [e.id, e]));
+  for (const s of slips) {
+    if (Number(s.paid_amount || 0) > 0.005) continue;
+    const emp = byId.get(s.employee_id);
+    if (!emp) continue;
+    const calc = await computeEmployeeSlip(db, emp, run.month, Number(s.manual_deduction || 0));
+    await db
+      .prepare(
+        `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
+         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=? WHERE id=?`,
+      )
+      .bind(
+        emp.basic_salary,
+        emp.allowances,
+        calc.present,
+        calc.absent,
+        calc.late,
+        calc.outsideMinutes,
+        calc.deductions,
+        calc.net,
+        calc.overtime,
+        calc.advances,
+        calc.paidLeave,
+        calc.unpaidLeave,
+        calc.manual,
+        s.id,
+      )
+      .run();
+  }
+}
+
+async function refreshUnpaidSlipsForEmployee(db: AppDb, employeeId: number) {
+  const emp = await db.prepare("SELECT * FROM employees WHERE id = ? AND deleted_at IS NULL").bind(employeeId).first<Employee>();
+  if (!emp) return;
+  const { results: slips } = await db
+    .prepare(
+      `SELECT p.id, p.paid_amount, p.manual_deduction, r.month
+       FROM payslips p JOIN payroll_runs r ON r.id = p.run_id
+       WHERE p.employee_id = ? AND r.status != 'paid'`,
+    )
+    .bind(employeeId)
+    .all<{ id: number; paid_amount: number; manual_deduction: number; month: string }>();
+  for (const s of slips) {
+    if (Number(s.paid_amount || 0) > 0.005) continue;
+    const calc = await computeEmployeeSlip(db, emp, s.month, Number(s.manual_deduction || 0));
+    await db
+      .prepare(
+        `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
+         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=? WHERE id=?`,
+      )
+      .bind(
+        emp.basic_salary,
+        emp.allowances,
+        calc.present,
+        calc.absent,
+        calc.late,
+        calc.outsideMinutes,
+        calc.deductions,
+        calc.net,
+        calc.overtime,
+        calc.advances,
+        calc.paidLeave,
+        calc.unpaidLeave,
+        calc.manual,
+        s.id,
+      )
+      .run();
+  }
 }
 
 hrRoutes.get("/employees", requirePerm("hr.view", "hr.manage", "hr.payroll"), async (c) => {
@@ -111,7 +305,8 @@ hrRoutes.get("/employees", requirePerm("hr.view", "hr.manage", "hr.payroll"), as
   applyDate(where, params, "e.hire_date", { ...p, period: p.hire_period || p.period, from: p.hire_from || p.from, to: p.hire_to || p.to, day: p.hire_date || p.day });
   const { results } = await c.env.DB
     .prepare(
-      `SELECT e.*, u.username, da.name as agent_name, da.code as agent_code, s.name as shift_name, s.start_time as shift_start
+      `SELECT e.*, u.username, da.name as agent_name, da.code as agent_code, s.name as shift_name, s.start_time as shift_start,
+              COALESCE((SELECT SUM(COALESCE(sa.remaining, sa.amount)) FROM salary_advances sa WHERE sa.employee_id = e.id AND sa.status = 'open'), 0) as open_advances
        FROM employees e
        LEFT JOIN users u ON u.id = e.user_id
        LEFT JOIN delivery_agents da ON da.id = e.delivery_agent_id
@@ -417,8 +612,9 @@ hrRoutes.get("/payroll", requirePerm("hr.payroll", "hr.view"), async (c) => {
 
 hrRoutes.get("/payroll/:id", requirePerm("hr.payroll", "hr.view"), async (c) => {
   const id = Number(c.req.param("id"));
-  const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first();
+  const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first<{ id: number; month: string; status: string }>();
   if (!run) return c.json({ error: "not_found" }, 404);
+  await refreshUnpaidSlips(c.env.DB, run);
   const { results } = await c.env.DB
     .prepare(
       `SELECT p.*, e.name as employee_name, e.code as employee_code, e.job_title, e.department
@@ -432,10 +628,17 @@ hrRoutes.get("/payroll/:id", requirePerm("hr.payroll", "hr.view"), async (c) => 
 hrRoutes.post("/payroll", requirePerm("hr.payroll"), async (c) => {
   const b = await c.req.json<{ month: string; notes?: string }>();
   if (!/^\d{4}-\d{2}$/.test(b.month || "")) return c.json({ error: "invalid_month" }, 400);
-  const exists = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE month = ?").bind(b.month).first();
-  if (exists) return c.json({ error: "month_exists", id: exists.id }, 400);
-  const { expected } = fridayCount(b.month);
-  const { from, to } = monthBounds(b.month);
+  const exists = await c.env.DB.prepare("SELECT id, month, status FROM payroll_runs WHERE month = ?").bind(b.month).first<{
+    id: number;
+    month: string;
+    status: string;
+  }>();
+  if (exists) {
+    if (exists.status === "paid") return c.json({ error: "month_exists", id: exists.id }, 400);
+    await ensureSlipsForActiveEmployees(c.env.DB, exists);
+    await refreshUnpaidSlips(c.env.DB, exists);
+    return c.json({ id: exists.id });
+  }
   const ins = await c.env.DB
     .prepare("INSERT INTO payroll_runs (month, status, notes, created_by) VALUES (?, 'draft', ?, ?)")
     .bind(b.month, b.notes || null, c.get("user").id)
@@ -445,87 +648,121 @@ hrRoutes.post("/payroll", requirePerm("hr.payroll"), async (c) => {
     .prepare("SELECT * FROM employees WHERE deleted_at IS NULL AND status = 'active'")
     .all<Employee>();
   for (const e of emps) {
-    const stats = await c.env.DB
-      .prepare(
-        `SELECT COUNT(*) as present, SUM(late) as late, SUM(outside_seconds) as outside
-         FROM attendance_sessions WHERE employee_id = ? AND work_date BETWEEN ? AND ? AND status = 'closed'`,
-      )
-      .bind(e.id, from, to)
-      .first<{ present: number; late: number; outside: number }>();
-    const present = Number(stats?.present || 0);
-    const { results: leaves } = await c.env.DB
-      .prepare("SELECT type, date_from, date_to FROM leave_requests WHERE employee_id = ? AND status = 'approved' AND date_from <= ? AND date_to >= ?")
-      .bind(e.id, to, from)
-      .all<{ type: string; date_from: string; date_to: string }>();
-    let paidLeave = 0;
-    let unpaidLeave = 0;
-    for (const lv of leaves) {
-      const days = overlapDays(lv.date_from, lv.date_to, b.month);
-      if (lv.type === "unpaid") unpaidLeave += days;
-      else paidLeave += days;
-    }
-    const absent = Math.max(0, expected - present - paidLeave);
-    const daily = Number(e.basic_salary || 0) / 30;
-    const ot = await c.env.DB
-      .prepare("SELECT COALESCE(SUM(amount),0) as n FROM overtime_entries WHERE employee_id = ? AND date BETWEEN ? AND ?")
-      .bind(e.id, from, to)
-      .first<{ n: number }>();
-    const adv = await c.env.DB
-      .prepare("SELECT COALESCE(SUM(amount),0) as n FROM salary_advances WHERE employee_id = ? AND month = ? AND status = 'open'")
-      .bind(e.id, b.month)
-      .first<{ n: number }>();
-    const overtime = round2(Number(ot?.n || 0));
-    const advances = round2(Number(adv?.n || 0));
-    const deductions = round2(absent * daily + unpaidLeave * daily + advances);
-    const net = round2(Number(e.basic_salary || 0) + Number(e.allowances || 0) + overtime - deductions);
-    await c.env.DB
-      .prepare(
-        `INSERT INTO payslips (run_id, employee_id, basic, allowances, present_days, absent_days, late_days, outside_minutes, deductions, net, overtime, advances, leave_days, unpaid_days)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        runId,
-        e.id,
-        e.basic_salary,
-        e.allowances,
-        present,
-        absent,
-        Number(stats?.late || 0),
-        Math.round(Number(stats?.outside || 0) / 60),
-        deductions,
-        net,
-        overtime,
-        advances,
-        paidLeave,
-        unpaidLeave,
-      )
-      .run();
+    await insertPayslip(c.env.DB, runId, e, b.month);
   }
   await audit(c.env.DB, c.get("user"), "payroll_run", "payroll", runId, b.month);
   return c.json({ id: runId }, 201);
 });
 
+hrRoutes.post("/payroll/:id/deduct", requirePerm("hr.payroll"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<{ payslip_id?: number; amount?: number }>();
+  const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first<{ id: number; month: string; status: string }>();
+  if (!run) return c.json({ error: "not_found" }, 404);
+  if (run.status === "paid") return c.json({ error: "already_paid" }, 400);
+  const slipId = Number(b.payslip_id || 0);
+  const slip = await c.env.DB
+    .prepare("SELECT id, employee_id, paid_amount FROM payslips WHERE id = ? AND run_id = ?")
+    .bind(slipId, id)
+    .first<{ id: number; employee_id: number; paid_amount: number }>();
+  if (!slip) return c.json({ error: "not_found" }, 404);
+  if (Number(slip.paid_amount || 0) > 0.005) return c.json({ error: "already_paid" }, 400);
+  const emp = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ? AND deleted_at IS NULL").bind(slip.employee_id).first<Employee>();
+  if (!emp) return c.json({ error: "not_found" }, 404);
+  const calc = await computeEmployeeSlip(c.env.DB, emp, run.month, Number(b.amount || 0));
+  await c.env.DB
+    .prepare(
+      `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
+       deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=? WHERE id=?`,
+    )
+    .bind(
+      emp.basic_salary,
+      emp.allowances,
+      calc.present,
+      calc.absent,
+      calc.late,
+      calc.outsideMinutes,
+      calc.deductions,
+      calc.net,
+      calc.overtime,
+      calc.advances,
+      calc.paidLeave,
+      calc.unpaidLeave,
+      calc.manual,
+      slip.id,
+    )
+    .run();
+  await audit(c.env.DB, c.get("user"), "payroll_deduct", "payroll", id, `${emp.name}: ${calc.manual}`);
+  return c.json({ ok: true, net: calc.net, deductions: calc.deductions, manual_deduction: calc.manual });
+});
+
 hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {
   const id = Number(c.req.param("id"));
+  const b = await c.req.json<{ payouts?: { payslip_id: number; amount: number }[] }>().catch(() => ({ payouts: undefined as { payslip_id: number; amount: number }[] | undefined }));
   const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first<{ id: number; status: string; month: string }>();
   if (!run) return c.json({ error: "not_found" }, 404);
   if (run.status === "paid") return c.json({ error: "already_paid" }, 400);
-  const { results: slips } = await c.env.DB.prepare("SELECT * FROM payslips WHERE run_id = ?").bind(id).all<{ id: number; employee_id: number; net: number }>();
+  await refreshUnpaidSlips(c.env.DB, run);
+  const { results: slips } = await c.env.DB
+    .prepare("SELECT id, employee_id, net, advances, paid_amount, advances_settled, expense_id FROM payslips WHERE run_id = ?")
+    .bind(id)
+    .all<{ id: number; employee_id: number; net: number; advances: number; paid_amount: number; advances_settled: number; expense_id: number | null }>();
   const user = c.get("user");
   const cat = await c.env.DB.prepare("SELECT id FROM expense_categories WHERE name_en = 'Salaries' OR name_ar = 'مرتبات' LIMIT 1").first<{ id: number }>();
   const catId = cat?.id || 5;
-  for (const s of slips) {
-    const emp = await c.env.DB.prepare("SELECT name FROM employees WHERE id = ?").bind(s.employee_id).first<{ name: string }>();
-    const exp = await c.env.DB
-      .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id) VALUES (?, ?, ?, ?, ?)")
-      .bind(catId, s.net, todayIso(), `راتب ${run.month} — ${emp?.name || s.employee_id}`, user.id)
-      .run();
-    await c.env.DB.prepare("UPDATE payslips SET expense_id = ? WHERE id = ?").bind(exp.meta.last_row_id, s.id).run();
+  const requested = (b.payouts || []).length
+    ? b.payouts || []
+    : slips.map((s) => ({ payslip_id: s.id, amount: round2(Math.max(0, Number(s.net || 0) - Number(s.paid_amount || 0))) }));
+  try {
+    await c.env.DB.transaction(async (tx) => {
+      for (const p of requested) {
+        const s = slips.find((x) => x.id === p.payslip_id);
+        if (!s) throw new Error("invalid_amount");
+        const due = round2(Math.max(0, Number(s.net || 0) - Number(s.paid_amount || 0)));
+        const amt = round2(Number(p.amount || 0));
+        if (amt < -0.005 || amt > due + 0.005) throw new Error("invalid_amount");
+        const payNow = round2(Math.min(Math.max(0, amt), due));
+        if (payNow <= 0 && s.advances_settled) continue;
+        let expenseId = s.expense_id;
+        if (payNow > 0) {
+          const emp = await tx.prepare("SELECT name FROM employees WHERE id = ?").bind(s.employee_id).first<{ name: string }>();
+          const exp = await tx
+            .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id) VALUES (?, ?, ?, ?, ?)")
+            .bind(catId, payNow, todayIso(), `راتب ${run.month} — ${emp?.name || s.employee_id}`, user.id)
+            .run();
+          expenseId = exp.meta.last_row_id;
+          await postExpenseJournal(tx, {
+            id: expenseId,
+            amount: payNow,
+            date: todayIso(),
+            description: `راتب ${run.month} — ${emp?.name || s.employee_id}`,
+            userId: user.id,
+          });
+        }
+        if (!s.advances_settled) {
+          await settleAdvancesForEmployee(tx, s.employee_id, Number(s.advances || 0), id);
+          s.advances_settled = 1;
+        }
+        s.paid_amount = round2(Number(s.paid_amount || 0) + payNow);
+        await tx
+          .prepare("UPDATE payslips SET paid_amount = ?, expense_id = ?, advances_settled = 1 WHERE id = ?")
+          .bind(s.paid_amount, expenseId, s.id)
+          .run();
+      }
+      const allPaid = slips.every((s) => round2(Number(s.paid_amount || 0)) + 0.005 >= round2(Number(s.net || 0)));
+      const anyPaid = slips.some((s) => Number(s.paid_amount || 0) > 0.005);
+      const status = allPaid ? "paid" : anyPaid ? "partial" : "draft";
+      await tx
+        .prepare("UPDATE payroll_runs SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN datetime('now') ELSE paid_at END WHERE id = ?")
+        .bind(status, status, id)
+        .run();
+    });
+  } catch (err) {
+    const msg = String((err as Error)?.message || "");
+    if (msg === "invalid_amount") return c.json({ error: "invalid_amount" }, 400);
+    if (msg === "ledger" || msg === "unbalanced_journal") return c.json({ error: "ledger" }, 500);
+    throw err;
   }
-  await c.env.DB.prepare("UPDATE salary_advances SET status = 'deducted', payroll_run_id = ? WHERE month = ? AND status = 'open'").bind(id, run.month).run();
-  await c.env.DB.prepare("UPDATE payroll_runs SET status = 'paid', paid_at = datetime('now') WHERE id = ?").bind(id).run();
-  const total = round2(slips.reduce((s, x) => s + Number(x.net || 0), 0));
-  await tryLedger(() => postPayrollJournal(c.env.DB, { runId: id, month: run.month, total, userId: user.id }));
   await audit(c.env.DB, user, "payroll_pay", "payroll", id, `Pay ${run.month}`);
   return c.json({ ok: true });
 });
@@ -759,21 +996,34 @@ hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (
   const date = b.date || todayIso();
   const month = b.month || date.slice(0, 7);
   const r = await c.env.DB
-    .prepare("INSERT INTO salary_advances (employee_id, amount, date, month, status, notes, created_by) VALUES (?, ?, ?, ?, 'open', ?, ?)")
-    .bind(employeeId, round2(b.amount), date, month, b.notes || null, c.get("user").id)
+    .prepare("INSERT INTO salary_advances (employee_id, amount, remaining, date, month, status, notes, created_by) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)")
+    .bind(employeeId, round2(b.amount), round2(b.amount), date, month, b.notes || null, c.get("user").id)
     .run();
+  await refreshUnpaidSlipsForEmployee(c.env.DB, employeeId);
   await audit(c.env.DB, c.get("user"), "create_advance", "advance", r.meta.last_row_id, String(b.amount));
   await safeNotify(async () => {
     const emp = await c.env.DB.prepare("SELECT name FROM employees WHERE id = ?").bind(employeeId).first<{ name: string }>();
+    const amt = round2(b.amount);
     await notifyAdmins(c.env.DB, {
       type: "hr",
-      titleAr: "طلب HR جديد",
-      titleEn: "New HR request",
-      bodyAr: `الموظف ${emp?.name || ""} طلب سلفة جديدة`,
-      bodyEn: `${emp?.name || "An employee"} received a new advance`,
+      titleAr: "سلفة جديدة",
+      titleEn: "New advance",
+      bodyAr: `تم تسجيل سلفة بقيمة ${amt} للموظف ${emp?.name || ""}`,
+      bodyEn: `An advance of ${amt} was registered for ${emp?.name || "an employee"}`,
       entityType: "advance",
       entityId: Number(r.meta.last_row_id),
-      actionUrl: "/hr/employees",
+      actionUrl: "/hr/advances",
+    });
+    const uid = await userIdForEmployee(c.env.DB, employeeId);
+    await sendNotification(c.env.DB, uid, {
+      type: "hr",
+      titleAr: "سلفة على حسابك",
+      titleEn: "Advance on your account",
+      bodyAr: `تم تسجيل سلفة بقيمة ${amt} على حسابك`,
+      bodyEn: `An advance of ${amt} has been registered to your account`,
+      entityType: "advance",
+      entityId: Number(r.meta.last_row_id),
+      actionUrl: "/hr/advances",
     });
   });
   return c.json({ id: r.meta.last_row_id, employee_id: employeeId }, 201);
@@ -785,6 +1035,7 @@ hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll
   if (!row) return c.json({ error: "not_found" }, 404);
   if (row.status !== "open") return c.json({ error: "not_open" }, 400);
   await c.env.DB.prepare("UPDATE salary_advances SET status = 'cancelled' WHERE id = ?").bind(id).run();
+  await refreshUnpaidSlipsForEmployee(c.env.DB, row.employee_id);
   await safeNotify(async () => {
     const uid = await userIdForEmployee(c.env.DB, row.employee_id);
     await sendNotification(c.env.DB, uid, {

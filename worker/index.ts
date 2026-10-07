@@ -26,6 +26,7 @@ import { sahlRoutes } from "./routes/sahl";
 import { uploadRoutes, publicUploadRoutes } from "./routes/uploads";
 import { withLocationLabels } from "./lib/location-label";
 import { notificationRoutes } from "./routes/notifications";
+import { partnerRoutes } from "./routes/partners";
 
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -99,7 +100,14 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     debtors: db.prepare(`SELECT COALESCE(SUM(current_balance),0) as n FROM customers WHERE current_balance > 0`),
     pending: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE type='delivery' AND delivery_status IN ('pending_delivery','out_for_delivery','rescheduled','customer_unavailable') AND deleted_at IS NULL`),
     completed: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE type='delivery' AND delivery_status IN ('delivered','completed') AND deleted_at IS NULL`),
-    returned: db.prepare(`SELECT COUNT(*) as n FROM sales_invoices WHERE delivery_status IN ('fully_returned','partially_returned','customer_refused','returned_to_warehouse') AND deleted_at IS NULL`),
+    returned: db.prepare(
+      `SELECT COALESCE(SUM(sr.total),0) as n, COUNT(*) as c
+       FROM sales_returns sr
+       JOIN sales_invoices si ON si.id = sr.invoice_id
+       WHERE DATE(sr.date) BETWEEN ? AND ?${agentId != null ? " AND (si.sales_agent_id = ? OR si.delivery_agent_id = ?)" : ""}${
+         branchId != null ? " AND si.branch_id = ?" : ""
+       }`,
+    ).bind(from, to, ...(agentId != null ? [agentId, agentId] : []), ...(branchId != null ? [branchId] : [])),
     low: db.prepare(`SELECT id, sku, name_ar, name_en, current_stock, reserved_stock, min_stock FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) > 0 AND (current_stock - reserved_stock) <= CASE WHEN COALESCE(reorder_point,0) > COALESCE(min_stock,0) THEN reorder_point ELSE min_stock END LIMIT 10`),
     out: db.prepare(`SELECT id, sku, name_ar, name_en, current_stock FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) <= 0 LIMIT 10`),
     top: db.prepare(`SELECT sii.product_name, sii.sku, SUM(sii.quantity) as qty, SUM(sii.total) as total FROM sales_invoice_items sii JOIN sales_invoices si ON si.id = sii.invoice_id WHERE si.deleted_at IS NULL AND ${parkedInvoiceSql("si.status")} AND DATE(si.date) BETWEEN ? AND ?${sx.replaceAll("sales_agent_id", "si.sales_agent_id").replaceAll("delivery_agent_id", "si.delivery_agent_id").replaceAll("branch_id", "si.branch_id")} GROUP BY sii.product_id, sii.product_name, sii.sku ORDER BY qty DESC LIMIT 8`).bind(from, to, ...salesBinds),
@@ -149,7 +157,9 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     debtors: numAgg(first("debtors")?.n),
     pending_delivery: numAgg(first("pending")?.n),
     completed_delivery: numAgg(first("completed")?.n),
-    returned_orders: numAgg(first("returned")?.n),
+    returned_orders: numAgg(first("returned")?.c),
+    returns_total: numAgg(first("returned")?.n),
+    returns_count: numAgg(first("returned")?.c),
     low_stock: map.low,
     out_of_stock: map.out,
     top_products: map.top,
@@ -290,6 +300,7 @@ app.route("/api/uploads", uploadRoutes);
 app.route("/api/approvals", approvalRoutes);
 app.route("/api/import", importRoutes);
 app.route("/api", sahlRoutes);
+app.route("/api/partners", partnerRoutes);
 app.get("/api/branches", async (c) => {
   const { results } = await c.env.DB.prepare("SELECT * FROM branches WHERE active = 1 ORDER BY id").all();
   return c.json({ data: results });

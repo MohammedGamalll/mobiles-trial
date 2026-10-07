@@ -33,11 +33,11 @@ export function num(n: number | string | null | undefined, lang: "ar" | "en" = "
 
 export function statusClass(status?: string | null) {
   const s = (status || "").toLowerCase();
-  if (["completed", "delivered", "approved", "active", "in", "done", "commission_paid", "deducted", "posted", "collected", "in_stock", "paid"].includes(s)) return "badge bg-emerald-100 text-emerald-800";
+  if (["completed", "delivered", "approved", "active", "in", "done", "commission_paid", "deducted", "settled", "posted", "collected", "in_stock", "paid", "paid_full"].includes(s)) return "badge bg-emerald-100 text-emerald-800";
   if (["out_for_delivery"].includes(s)) return "badge bg-sky-100 text-sky-800";
   if (["damaged"].includes(s)) return "badge bg-slate-200 text-slate-800";
-  if (["pending_delivery", "pending_settlement", "rescheduled", "draft", "open", "submitted", "held", "quote", "order", "planned", "accrued", "pending", "partial", "unpaid_sale"].includes(s)) return "badge bg-amber-100 text-amber-800";
-  if (["rejected"].includes(s)) return "badge bg-rose-100 text-rose-800";
+  if (["pending_delivery", "pending_settlement", "rescheduled", "draft", "open", "submitted", "held", "quote", "order", "planned", "accrued", "pending", "partial"].includes(s)) return "badge bg-amber-100 text-amber-800";
+  if (["rejected", "unpaid_sale"].includes(s)) return "badge bg-rose-100 text-rose-800";
   if (["low"].includes(s)) return "badge bg-orange-100 text-orange-800";
   if (["cancelled", "fully_returned", "customer_refused", "returned_to_warehouse", "out", "void", "bounced"].includes(s)) return "badge bg-rose-100 text-rose-800";
   if (["partially_delivered", "partially_returned", "customer_unavailable"].includes(s)) return "badge bg-sky-100 text-sky-800";
@@ -61,6 +61,7 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     customer_unavailable: { ar: "العميل غير متاح", en: "Unavailable" },
     rescheduled: { ar: "إعادة جدولة", en: "Rescheduled" },
     cancelled: { ar: "ملغاة", en: "Cancelled" },
+    void: { ar: "ملغاة", en: "Void" },
     completed: { ar: "مكتملة", en: "Completed" },
     approved: { ar: "معتمدة", en: "Approved" },
     in: { ar: "متوفر", en: "In stock" },
@@ -91,6 +92,7 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     emergency: { ar: "طارئة", en: "Emergency" },
     pending: { ar: "قيد المراجعة", en: "Pending" },
     deducted: { ar: "مخصومة", en: "Deducted" },
+    settled: { ar: "مسوّاة", en: "Settled" },
     sale: { ar: "بيع", en: "Sale" },
     payment: { ar: "تحصيل", en: "Collection" },
     expense: { ar: "مصروف", en: "Expense" },
@@ -107,10 +109,13 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     due: { ar: "مستحق", en: "Due" },
     partial: { ar: "جزئي", en: "Partial" },
     unpaid_sale: { ar: "غير مدفوع", en: "Unpaid" },
+    paid_full: { ar: "مدفوعة بالكامل", en: "Paid in full" },
     asset: { ar: "أصل", en: "Asset" },
     liability: { ar: "التزام", en: "Liability" },
     equity: { ar: "حقوق ملكية", en: "Equity" },
     revenue: { ar: "إيراد", en: "Revenue" },
+    income: { ar: "إيراد", en: "Revenue" },
+    expense: { ar: "مصروف", en: "Expense" },
     warehouse: { ar: "مخزن", en: "Warehouse" },
     zone: { ar: "منطقة", en: "Zone" },
     aisle: { ar: "ممر", en: "Aisle" },
@@ -127,4 +132,15 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
   };
   if (!status) return "-";
   return map[status]?.[lang] || status;
+}
+
+export function invoicePayStatus(row: { status?: string | null; total?: number; paid?: number; remaining?: number }) {
+  const s = (row.status || "").toLowerCase();
+  if (["cancelled", "void", "rejected", "held", "quote", "order"].includes(s)) return s;
+  const remaining = Number(row.remaining || 0);
+  const paid = Number(row.paid || 0);
+  const total = Number(row.total || 0);
+  if (remaining <= 0.005 && (paid > 0.005 || total > 0.005)) return "paid_full";
+  if (paid > 0.005 && remaining > 0.005) return "partial";
+  return "unpaid_sale";
 }

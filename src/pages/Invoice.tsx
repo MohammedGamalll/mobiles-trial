@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { useConfirm } from "../components/Confirm";
 import { rememberResumeInvoice } from "../hooks/usePOSLogic";
@@ -19,8 +19,8 @@ export default function Invoice() {
   const [opened, setOpened] = useState(false);
   const [retOpen, setRetOpen] = useState(false);
   const { confirmDelete, dialog } = useConfirm();
-  const [payAmt, setPayAmt] = useState(0);
   const [payOpen, setPayOpen] = useState(false);
+  const [collectOpen, setCollectOpen] = useState(false);
 
   async function reload() {
     const r = await get<{ data: any }>(`/api/invoices/${id}`);
@@ -75,7 +75,7 @@ export default function Invoice() {
           ) : null}
           {can("sales.cancel") && !["cancelled", "fully_returned"].includes(inv.status) ? (
             <Btn kind="danger" onClick={() => confirmDelete(inv.number, async () => { await post(`/api/invoices/${id}/cancel`, {}); reload(); })}>
-              {tr("void")}
+              {tr("cancel")}
             </Btn>
           ) : null}
         </div>
@@ -83,6 +83,7 @@ export default function Invoice() {
 
       <div className="print-sheet rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
         <InvoicePrint inv={inv} screen />
+        {msg && !waOpen ? <ErrorNote message={msg} /> : null}
         {inv.customer_whatsapp ? (
           <div className="no-print mt-3 text-sm">
             <a className="font-bold text-emerald-700" href={`https://wa.me/${String(inv.customer_whatsapp).replace(/\D/g, "").replace(/^0/, "20")}`} target="_blank" rel="noreferrer">
@@ -92,12 +93,9 @@ export default function Invoice() {
         ) : null}
       </div>
 
-      {can("payments.create") && inv.remaining > 0 ? (
+      {can("payments.create") && Number(inv.remaining) > 0 ? (
         <div className="no-print flex items-end gap-2 rounded-2xl bg-white p-4">
-          <Field label={tr("payments")}>
-            <input className={inputCls} type="number" value={payAmt} onChange={(e) => setPayAmt(Number(e.target.value))} />
-          </Field>
-          <Btn onClick={async () => { await post(`/api/invoices/${id}/pay`, { amount: payAmt, method: "cash" }); setPayAmt(0); reload(); }}>{tr("save")}</Btn>
+          <Btn onClick={() => setCollectOpen(true)}>{tr("payments")}</Btn>
         </div>
       ) : null}
 
@@ -141,9 +139,52 @@ export default function Invoice() {
         <ReturnForm inv={inv} onDone={() => { setRetOpen(false); reload(); }} onExchange={() => { window.location.href = "/pos"; }} />
       </Modal>
       <PaymentModal
+        open={collectOpen}
+        title={tr("paymentModal")}
+        due={Number(inv.remaining) || 0}
+        summary={{
+          number: inv.number,
+          party: inv.customer_name,
+          date: inv.date,
+          total: inv.subtotal ?? inv.total,
+          discount: inv.discount,
+          returned: inv.returned_total,
+          net: inv.total,
+          paid: inv.paid,
+          remaining: inv.remaining,
+          surplus: inv.wallet_surplus,
+          surplusLabel: tr("surplus"),
+        }}
+        onClose={() => setCollectOpen(false)}
+        onSubmit={async (r) => {
+          try {
+            if (r.unpaid || r.paid <= 0) {
+              setCollectOpen(false);
+              return;
+            }
+            await post(`/api/invoices/${id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            setCollectOpen(false);
+            reload();
+          } catch (e) {
+            setMsg(apiMessage(tr, e));
+          }
+        }}
+      />
+      <PaymentModal
         open={payOpen}
         title={tr("paymentModal")}
         due={Number(inv.total) || 0}
+        summary={{
+          number: inv.number,
+          party: inv.customer_name,
+          date: inv.date,
+          total: inv.subtotal ?? inv.total,
+          discount: inv.discount,
+          net: inv.total,
+          paid: inv.paid,
+          remaining: inv.remaining ?? inv.total,
+          surplusLabel: tr("surplus"),
+        }}
         onClose={() => setPayOpen(false)}
         onSubmit={async (r) => {
           try {
@@ -165,7 +206,7 @@ export default function Invoice() {
   );
 }
 
-function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () => void; onExchange?: () => void }) {
+export function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () => void; onExchange?: () => void }) {
   const { tr } = useApp();
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");

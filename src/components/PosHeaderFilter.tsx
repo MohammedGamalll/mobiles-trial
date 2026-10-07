@@ -14,7 +14,9 @@ export function productFilterValue(
   const t = lang === "ar" ? dict.ar : dict.en;
   const name = (lang === "ar" ? p.name_ar : p.name_en) || p.name_ar || "";
   if (col === "name") return name;
-  if (col === "category") return String(p.quality || "").trim();
+  if (col === "category") {
+    return String(p.quality || (lang === "ar" ? p.category_ar : p.category_en) || p.category_ar || "").trim();
+  }
   if (col === "sku") return [p.sku, p.barcode].filter(Boolean).join(" / ");
   if (col === "warehouse") return p.warehouse || p.location_name || "";
   if (col === "box") return p.box || "";

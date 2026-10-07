@@ -4,6 +4,7 @@ import {
   Calculator,
   ClipboardCheck,
   ClipboardList,
+  Recycle,
   FolderOpen,
   HandCoins,
   Landmark,
@@ -43,7 +44,7 @@ const start: Tile[] = [
   { to: "/settings", key: "easySetup", icon: ClipboardList, color: "#29b6f6", perm: "settings.view" },
   { to: "/products", key: "easyAddItems", icon: ClipboardList, color: "#29b6f6", perm: "products.view" },
   { to: "/customers", key: "easyAddAccounts", icon: Users, color: "#fbc02d", perm: "customers.view" },
-  { to: "/sales", key: "easyDaily", icon: Receipt, color: "#1565c0", perm: "sales.view" },
+  { to: "/reports/daily-movement", key: "easyDaily", icon: Receipt, color: "#1565c0", perm: "reports.view" },
   { to: "/reports", key: "easySalesAnalysis", icon: BarChart3, color: "#0d47a1", perm: "reports.view" },
 ];
 
@@ -57,6 +58,7 @@ const docs: Tile[] = [
   { to: "/purchases", key: "easyPurchaseReturn", icon: Package, color: "#8e24aa", perm: "purchases.view" },
   { to: "/payments", key: "easyPayIn", icon: Wallet, color: "#26a69a", perm: "payments.view" },
   { to: "/transfers", key: "easyTransfer", icon: Truck, color: "#00897b", perm: "transfers.view" },
+  { to: "/wastage", key: "wastage", icon: Recycle, color: "#c62828", perm: "stocktake.view" },
   { to: "/inventory", key: "easyAdjust", icon: SlidersHorizontal, color: "#26a69a", perm: "inventory.view" },
 ];
 

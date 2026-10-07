@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { audit, paginate, todayIso, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { postExpenseJournal, reverseJournal, tryLedger } from "../lib/ledger";
-import { applyDate, applyEq, applyRange, applySearch, listParams } from "../lib/filters";
+import { applyDate, applyEq, applyRange, applySearch, listParams, sqlText } from "../lib/filters";
 
 export const financeRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -114,7 +114,7 @@ financeRoutes.get("/payments", requirePerm("payments.view"), async (c) => {
   const { page, pageSize, offset } = paginate(url);
   const where = ["p.voided_at IS NULL"];
   const params: (string | number)[] = [];
-  applySearch(where, params, p.q, ["IFNULL(si.number,'')", "IFNULL(c.name,'')", "IFNULL(c.phone,'')", "CAST(p.id AS TEXT)"]);
+  applySearch(where, params, p.q, ["IFNULL(si.number,'')", "IFNULL(c.name,'')", "IFNULL(c.phone,'')", sqlText("p.id")]);
   applyEq(where, params, "p.customer_id", p.customer_id, true);
   applyEq(where, params, "p.method", p.payment_method || p.method);
   applyEq(where, params, "p.created_by", p.created_by, true);

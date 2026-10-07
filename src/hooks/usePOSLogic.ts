@@ -5,6 +5,7 @@ import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { playSound } from "../lib/sounds";
 import { useProductSuggest } from "../components/ProductSuggest";
+import { parsePageSize } from "../components/PageSizeControl";
 
 export const OPEN_HELD_STATUSES = ["held", "quote", "order"] as const;
 
@@ -168,7 +169,18 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [catalogError, setCatalogError] = useState("");
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogTotal, setCatalogTotal] = useState(0);
-  const catalogPageSize = 80;
+  const [catalogPageSize, setCatalogPageSizeState] = useState(() => {
+    try {
+      return parsePageSize(localStorage.getItem("motamayez_pos_page_size"), 50);
+    } catch {
+      return 50;
+    }
+  });
+  function setCatalogPageSize(n: number) {
+    setCatalogPageSizeState(n);
+    setCatalogPage(1);
+    try { localStorage.setItem("motamayez_pos_page_size", String(n)); } catch { /* ignore */ }
+  }
   const heldFromUrl = Number(params.get("held") || 0) || 0;
   const [resumeInvoiceId, setResumeInvoiceId] = useState<number | null>(heldFromUrl || null);
   const resumeRef = useRef<number | null>(heldFromUrl || null);
@@ -668,10 +680,16 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       setErr(tr("errCustomerRequired"));
       return;
     }
-    setBusy(true);
-    setErr("");
     const paidAmt = opts?.paid ?? paid;
     const asQuote = !!(opts?.quote || quoteMode);
+    const cashOut = splitPaid || paidAmt || 0;
+    if (!opts?.hold && !asQuote && !opts?.order && cashOut > total + 0.001 && !customer && type !== "delivery") {
+      playSound("err");
+      setErr(tr("errCustomerRequired"));
+      return;
+    }
+    setBusy(true);
+    setErr("");
     const resumeId = resumeReadyRef.current ? (Number(resumeRef.current || resumeInvoiceId || 0) || 0) : 0;
     try {
       const body = {
@@ -695,6 +713,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         location_id: warehouseId || null,
         extra_amount: extraAmount || 0,
         paid: payMethod === "credit" || type === "delivery" ? (splitPaid || paidAmt) : splitPaid || paidAmt || total,
+        surplus_mode: "wallet" as const,
         payments: pays.filter((p) => p.amount > 0),
         tax_rate: taxOn ? taxRate : 0,
         price_list_id: listId || customer?.price_list_id || null,
@@ -937,12 +956,13 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     held, heldOpenCount: held.filter((h) => isOpenHeld(h.status)).length, heldOpen, setHeldOpen, heldTab, setHeldTab, todayInv, todayStats,
     doneOpen, setDoneOpen, doneInv, waOpen, setWaOpen, waPreview, waMsg, setWaMsg,
     brandFilter, setBrandFilter, catFilter, setCatFilter, picked, setPicked, clock,
+    listId, setListId,
     err, setErr, busy, resuming, custOpen, setCustOpen,
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind, accountCode, setAccountCode, supplier, setSupplier,
     forceGoods, setForceGoods, showGoods, partyHits, applyParty, saveAccount, addPicked,
-    catalogLoading, catalogError, catalogPage, setCatalogPage, catalogTotal, catalogPageSize,
+    catalogLoading, catalogError, catalogPage, setCatalogPage, catalogTotal, catalogPageSize, setCatalogPageSize,
     reloadCatalog: () => setStockTick((n) => n + 1),
     searchRef, customerRef, qtyRef, priceRef, extraRef, custBlurRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,

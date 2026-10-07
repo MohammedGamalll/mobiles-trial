@@ -4,7 +4,7 @@ import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { ListGate } from "../components/ListGate";
 import { useLiveList } from "../hooks/useLiveList";
-import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel } from "../lib/format";
+import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel, invoicePayStatus } from "../lib/format";
 import { mergeWarehouseCards } from "../lib/warehouses";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls, printPage } from "../components/ui";
 import { apiMessage, useActionError } from "../lib/errors";
@@ -21,14 +21,23 @@ import {
   applyPosHeaderFilters,
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
-import type { Product } from "../hooks/usePOSLogic";
+import { rememberResumeInvoice, type Product } from "../hooks/usePOSLogic";
+import { ReturnForm } from "./Invoice";
 
 export function SalesList() {
-  const { tr, lang, can, warehouseId } = useApp();
+  const { tr, lang, can, warehouseId, settings } = useApp();
   const f = useListQuery("sales", { period: "today" });
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
+  const [retInv, setRetInv] = useState<any>(null);
+  const [payRow, setPayRow] = useState<any>(null);
+  const [finalizeRow, setFinalizeRow] = useState<any>(null);
+  const [wa, setWa] = useState<any>(null);
+  const [waMsg, setWaMsg] = useState("");
+  const [waOpened, setWaOpened] = useState(false);
   const { confirmDelete, dialog } = useConfirm();
+  const act = useActionError();
+  const waEnabled = settings.whatsapp_enabled !== "0";
   async function load() {
     const p = new URLSearchParams(f.qs);
     p.set("pageSize", "50");
@@ -47,8 +56,30 @@ export function SalesList() {
     setTotals(r.totals || {});
   }
   const list = useLiveList(load, [f.qs, warehouseId]);
+  const parked = (status: string) => ["held", "quote", "order"].includes(status);
+  async function openReturn(id: number) {
+    try {
+      act.clear();
+      const r = await get<{ data: any }>(`/api/invoices/${id}`);
+      setRetInv(r.data);
+    } catch (e) {
+      act.fail(e);
+    }
+  }
+  async function previewWa(id: number) {
+    try {
+      act.clear();
+      const r = await get<any>(`/api/invoices/${id}/whatsapp?type=invoice_created&lang=${lang}`);
+      setWa({ ...r, invoice_id: id });
+      setWaMsg(r.message);
+      setWaOpened(false);
+    } catch (e) {
+      act.fail(e);
+    }
+  }
   return (
     <Page title={tr("sales")} action={<ExportBtn kind="invoices" query={f.qs} />}>
+      <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 md:grid-cols-4">
         <Stat label={tr("invoicesCount")} value={String(totals.count || 0)} />
         <Stat label={tr("total")} value={money(totals.total, lang)} />
@@ -86,31 +117,144 @@ export function SalesList() {
           <ColFilterHint label={tr("customer")} hint={f.values.customer_id ? (rows.find((r) => String(r.customer_id) === String(f.values.customer_id))?.customer_name || rows[0]?.customer_name || String(f.values.customer_id)) : ""} />,
           tr("date"),
           tr("total"),
+          tr("paid"),
           tr("remaining"),
-          <ColFilterHint label={tr("status")} hint={f.values.status ? statusLabel(f.values.status, lang) : ""} />,
+          <ColFilterHint label={tr("payStatus")} hint={f.values.pay_status ? (f.values.pay_status === "paid" ? tr("paidFull") : f.values.pay_status === "partial" ? tr("partialStatus") : tr("unpaidStatus")) : ""} />,
           "",
         ]}
         rows={rows.map((r) => {
-          const payStatus = Number(r.remaining) > 0 && Number(r.paid) <= 0 && r.status === "partial" ? "unpaid_sale" : r.status;
+          const payStatus = invoicePayStatus(r);
+          const canReturn = can("returns.create") && !["cancelled", "fully_returned", "held", "quote", "order"].includes(r.status);
+          const canPay = can("payments.create") && Number(r.remaining) > 0;
+          const canResume = parked(r.status) && can("sales.create");
+          const canFinalize = parked(r.status) && can("sales.create");
+          const canWa = waEnabled && can("whatsapp.send");
+          const canVoid = can("sales.cancel") && !["cancelled", "fully_returned"].includes(r.status);
           return [
           <Link className="font-bold text-cyan-800" to={`/sales/${r.id}`}>{r.number}</Link>,
           r.customer_name,
           r.date,
           money(r.total, lang),
+          money(r.paid, lang),
           money(r.remaining, lang),
           <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
-          <div className="flex flex-wrap items-center gap-2">
-            <ActionBtns
-              canEdit={can("sales.edit")}
-              onEdit={() => { window.location.href = `/sales/${r.id}`; }}
-              canDelete={can("sales.cancel") && r.status !== "cancelled"}
-              onDelete={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); list.reload(); })}
-            />
+          <div className="flex flex-wrap items-center gap-1.5">
+            {canReturn ? <Btn kind="ghost" className="!px-2.5 !py-1 text-xs" onClick={() => openReturn(r.id)}>{tr("returnCreate")}</Btn> : null}
+            {canPay ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => setPayRow(r)}>{tr("payments")}</Btn> : null}
+            {canResume ? <Btn kind="primary" className="!px-2.5 !py-1 text-xs" onClick={() => { rememberResumeInvoice(r.id); window.location.href = `/pos?held=${r.id}`; }}>{tr("resumeHeld")}</Btn> : null}
+            {canFinalize ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={async () => {
+              if (r.status === "quote") { setFinalizeRow(r); return; }
+              try { act.clear(); await post(`/api/invoices/${r.id}/finalize`, {}); playSound("done"); list.reload(); } catch (e) { act.fail(e); }
+            }}>{tr("finalizeHeld")}</Btn> : null}
+            {canWa ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => previewWa(r.id)}>{tr("whatsapp")}</Btn> : null}
+            {canVoid ? <Btn kind="danger" className="!px-2.5 !py-1 text-xs" onClick={() => confirmDelete(r.number, async () => { await post(`/api/invoices/${r.id}/cancel`, {}); list.reload(); })}>{tr("cancel")}</Btn> : null}
           </div>,
           ];
         })}
       />
       </ListGate>
+      <Modal open={!!retInv} title={tr("returnCreate")} onClose={() => setRetInv(null)} wide>
+        {retInv ? <ReturnForm inv={retInv} onDone={() => { setRetInv(null); list.reload(); }} onExchange={() => { window.location.href = "/pos"; }} /> : null}
+      </Modal>
+      <PaymentModal
+        open={!!payRow}
+        title={tr("paymentModal")}
+        due={Number(payRow?.remaining) || 0}
+        summary={payRow ? {
+          number: payRow.number,
+          party: payRow.customer_name,
+          date: payRow.date,
+          total: payRow.subtotal ?? payRow.total,
+          discount: payRow.discount,
+          returned: payRow.returned_total,
+          net: payRow.total,
+          paid: payRow.paid,
+          remaining: payRow.remaining,
+          surplus: payRow.wallet_surplus,
+          surplusLabel: tr("surplus"),
+        } : undefined}
+        onClose={() => setPayRow(null)}
+        onSubmit={async (r) => {
+          try {
+            if (r.unpaid || r.paid <= 0) {
+              setPayRow(null);
+              return;
+            }
+            await post(`/api/invoices/${payRow.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            setPayRow(null);
+            list.reload();
+          } catch (e) {
+            act.fail(e);
+          }
+        }}
+      />
+      <PaymentModal
+        open={!!finalizeRow}
+        title={tr("paymentModal")}
+        due={Number(finalizeRow?.total) || 0}
+        summary={finalizeRow ? {
+          number: finalizeRow.number,
+          party: finalizeRow.customer_name,
+          date: finalizeRow.date,
+          total: finalizeRow.subtotal ?? finalizeRow.total,
+          discount: finalizeRow.discount,
+          net: finalizeRow.total,
+          paid: finalizeRow.paid,
+          remaining: finalizeRow.remaining ?? finalizeRow.total,
+          surplusLabel: tr("surplus"),
+        } : undefined}
+        onClose={() => setFinalizeRow(null)}
+        onSubmit={async (r) => {
+          try {
+            await post(`/api/invoices/${finalizeRow.id}/finalize`, {
+              paid: r.paid,
+              unpaid: r.unpaid,
+              payment_method: r.unpaid ? "credit" : "cash",
+              surplus_mode: r.surplus_mode,
+            });
+            setFinalizeRow(null);
+            list.reload();
+          } catch (e) {
+            act.fail(e);
+          }
+        }}
+      />
+      <Modal open={!!wa} title={tr("previewWhatsapp")} onClose={() => { setWa(null); setWaOpened(false); }} wide>
+        <textarea className={`${inputCls} min-h-64`} value={waMsg} onChange={(e) => setWaMsg(e.target.value)} />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Btn kind="ghost" onClick={async () => { await navigator.clipboard.writeText(waMsg); }}>{tr("copy")}</Btn>
+          <Btn
+            onClick={async () => {
+              const phone = wa?.phone;
+              if (!phone) return;
+              const link = `https://wa.me/${String(phone).replace(/\D/g, "").replace(/^0/, "20")}?text=${encodeURIComponent(waMsg)}`;
+              await post(`/api/invoices/${wa.invoice_id || wa.id}/whatsapp/opened`, { type: wa?.type, message: waMsg, phone });
+              window.open(link, "_blank");
+              setWaOpened(true);
+            }}
+          >
+            {tr("openWhatsapp")}
+          </Btn>
+          <Btn kind="ghost" onClick={() => { setWa(null); setWaOpened(false); }}>{tr("cancel")}</Btn>
+        </div>
+        {waOpened ? (
+          <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm">
+            <div className="font-bold">{tr("waOpened")}</div>
+            <Btn
+              className="mt-2"
+              kind="soft"
+              onClick={async () => {
+                await post(`/api/invoices/${wa.invoice_id || wa.id}/whatsapp/mark-sent`, { type: wa?.type, message: waMsg, phone: wa?.phone });
+                setWa(null);
+                setWaOpened(false);
+                list.reload();
+              }}
+            >
+              {tr("markSent")}
+            </Btn>
+          </div>
+        ) : null}
+      </Modal>
       {dialog}
     </Page>
   );
@@ -425,6 +569,8 @@ export function PurchasesPage() {
   const f = useListQuery("purchases");
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
+  const [retInv, setRetInv] = useState<any>(null);
+  const [payRow, setPayRow] = useState<any>(null);
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
@@ -433,18 +579,27 @@ export function PurchasesPage() {
     setTotals(r.totals || {});
   }
   const list = useLiveList(load, [f.qs]);
+  async function openReturn(id: number) {
+    try {
+      act.clear();
+      const r = await get<{ data: any }>(`/api/inventory/purchases/${id}`);
+      setRetInv(r.data);
+    } catch (e) {
+      act.fail(e);
+    }
+  }
   return (
     <Page title={tr("purchases")} action={<><ExportBtn kind="purchases" query={f.qs} />{can("purchases.create") ? <Btn onClick={() => nav("/purchases/new")}>{tr("newPurchase")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
         <Stat label={tr("purchases")} value={String(totals.count || rows.length)} />
         <Stat label={tr("total")} value={money(totals.total, lang)} />
-        <Stat label={tr("purchaseDrafts")} value={String(rows.filter((r) => r.status === "draft").length)} />
-        <Stat label={tr("purchaseApproved")} value={String(rows.filter((r) => r.status === "approved").length)} />
+        <Stat label={tr("paidAmount")} value={money(totals.paid, lang)} accent="emerald" />
+        <Stat label={tr("remainingAmount")} value={money(totals.remaining, lang)} accent="rose" />
       </div>
       <SmartFilter f={f} fields={[
         { key: "supplier_id", label: "suppliers", type: "select", quick: true, lookup: "suppliers" },
-        { key: "status", label: "status", type: "select", quick: true, options: ["draft", "submitted", "approved", "rejected"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+        { key: "status", label: "status", type: "select", quick: true, options: ["approved", "partially_returned", "fully_returned", "rejected", "void"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
         { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
         { key: "model_id", label: "model", type: "select", lookup: "models" },
         { key: "product_id", label: "products", type: "async", asyncPath: "/api/products", asyncLabel: (r) => `${r.sku} — ${r.name_ar}` },
@@ -452,22 +607,65 @@ export function PurchasesPage() {
       ]} />
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
-        cols={[tr("invoiceNo"), tr("supplier"), tr("date"), tr("total"), tr("status"), ""]}
-        rows={rows.map((r) => [
-          r.number,
+        cols={[tr("invoiceNo"), tr("supplier"), tr("date"), tr("total"), tr("paid"), tr("remaining"), tr("payStatus"), ""]}
+        rows={rows.map((r) => {
+          const approved = r.status === "approved" || r.status === "partially_returned";
+          const canReturn = approved && (can("purchases.return") || can("purchases.approve"));
+          const canPay = approved && Number(r.remaining) > 0 && (can("payments.create") || can("purchases.approve"));
+          const canVoid = can("purchases.approve") && r.status !== "void";
+          const payStatus = invoicePayStatus(r);
+          return [
+          <Link className="font-bold text-cyan-800" to={`/purchases/${r.id}`}>{r.number}</Link>,
           r.supplier_name,
           r.date,
           money(r.total, lang),
-          <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
-          <span className="flex flex-wrap gap-2">
-            <Link className="font-bold text-cyan-700" to={`/purchases/${r.id}`}>{tr("view")}</Link>
-            {r.status === "draft" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/submit`, {}); playSound("done"); list.reload(); } catch (e) { act.fail(e); } }}>{tr("submitPurchase")}</button> : null}
-            {r.status === "draft" || r.status === "submitted" ? <button className="font-bold text-cyan-700" onClick={async () => { try { act.clear(); await post(`/api/inventory/purchases/${r.id}/approve`, {}); playSound("done"); list.reload(); } catch (e) { act.fail(e); } }}>{tr("approve")}</button> : null}
-            {r.status === "submitted" || r.status === "draft" ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/purchases/${r.id}/void`, {}); list.reload(); })}>{tr("delete")}</button> : null}
+          money(r.paid, lang),
+          money(r.remaining, lang),
+          <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
+          <span className="flex flex-wrap gap-1.5">
+            {canReturn ? <Btn kind="ghost" className="!px-2.5 !py-1 text-xs" onClick={() => openReturn(r.id)}>{tr("purchaseReturn")}</Btn> : null}
+            {canPay ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => setPayRow(r)}>{tr("payPurchase")}</Btn> : null}
+            {canVoid ? <Btn kind="danger" className="!px-2.5 !py-1 text-xs" onClick={() => confirmDelete(r.number, async () => { await post(`/api/inventory/purchases/${r.id}/void`, {}); list.reload(); })}>{tr("cancel")}</Btn> : null}
           </span>,
-        ])}
+          ];
+        })}
       />
       </ListGate>
+      <Modal open={!!retInv} title={tr("purchaseReturn")} onClose={() => setRetInv(null)} wide>
+        {retInv ? <PurchaseReturnForm inv={retInv} onDone={() => { setRetInv(null); list.reload(); }} /> : null}
+      </Modal>
+      <PaymentModal
+        open={!!payRow}
+        title={tr("payPurchase")}
+        due={Number(payRow?.remaining) || 0}
+        summary={payRow ? {
+          number: payRow.number,
+          party: payRow.supplier_name,
+          date: payRow.date,
+          total: payRow.subtotal ?? payRow.total,
+          discount: payRow.discount,
+          returned: payRow.returned_total,
+          net: payRow.total,
+          paid: payRow.paid,
+          remaining: payRow.remaining,
+          surplus: payRow.wallet_surplus,
+          surplusLabel: tr("surplusOnHim"),
+        } : undefined}
+        onClose={() => setPayRow(null)}
+        onSubmit={async (r) => {
+          try {
+            if (r.unpaid || r.paid <= 0) {
+              setPayRow(null);
+              return;
+            }
+            await post(`/api/inventory/purchases/${payRow.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            setPayRow(null);
+            list.reload();
+          } catch (e) {
+            act.fail(e);
+          }
+        }}
+      />
       {dialog}
     </Page>
   );
@@ -548,52 +746,135 @@ export function PurchaseDetail() {
   const { id } = useParams();
   const { tr, lang, can } = useApp();
   const [d, setD] = useState<any>(null);
-  const [serials, setSerials] = useState("");
-  const [pid, setPid] = useState("");
+  const [retOpen, setRetOpen] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
   const act = useActionError();
-  useEffect(() => { get<{ data: any }>(`/api/inventory/purchases/${id}`).then((r) => setD(r.data)); }, [id]);
-  if (!d) return <div>{tr("loading")}</div>;
+  async function load() {
+    const r = await get<{ data: any }>(`/api/inventory/purchases/${id}`);
+    setD(r.data);
+  }
+  useEffect(() => { load(); }, [id]);
+  if (!d) return <PageLoading />;
+  const gross = Number(d.subtotal) || (d.items || []).reduce((s: number, i: any) => s + Number(i.quantity || 0) * Number(i.unit_cost || 0), 0);
+  const returned = Number(d.returned_total || 0);
+  const surplus = Number(d.wallet_surplus || 0);
+  const approved = d.status === "approved" || d.status === "partially_returned";
   return (
     <Page title={d.number}>
-      <div className="mb-3">{d.supplier_name} · {d.date} · {money(d.total, lang)}</div>
-      <Table cols={[tr("sku"), tr("qty"), tr("unitCost"), tr("total")]} rows={(d.items || []).map((i: any) => [i.sku, i.quantity, money(i.unit_cost, lang), money(i.total, lang)])} />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>{d.supplier_name} · {d.date} · {statusLabel(d.status, lang)}</div>
+        <div className="flex flex-wrap gap-2">
+          {approved && (can("purchases.return") || can("purchases.approve")) ? <Btn kind="ghost" onClick={() => setRetOpen(true)}>{tr("purchaseReturn")}</Btn> : null}
+          {approved && Number(d.remaining) > 0 && (can("payments.create") || can("purchases.approve")) ? <Btn onClick={() => setPayOpen(true)}>{tr("payPurchase")}</Btn> : null}
+        </div>
+      </div>
+      <ErrorNote message={act.message} />
+      <div className="mb-3 grid gap-3 md:grid-cols-3 lg:grid-cols-4">
+        <Stat label={tr("total")} value={money(gross, lang)} />
+        <Stat label={tr("discount")} value={money(d.discount, lang)} />
+        <Stat label={tr("returnedAmount")} value={money(returned, lang)} accent="rose" />
+        <Stat label={tr("netTotal")} value={money(d.total, lang)} accent="indigo" />
+        <Stat label={tr("paid")} value={money(d.paid, lang)} accent="emerald" />
+        <Stat label={tr("remaining")} value={money(d.remaining, lang)} accent="rose" />
+        {surplus > 0 ? <Stat label={tr("surplusOnHim")} value={money(surplus, lang)} accent="amber" /> : null}
+      </div>
+      <Table cols={[tr("sku"), tr("qty"), tr("unitCost"), tr("returnedAmount"), tr("total")]} rows={(d.items || []).map((i: any) => [i.sku, i.quantity, money(i.unit_cost, lang), i.returned_qty || 0, money(i.total, lang)])} />
       <div className="print-only label-sheet">
         {(d.items || []).map((i: any) => (
           <div key={i.id} className="mb-2">{i.sku} × {i.quantity}</div>
         ))}
       </div>
-      {d.status === "approved" && can("serials.manage") ? (
-        <div className="no-print mt-4 grid gap-2 md:grid-cols-2">
-          <Field label={tr("products")}>
-            <select className={inputCls} value={pid} onChange={(e) => setPid(e.target.value)}>
-              <option value="">-</option>
-              {(d.items || []).map((i: any) => <option key={i.product_id} value={i.product_id}>{i.sku}</option>)}
-            </select>
-          </Field>
-          <Field label={tr("serials")}><textarea className={inputCls} value={serials} onChange={(e) => setSerials(e.target.value)} /></Field>
-          <ErrorNote message={act.message} />
-          <Btn onClick={async () => {
-            if (!pid) {
-              act.fail(undefined, "errProductRequired");
+      <Modal open={retOpen} title={tr("purchaseReturn")} onClose={() => setRetOpen(false)} wide>
+        <PurchaseReturnForm inv={d} onDone={() => { setRetOpen(false); load(); }} />
+      </Modal>
+      <PaymentModal
+        open={payOpen}
+        title={tr("payPurchase")}
+        due={Number(d.remaining) || 0}
+        summary={{
+          number: d.number,
+          party: d.supplier_name,
+          date: d.date,
+          total: d.subtotal ?? gross,
+          discount: d.discount,
+          returned,
+          net: d.total,
+          paid: d.paid,
+          remaining: d.remaining,
+          surplus,
+          surplusLabel: tr("surplusOnHim"),
+        }}
+        onClose={() => setPayOpen(false)}
+        onSubmit={async (r) => {
+          try {
+            if (r.unpaid || r.paid <= 0) {
+              setPayOpen(false);
               return;
             }
-            const list = serials.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-            if (!list.length) {
-              act.fail(undefined, "errSerialsRequired");
-              return;
-            }
-            try {
-              await post("/api/serials", { product_id: Number(pid), purchase_id: d.id, serials: list });
-              playSound("done");
-              act.clear();
-              setSerials("");
-            } catch (e) {
-              act.fail(e);
-            }
-          }}>{tr("save")}</Btn>
-        </div>
-      ) : null}
+            await post(`/api/inventory/purchases/${d.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            setPayOpen(false);
+            load();
+          } catch (e) {
+            act.fail(e);
+          }
+        }}
+      />
     </Page>
+  );
+}
+
+function PurchaseReturnForm({ inv, onDone }: { inv: any; onDone: () => void }) {
+  const { tr, lang } = useApp();
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
+  const [items, setItems] = useState(
+    (inv.items || [])
+      .map((i: any) => ({
+        purchase_item_id: i.id,
+        qty: 0,
+        max: Math.max(0, Number(i.quantity || 0) - Number(i.returned_qty || 0)),
+        name: (lang === "ar" ? i.name_ar : i.name_en) || i.name_ar || i.sku,
+      }))
+      .filter((x: any) => x.max > 0),
+  );
+  async function send() {
+    const chosen = items.filter((x: any) => x.qty > 0);
+    if (!chosen.length) {
+      setErr(tr("errInvalidQty"));
+      return;
+    }
+    try {
+      setErr("");
+      await post(`/api/inventory/purchases/${inv.id}/returns`, { reason, items: chosen });
+      onDone();
+    } catch (e) {
+      setErr(apiMessage(tr, e));
+    }
+  }
+  return (
+    <div className="space-y-3">
+      {items.length ? items.map((i: any) => (
+        <div key={i.purchase_item_id} className="grid gap-2 rounded-xl border border-[var(--border)] p-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div className="font-bold">{i.name}</div>
+          <Field label={`${tr("qty")} (${tr("available")}: ${i.max})`}>
+            <input
+              className={`${inputCls} w-28`}
+              type="number"
+              min={0}
+              max={i.max}
+              value={i.qty}
+              onChange={(e) => {
+                const qty = Math.max(0, Math.min(i.max, Number(e.target.value) || 0));
+                setItems(items.map((x: any) => (x.purchase_item_id === i.purchase_item_id ? { ...x, qty } : x)));
+              }}
+            />
+          </Field>
+        </div>
+      )) : <div className="text-sm text-slate-500">{tr("errNoItems")}</div>}
+      <input className={inputCls} placeholder={tr("reason")} value={reason} onChange={(e) => setReason(e.target.value)} />
+      {err ? <div className="text-sm text-rose-600">{err}</div> : null}
+      <Btn onClick={send}>{tr("save")}</Btn>
+    </div>
   );
 }
 
@@ -1347,6 +1628,8 @@ export function ReportsPage() {
             {tr(t.key)}
           </button>
         ))}
+        <Link className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold" to="/reports/trial-balance">{tr("trialBalance")}</Link>
+        <Link className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold" to="/reports/daily-movement">{tr("dailyReport")}</Link>
       </div>
       {tab === "sales" ? (
         <Table cols={["", tr("invoicesCount"), tr("total"), ...(showCost ? [tr("profit")] : [])]} rows={(sales.data || []).map((r: any) => [r.label, num(r.invoices || r.qty, lang), money(r.total, lang), ...(showCost ? [money(r.profit, lang)] : [])])} />
@@ -1369,12 +1652,17 @@ export function ReportsPage() {
         </div>
       ) : null}
       {tab === "daily" && daily ? (
-        <div className="grid gap-3 md:grid-cols-5">
-          <Stat label={tr("sales")} value={money(daily.sales?.n, lang)} hint={num(daily.sales?.c, lang)} />
-          <Stat label={tr("purchases")} value={money(daily.purchases?.n, lang)} hint={num(daily.purchases?.c, lang)} />
-          <Stat label={tr("payments")} value={money(daily.payments?.n, lang)} hint={num(daily.payments?.c, lang)} />
-          <Stat label={tr("expenses")} value={money(daily.expenses?.n, lang)} hint={num(daily.expenses?.c, lang)} />
-          <Stat label={tr("returns")} value={money(daily.returns?.n, lang)} hint={num(daily.returns?.c, lang)} />
+        <div>
+          <div className="mb-3 no-print">
+            <Link className="text-sm font-bold underline" to="/reports/daily-movement">{tr("detailedDailyReport")}</Link>
+          </div>
+          <div className="grid gap-3 md:grid-cols-5">
+            <Stat label={tr("sales")} value={money(daily.sales?.n, lang)} hint={num(daily.sales?.c, lang)} />
+            <Stat label={tr("purchases")} value={money(daily.purchases?.n, lang)} hint={num(daily.purchases?.c, lang)} />
+            <Stat label={tr("payments")} value={money(daily.payments?.n, lang)} hint={num(daily.payments?.c, lang)} />
+            <Stat label={tr("expenses")} value={money(daily.expenses?.n, lang)} hint={num(daily.expenses?.c, lang)} />
+            <Stat label={tr("returns")} value={money(daily.returns?.n, lang)} hint={num(daily.returns?.c, lang)} />
+          </div>
         </div>
       ) : null}
       {tab === "expenses" ? (

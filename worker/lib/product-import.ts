@@ -39,7 +39,7 @@ export function productToImportCells(row: Record<string, unknown>, hideCost = fa
     hideCost ? "" : Number(row.last_purchase_price || row.purchase_price || 0) || 0,
     row.barcode || "",
     row.extra_code1 || "",
-    row.quality || "",
+    row.quality || row.category_ar || "",
     row.part_type_ar || row.part_type || "",
     row.brand_ar || row.brand || "",
     row.supplier_name || row.supplier || "",
@@ -118,16 +118,21 @@ const HEADER_ALIASES: Record<string, keyof ProductImportRow> = {
   الوحدة: "unit",
   سعر_البيع: "selling_price",
   متوسط_سعر_الشراء: "purchase_price",
+  متوسط_الشراء: "purchase_price",
   اخر_سعر_شراء: "last_purchase_price",
   آخر_سعر_شراء: "last_purchase_price",
   باركود: "barcode",
   كود_الصنف_1: "extra_code1",
   كود_الصنف1: "extra_code1",
   التصنيف: "quality",
+  تصنيف: "quality",
+  الفئة: "quality",
+  القسم: "quality",
   النوع: "part_type",
   الماركه: "brand",
   الماركة: "brand",
   المورد: "supplier",
+  اسم_المورد: "supplier",
   بكيه: "box",
   باكيه: "box",
   الباكيه: "box",
@@ -151,14 +156,16 @@ const HEADER_ALIASES: Record<string, keyof ProductImportRow> = {
   الكمية: "qty",
   سعرالبيع: "selling_price",
   سعر_الشراء: "purchase_price",
-  متوسط_الشراء: "purchase_price",
   كود_الصنف: "extra_code1",
 };
 
 function cellStr(v: unknown) {
   if (v == null) return "";
   if (typeof v === "number" && Number.isFinite(v)) return String(v);
-  return String(v).replace(/\u00a0/g, " ").trim();
+  return String(v)
+    .replace(/[\u200e\u200f\u202a-\u202e\ufeff]/g, "")
+    .replace(/\u00a0/g, " ")
+    .trim();
 }
 
 function cellNum(v: unknown) {
@@ -183,7 +190,7 @@ function normHeader(raw: unknown) {
 }
 
 function normName(raw: string) {
-  const s = raw.replace(/\s+/g, " ").trim();
+  const s = raw.replace(/[\u200e\u200f\u202a-\u202e\ufeff]/g, "").replace(/\s+/g, " ").trim();
   if (!s) return "";
   const yeh = s.replace(/ى/g, "ي");
   if (yeh === "الوزيري" || yeh === "الوزيرى") return "الوزيري";
@@ -201,11 +208,14 @@ function headerKey(raw: unknown): keyof ProductImportRow | null {
   if (n.includes("كمي")) return "qty";
   if (n.includes("وحد")) return "unit";
   if (n.includes("سعر_البيع") || n.includes("سعرالبيع")) return "selling_price";
-  if (n.includes("متوسط") || n.includes("سعر_الشراء")) return "purchase_price";
-  if (n.includes("اخر_سعر") || n.includes("آخر_سعر") || n.includes("last_purchase")) return "last_purchase_price";
+  if (n.includes("متوسط")) return "purchase_price";
+  if (n.includes("اخر") && n.includes("سعر")) return "last_purchase_price";
+  if (n.includes("آخر") && n.includes("سعر")) return "last_purchase_price";
+  if (n.includes("last_purchase")) return "last_purchase_price";
+  if (n.includes("سعر_الشراء") && !n.includes("بيع")) return "purchase_price";
   if (n.includes("باركود") || n.includes("barcode")) return "barcode";
   if (n.includes("كود_الصنف") || n.includes("extra_code")) return "extra_code1";
-  if (n.includes("تصنيف") || n.includes("category")) return "quality";
+  if (n.includes("تصنيف") || n.includes("فئة") || n.includes("category")) return "quality";
   if (n.includes("نوع") || n.includes("part_type")) return "part_type";
   if (n.includes("مارك") || n.includes("brand")) return "brand";
   if (n.includes("مورد") || n.includes("supplier")) return "supplier";
@@ -225,10 +235,26 @@ function headerIndex(row: unknown[]) {
   return map.sku != null && map.name_ar != null ? map : null;
 }
 
+function forceHeaderCol(
+  map: Partial<Record<keyof ProductImportRow, number>>,
+  headerRow: unknown[],
+  key: keyof ProductImportRow,
+  test: (cell: string) => boolean,
+) {
+  const idx = headerRow.findIndex((cell) => test(cellStr(cell)));
+  if (idx >= 0) map[key] = idx;
+}
+
 function parseBin(raw: string) {
   const s = raw.replace(/رف|شوكة|شوكه|درج/g, " ").replace(/\s+/g, " ").trim();
   const parts = s.split(/[+\/|,،\-]+/).map((p) => p.trim()).filter(Boolean);
   return { rack: parts[0] || "", shelf: parts[1] || "", drawer: parts[2] || "" };
+}
+
+export function mergeAvgCost(prevQty: number, prevAvg: number, addQty: number, addAvg: number) {
+  const q = Math.max(0, prevQty) + Math.max(0, addQty);
+  if (!(q > 0)) return addAvg || prevAvg || 0;
+  return (Math.max(0, prevQty) * (prevAvg || 0) + Math.max(0, addQty) * (addAvg || 0)) / q;
 }
 
 export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
@@ -244,8 +270,10 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
   }
   if (!map) throw new Error("missing_headers");
   const headerRow = grid[start - 1] || [];
-  const qualityCol = headerRow.findIndex((cell) => /تصنيف/u.test(cellStr(cell)) || /category/i.test(cellStr(cell)));
-  if (qualityCol >= 0) map.quality = qualityCol;
+  forceHeaderCol(map, headerRow, "quality", (c) => /تصنيف|فئة|category/i.test(c));
+  forceHeaderCol(map, headerRow, "supplier", (c) => /مورد|supplier/i.test(c));
+  forceHeaderCol(map, headerRow, "last_purchase_price", (c) => /آخر\s*سعر|اخر\s*سعر|last\s*purchase/i.test(c));
+  forceHeaderCol(map, headerRow, "purchase_price", (c) => /متوسط/.test(c) && /شراء/.test(c));
   const out: ProductImportRow[] = [];
   for (let i = start; i < grid.length; i++) {
     const row = grid[i] || [];
@@ -265,7 +293,7 @@ export function parseProductGrid(grid: unknown[][]): ProductImportRow[] {
       qty: cellNum(get("qty")),
       unit: cellStr(get("unit")) || "قطعة",
       selling_price: cellNum(get("selling_price")),
-      purchase_price: avgBuy || lastBuy,
+      purchase_price: avgBuy,
       last_purchase_price: lastBuy || avgBuy,
       barcode: cellStr(get("barcode")),
       extra_code1: cellStr(get("extra_code1")),
@@ -387,26 +415,116 @@ async function ensureModels(db: AppDb, cache: Map<string, number>, brandId: numb
   return ids;
 }
 
-async function updateImportedProduct(db: AppDb, id: number, r: ProductImportRow, cache: Map<string, number>) {
-  const brandId = await ensurePair(db, "brands", cache, r.brand);
-  const typeId = await ensurePair(db, "part_types", cache, r.part_type);
-  const supplierId = await ensureSupplier(db, cache, r.supplier);
-  const locationId = await ensureLocation(db, cache, r);
+async function upsertSupplierPrice(db: AppDb, supplierId: number | null, productId: number, unitCost: number) {
+  if (!supplierId) return;
+  const cost = Number(unitCost || 0);
   await db
     .prepare(
-      `UPDATE products SET barcode=?, name_ar=?, name_en=?, brand_id=?, part_type_id=?, location_id=?, supplier_id=?,
-        purchase_price=?, selling_price=?, quality=?, unit=?, extra_code1=?, extra_code2=?, updated_at=datetime('now')
+      `INSERT INTO supplier_product_prices (supplier_id, product_id, unit_cost, last_date)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(supplier_id, product_id) DO UPDATE SET unit_cost = excluded.unit_cost, last_date = excluded.last_date`,
+    )
+    .bind(supplierId, productId, cost, todayIso())
+    .run();
+}
+
+async function addOpeningStock(
+  db: AppDb,
+  productId: number,
+  locationId: number | null,
+  qty: number,
+  unitCost: number,
+  userId?: number,
+) {
+  if (!(qty > 0)) return;
+  const locKey = locationId || 0;
+  const existing = await db
+    .prepare(
+      `SELECT id, original_qty, remaining_qty, unit_cost FROM inventory_batches
+       WHERE product_id = ? AND IFNULL(location_id, 0) = ? AND (notes = 'opening' OR notes LIKE 'كمية افتتاحية%')
+       LIMIT 1`,
+    )
+    .bind(productId, locKey)
+    .first<{ id: number; original_qty: number; remaining_qty: number; unit_cost: number }>();
+  if (existing?.id) {
+    const prevQty = Number(existing.remaining_qty || 0);
+    const nextQty = prevQty + qty;
+    const nextCost = mergeAvgCost(prevQty, Number(existing.unit_cost || 0), qty, unitCost);
+    await db
+      .prepare(
+        "UPDATE inventory_batches SET original_qty = original_qty + ?, remaining_qty = remaining_qty + ?, unit_cost = ? WHERE id = ?",
+      )
+      .bind(qty, qty, nextCost, existing.id)
+      .run();
+    await db.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(qty, productId).run();
+    await logMovement(db, {
+      productId,
+      batchId: existing.id,
+      type: "in",
+      qty,
+      unitCost,
+      referenceType: "opening",
+      referenceId: productId,
+      notes: "كمية افتتاحية",
+      userId: userId ?? null,
+      toLocationId: locationId,
+    });
+    return;
+  }
+  const code = await nextNumber(db, "batch");
+  const batch = await db
+    .prepare(
+      `INSERT INTO inventory_batches (batch_code, product_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, notes, location_id)
+       VALUES (?, ?, ?, ?, ?, 0, ?, 'opening', ?)`,
+    )
+    .bind(code, productId, todayIso(), qty, qty, unitCost, locationId)
+    .run();
+  await db.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(qty, productId).run();
+  await logMovement(db, {
+    productId,
+    batchId: batch.meta.last_row_id,
+    type: "in",
+    qty,
+    unitCost,
+    referenceType: "opening",
+    referenceId: productId,
+    notes: "كمية افتتاحية",
+    userId: userId ?? null,
+    toLocationId: locationId,
+  });
+}
+
+async function writeProductCard(
+  db: AppDb,
+  id: number,
+  r: ProductImportRow,
+  ids: {
+    brandId: number | null;
+    typeId: number | null;
+    catId: number | null;
+    supplierId: number | null;
+    locationId: number | null;
+  },
+  opts: { setLocation: boolean; avgCost: number },
+) {
+  await db
+    .prepare(
+      `UPDATE products SET barcode=?, name_ar=?, name_en=?, brand_id=?, part_type_id=?, category_id=?,
+        ${opts.setLocation ? "location_id=?," : ""} supplier_id=?,
+        purchase_price=?, last_purchase_price=?, selling_price=?, quality=?, unit=?, extra_code1=?, extra_code2=?, updated_at=datetime('now')
        WHERE id=?`,
     )
     .bind(
       r.barcode || null,
       r.name_ar,
       r.name_en,
-      brandId,
-      typeId,
-      locationId,
-      supplierId,
-      r.purchase_price,
+      ids.brandId,
+      ids.typeId,
+      ids.catId,
+      ...(opts.setLocation ? [ids.locationId] : []),
+      ids.supplierId,
+      opts.avgCost,
+      r.last_purchase_price || opts.avgCost,
       r.selling_price,
       r.quality || null,
       r.unit || "قطعة",
@@ -415,12 +533,6 @@ async function updateImportedProduct(db: AppDb, id: number, r: ProductImportRow,
       id,
     )
     .run();
-  try {
-    await db.prepare("UPDATE products SET last_purchase_price = ? WHERE id = ?").bind(r.last_purchase_price, id).run();
-  } catch {
-    /* optional column */
-  }
-  return { brandId, typeId };
 }
 
 export async function importProductRows(db: AppDb, rows: ProductImportRow[], opts: { replace?: boolean; userId?: number } = {}) {
@@ -430,97 +542,116 @@ export async function importProductRows(db: AppDb, rows: ProductImportRow[], opt
       .run();
   }
   const cache = new Map<string, number>();
+  const seen = new Map<number, { qty: number; avg: number }>();
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
   const errors: { sku: string; error: string }[] = [];
   for (const r of rows) {
     try {
-      const exists = await db.prepare("SELECT id FROM products WHERE sku = ? AND deleted_at IS NULL").bind(r.sku).first<{ id: number }>();
-      if (exists?.id) {
-        await updateImportedProduct(db, exists.id, r, cache);
-        updated += 1;
-        continue;
-      }
       const brandId = await ensurePair(db, "brands", cache, r.brand);
       const typeId = await ensurePair(db, "part_types", cache, r.part_type);
-      const catId = null;
+      const catId = await ensurePair(db, "categories", cache, r.quality);
       const supplierId = await ensureSupplier(db, cache, r.supplier);
       const locationId = await ensureLocation(db, cache, r);
-      const modelIds = await ensureModels(db, cache, brandId, r.model);
-      const ins = await db
-        .prepare(
-          `INSERT INTO products (sku, barcode, part_number, name_ar, name_en, brand_id, part_type_id, category_id, location_id, supplier_id,
-            purchase_price, selling_price, wholesale_price, min_selling_price, min_stock, description, notes, active, kind, quality, unit,
-            extra_code1, extra_code2, price_2)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, 'product', ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          r.sku,
-          r.barcode || null,
-          r.sku,
-          r.name_ar,
-          r.name_en,
-          brandId,
-          typeId,
-          catId,
-          locationId,
-          supplierId,
-          r.purchase_price,
-          r.selling_price,
-          0,
-          0,
-          null,
-          null,
-          r.quality || null,
-          r.unit || "قطعة",
-          r.extra_code1 || null,
-          r.extra_code2 || null,
-          r.last_purchase_price,
-        )
-        .run();
-      const id = ins.meta.last_row_id;
-      await db.prepare("UPDATE products SET quality = ?, unit = ? WHERE id = ?").bind(r.quality || null, r.unit || "قطعة", id).run();
-      try {
-        await db.prepare("UPDATE products SET last_purchase_price = ? WHERE id = ?").bind(r.last_purchase_price, id).run();
-      } catch {
-        /* column may be missing on older DBs */
-      }
-      for (const mid of modelIds) {
-        try {
-          await db.prepare("INSERT OR IGNORE INTO product_models (product_id, model_id) VALUES (?, ?)").bind(id, mid).run();
-        } catch {
-          /* ignore duplicate model link */
-        }
-      }
-      if (r.qty > 0) {
-        const code = await nextNumber(db, "batch");
-        const batch = await db
+      const exists = await db.prepare("SELECT id, current_stock, purchase_price FROM products WHERE sku = ? AND deleted_at IS NULL").bind(r.sku).first<{
+        id: number;
+        current_stock: number;
+        purchase_price: number;
+      }>();
+      let id = exists?.id || 0;
+      const first = !id || !seen.has(id);
+      if (!id) {
+        const ins = await db
           .prepare(
-            `INSERT INTO inventory_batches (batch_code, product_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, notes, location_id)
-             VALUES (?, ?, ?, ?, ?, 0, ?, 'opening', ?)`,
+            `INSERT INTO products (sku, barcode, part_number, name_ar, name_en, brand_id, part_type_id, category_id, location_id, supplier_id,
+              purchase_price, last_purchase_price, selling_price, wholesale_price, min_selling_price, min_stock, description, notes, active, kind, quality, unit,
+              extra_code1, extra_code2)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, 'product', ?, ?, ?, ?)`,
           )
-          .bind(code, id, todayIso(), r.qty, r.qty, r.purchase_price, locationId)
+          .bind(
+            r.sku,
+            r.barcode || null,
+            r.sku,
+            r.name_ar,
+            r.name_en,
+            brandId,
+            typeId,
+            catId,
+            locationId,
+            supplierId,
+            r.purchase_price,
+            r.last_purchase_price || r.purchase_price,
+            r.selling_price,
+            0,
+            0,
+            null,
+            null,
+            r.quality || null,
+            r.unit || "قطعة",
+            r.extra_code1 || null,
+            r.extra_code2 || null,
+          )
           .run();
-        await db.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(r.qty, id).run();
-        await logMovement(db, {
-          productId: id,
-          batchId: batch.meta.last_row_id,
-          type: "in",
-          qty: r.qty,
-          unitCost: r.purchase_price,
-          referenceType: "opening",
-          referenceId: id,
-          notes: "كمية افتتاحية",
-          userId: opts.userId ?? null,
-          toLocationId: locationId,
-        });
+        id = ins.meta.last_row_id;
+        const modelIds = await ensureModels(db, cache, brandId, r.model);
+        for (const mid of modelIds) {
+          try {
+            await db.prepare("INSERT OR IGNORE INTO product_models (product_id, model_id) VALUES (?, ?)").bind(id, mid).run();
+          } catch {
+            /* ignore duplicate model link */
+          }
+        }
+        seen.set(id, { qty: 0, avg: r.purchase_price || 0 });
+        inserted += 1;
+      } else {
+        const prev = seen.get(id) || { qty: Number(exists?.current_stock || 0), avg: Number(exists?.purchase_price || 0) };
+        if (first) {
+          await writeProductCard(db, id, r, { brandId, typeId, catId, supplierId, locationId }, { setLocation: true, avgCost: r.purchase_price });
+          seen.set(id, { qty: 0, avg: r.purchase_price || 0 });
+          updated += 1;
+        } else if (r.supplier && supplierId) {
+          await db.prepare("UPDATE products SET supplier_id = ? WHERE id = ? AND IFNULL(supplier_id, 0) = 0").bind(supplierId, id).run();
+        }
+        if (!seen.has(id)) seen.set(id, prev);
       }
-      inserted += 1;
+      const st = seen.get(id)!;
+      if (r.qty > 0) {
+        st.avg = mergeAvgCost(st.qty, st.avg, r.qty, r.purchase_price);
+        st.qty += r.qty;
+      } else if (r.purchase_price && !st.qty) {
+        st.avg = r.purchase_price;
+      }
+      await db
+        .prepare("UPDATE products SET purchase_price = ?, last_purchase_price = CASE WHEN ? > 0 THEN ? ELSE last_purchase_price END WHERE id = ?")
+        .bind(st.avg, r.last_purchase_price || 0, r.last_purchase_price || 0, id)
+        .run();
+      await upsertSupplierPrice(db, supplierId, id, r.last_purchase_price || r.purchase_price);
+      await addOpeningStock(db, id, locationId, r.qty, r.purchase_price, opts.userId);
     } catch (e) {
       skipped += 1;
       errors.push({ sku: r.sku, error: e instanceof Error ? e.message : "fail" });
     }
   }
+  await syncImportedCategories(db);
   return { inserted, updated, skipped, total: rows.length, errors: errors.slice(0, 20) };
+}
+
+export async function syncImportedCategories(db: AppDb) {
+  const { results } = await db
+    .prepare(
+      `SELECT DISTINCT TRIM(quality) as name
+       FROM products
+       WHERE deleted_at IS NULL AND TRIM(IFNULL(quality,'')) != ''`,
+    )
+    .all<{ name: string }>();
+  const cache = new Map<string, number>();
+  for (const row of results || []) {
+    const id = await ensurePair(db, "categories", cache, row.name);
+    if (!id) continue;
+    await db
+      .prepare("UPDATE products SET category_id = ? WHERE deleted_at IS NULL AND TRIM(IFNULL(quality,'')) = ?")
+      .bind(id, row.name)
+      .run();
+  }
 }

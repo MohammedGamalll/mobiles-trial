@@ -11,6 +11,7 @@ const MODULES: { to: string; key: Msg; perm: string }[] = [
   { to: "/hr/employees", key: "employees", perm: "hr.view" },
   { to: "/reports", key: "reports", perm: "reports.view" },
   { to: "/customers", key: "customers", perm: "customers.view" },
+  { to: "/reports/daily-movement", key: "dailyReport", perm: "reports.view" },
 ];
 
 export function ModernModules() {

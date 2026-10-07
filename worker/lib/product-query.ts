@@ -45,6 +45,7 @@ export async function listFilteredProducts(db: AppDb, url: URL, limit = 8000) {
   const q = (p.q || "").trim();
   const where: string[] = ["p.deleted_at IS NULL"];
   const params: (string | number)[] = [];
+  applyEq(where, params, "p.id", p.product_id, true);
   if (p.brand_id) {
     where.push("p.brand_id = ?");
     params.push(Number(p.brand_id));
@@ -117,7 +118,7 @@ export async function listFilteredProducts(db: AppDb, url: URL, limit = 8000) {
     : "";
   const order = qtySort || sortSql(p.sort === "moved" ? "" : p.sort, PRODUCT_SORT, p.sort === "moved"
     ? `(SELECT COALESCE(SUM(ABS(sm.qty)),0) FROM stock_movements sm WHERE sm.product_id = p.id) DESC, p.id DESC`
-    : "p.id DESC");
+    : "p.id ASC");
   const binds = [...stockExpr.binds, ...params];
   const { results } = await db
     .prepare(`${productSelectSql(stockExpr.availSql, stockExpr.join)} ${whereSql} ${order} LIMIT ?`)

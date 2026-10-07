@@ -25,12 +25,15 @@ import {
   Radio,
   ArrowRightLeft,
   ListChecks,
+  Recycle,
   Target,
   BookOpen,
   Landmark,
   Hash,
   Receipt,
   CalendarRange,
+  Scale,
+  PieChart,
 } from "lucide-react";
 import type { Msg } from "../i18n";
 
@@ -47,7 +50,10 @@ export type NavGroup = { label: Msg; items: NavItem[] };
 export const modernNav: NavGroup[] = [
   {
     label: "dashboard",
-    items: [{ to: "/", key: "dashboard", icon: LayoutDashboard, perm: "dashboard.view" }],
+    items: [
+      { to: "/reports/daily-movement", key: "dailyReport", icon: CalendarDays, perm: "reports.view" },
+      { to: "/", key: "dashboard", icon: LayoutDashboard, perm: "dashboard.view" },
+    ],
   },
   {
     label: "sales",
@@ -107,6 +113,7 @@ export const modernNav: NavGroup[] = [
       { to: "/locations", key: "warehouses", icon: MapPin, perm: "locations.manage" },
       { to: "/transfers", key: "transfers", icon: ArrowRightLeft, perm: "transfers.view" },
       { to: "/stocktake", key: "stocktake", icon: ListChecks, perm: "stocktake.view" },
+      { to: "/wastage", key: "wastage", icon: Recycle, perm: "stocktake.view" },
     ],
   },
   {
@@ -119,6 +126,8 @@ export const modernNav: NavGroup[] = [
       { to: "/ledger/cash", key: "cashBanks", icon: Landmark, perm: "ledger.view" },
       { to: "/ledger/vouchers", key: "vouchers", icon: FileText, perm: "vouchers.create" },
       { to: "/ledger/journal", key: "journal", icon: BookOpen, perm: "ledger.view" },
+      { to: "/partners", key: "partnersEquity", icon: PieChart, perm: "partners.view" },
+      { to: "/reports/trial-balance", key: "trialBalance", icon: Scale, perm: "reports.view" },
       { to: "/ledger/accounts", key: "chartAccounts", icon: BookOpen, perm: "ledger.view" },
       { to: "/reports", key: "reports", icon: BarChart3, perm: "reports.view" },
     ],

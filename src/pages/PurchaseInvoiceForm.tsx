@@ -61,6 +61,8 @@ export default function PurchaseInvoiceForm() {
   const [supplierId, setSupplierId] = useState("");
   const [date, setDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
+  const [discount, setDiscount] = useState(0);
+  const [paid, setPaid] = useState(0);
   const [items, setItems] = useState<PurchaseLine[]>([]);
   const priceRefs = useRef<Array<HTMLInputElement | null>>([]);
   const qtyRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -88,7 +90,11 @@ export default function PurchaseInvoiceForm() {
     setItems((rows) => rows.map((it, i) => (i === index ? { ...it, ...patch } : it)));
   }
 
-  const purchaseTotal = items.reduce((s, it) => s + Number(it.quantity || 0) * Number(it.unit_cost || 0), 0);
+  const purchaseGross = items.reduce((s, it) => s + Number(it.quantity || 0) * Number(it.unit_cost || 0), 0);
+  const purchaseNet = Math.max(0, purchaseGross - Number(discount || 0));
+  const purchasePaid = Math.max(0, Number(paid || 0));
+  const purchaseRemaining = Math.max(0, purchaseNet - purchasePaid);
+  const purchaseSurplus = Math.max(0, purchasePaid - purchaseNet);
 
   async function save() {
     if (!supplierId) {
@@ -108,6 +114,9 @@ export default function PurchaseInvoiceForm() {
         supplier_id: Number(supplierId),
         date,
         notes: notes || null,
+        discount: Number(discount || 0),
+        paid: Number(paid || 0),
+        surplus_mode: "wallet",
         items: items.map((it) => ({
           product_id: it.product_id,
           quantity: Number(it.quantity),
@@ -135,7 +144,7 @@ export default function PurchaseInvoiceForm() {
         </div>
       </div>
       <p className="text-sm font-bold leading-6 text-[#0b1f33] dark:text-[#f8f1de]">{tr("purchaseHint")}</p>
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
         <Field label={tr("supplier")}>
           <SearchPick
             path="/api/suppliers"
@@ -151,6 +160,12 @@ export default function PurchaseInvoiceForm() {
         </Field>
         <Field label={tr("notes")}>
           <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </Field>
+        <Field label={tr("discount")}>
+          <input className={inputCls} type="number" min={0} value={discount} onChange={(e) => setDiscount(Number(e.target.value || 0))} />
+        </Field>
+        <Field label={tr("paid")}>
+          <input className={inputCls} type="number" min={0} value={paid} onChange={(e) => setPaid(Number(e.target.value || 0))} />
         </Field>
       </div>
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
@@ -258,9 +273,23 @@ export default function PurchaseInvoiceForm() {
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-between rounded-xl bg-[#0b1f33] px-4 py-3 text-sm font-black text-[#f8f1de]">
-        <span>{tr("total")}</span>
-        <span>{money(purchaseTotal, lang)}</span>
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="flex items-center justify-between rounded-xl bg-[#0b1f33] px-4 py-3 text-sm font-black text-[#f8f1de]">
+          <span>{tr("subtotal")}</span>
+          <span>{money(purchaseGross, lang)}</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-[#0b1f33] px-4 py-3 text-sm font-black text-[#f8f1de]">
+          <span>{tr("discount")}</span>
+          <span>{money(discount, lang)}</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-[#0b1f33] px-4 py-3 text-sm font-black text-[#f8f1de]">
+          <span>{tr("netTotal")}</span>
+          <span>{money(purchaseNet, lang)}</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-[#0b1f33] px-4 py-3 text-sm font-black text-[#f8f1de]">
+          <span>{purchaseSurplus > 0 ? tr("surplusWallet") : tr("remaining")}</span>
+          <span>{money(purchaseSurplus > 0 ? purchaseSurplus : purchaseRemaining, lang)}</span>
+        </div>
       </div>
       <ErrorNote message={act.message} />
     </div>

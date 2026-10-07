@@ -33,9 +33,13 @@ import {
   PriceListDetail,
   UsersPage,
 } from "./pages/More";
-import { LocationsPage, TransferDetail, TransfersPage, StocktakeDetail, StocktakesPage } from "./pages/Stock";
+import { LocationsPage, TransferDetail, TransfersPage, StocktakeDetail, StocktakesPage, WastagePage } from "./pages/Stock";
 import { RepsPage, RepDetail, VisitsPage, TargetsPage, CommissionsPage } from "./pages/Reps";
 import { CashAccountsPage, ChartPage, JournalPage, VouchersPage } from "./pages/Ledger";
+import TrialBalance from "./pages/TrialBalance";
+import DailyReport from "./pages/DailyReport";
+import DailyReportClassic from "./pages/DailyReportClassic";
+import Partners from "./pages/Partners";
 import { SerialsPage, ChequesPage, InstallmentsPage } from "./pages/Sahl";
 import CourierDashboard from "./pages/CourierDashboard";
 import { SettingsPage } from "./pages/Settings";
@@ -69,6 +73,11 @@ function ProductsGate() {
 function InventoryGate() {
   const { uiLayout } = useApp();
   return uiLayout === "classic_easy" ? <WarehouseReportClassic /> : <InventoryPage />;
+}
+
+function DailyReportGate() {
+  const { uiLayout } = useApp();
+  return uiLayout === "classic_easy" ? <DailyReportClassic /> : <DailyReport />;
 }
 
 function AppRoutes() {
@@ -126,6 +135,7 @@ function AppRoutes() {
         <Route path="transfers/:id" element={<PermGuard perm="transfers.view"><TransferDetail /></PermGuard>} />
         <Route path="stocktake" element={<PermGuard perm="stocktake.view"><StocktakesPage /></PermGuard>} />
         <Route path="stocktake/:id" element={<PermGuard perm="stocktake.view"><StocktakeDetail /></PermGuard>} />
+        <Route path="wastage" element={<PermGuard perm="stocktake.view"><WastagePage /></PermGuard>} />
         <Route path="expenses" element={<ExpensesPage />} />
         <Route path="payments" element={<PaymentsPage />} />
         <Route path="serials" element={<PermGuard perm="serials.manage"><SerialsPage /></PermGuard>} />
@@ -135,6 +145,9 @@ function AppRoutes() {
         <Route path="ledger/accounts" element={<ChartPage />} />
         <Route path="ledger/journal" element={<JournalPage />} />
         <Route path="ledger/vouchers" element={<VouchersPage />} />
+        <Route path="reports/trial-balance" element={<PermGuard perm={["reports.view", "ledger.view"]}><TrialBalance /></PermGuard>} />
+        <Route path="reports/daily-movement" element={<PermGuard perm="reports.view"><DailyReportGate /></PermGuard>} />
+        <Route path="partners" element={<PermGuard perm="partners.view"><Partners /></PermGuard>} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="audit" element={<AuditPage />} />

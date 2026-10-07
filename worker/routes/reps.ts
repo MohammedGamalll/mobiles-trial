@@ -267,7 +267,7 @@ repsRoutes.get("/commissions/payout", requirePerm("reps.view", "hr.payroll"), as
       `SELECT a.id as agent_id, a.name as agent_name, a.code as agent_code,
         COALESCE((SELECT SUM(c.amount) FROM sales_commissions c WHERE c.agent_id = a.id AND c.month = ? AND c.status IN ('accrued','open')), 0) as accrued,
         COALESCE((SELECT SUM(c.amount) FROM sales_commissions c WHERE c.agent_id = a.id AND c.month = ? AND c.status = 'paid'), 0) as paid,
-        COALESCE((SELECT SUM(sa.amount) FROM salary_advances sa
+        COALESCE((SELECT SUM(COALESCE(sa.remaining, sa.amount)) FROM salary_advances sa
           JOIN employees e ON e.id = sa.employee_id
           WHERE e.delivery_agent_id = a.id AND e.deleted_at IS NULL AND sa.status = 'open'), 0) as open_advances
        FROM delivery_agents a

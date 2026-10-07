@@ -4,7 +4,7 @@ import { Building2, ChevronDown, Layers3, Plus, Rows3 } from "lucide-react";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, ErrorNote, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, ErrorNote, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
 import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
@@ -16,6 +16,56 @@ import { playSound } from "../lib/sounds";
 import { isWarehouseLocation } from "../lib/warehouses";
 
 const KINDS = ["warehouse", "zone", "aisle", "bay", "shelf", "bin"] as const;
+
+function productName(row: any, lang: string) {
+  return (lang === "ar" ? row.name_ar : row.name_en) || row.name_ar || row.name_en || "";
+}
+
+function productType(row: any, lang: string) {
+  return (lang === "ar" ? row.part_type_ar : row.part_type_en) || row.part_type_ar || row.part_type_en || "";
+}
+
+function productBrand(row: any, lang: string) {
+  return (lang === "ar" ? row.brand_ar : row.brand_en) || row.brand_ar || row.brand_en || "";
+}
+
+function productCategory(row: any, lang: string) {
+  return (lang === "ar" ? row.category_ar : row.category_en) || row.category_ar || row.category_en || "";
+}
+
+function lineVarianceValue(row: any) {
+  if (row.counted_qty == null) return null;
+  const cost = Number(row.unit_cost || 0);
+  return Math.round(Math.abs(Number(row.system_qty || 0) - Number(row.counted_qty)) * cost * 100) / 100;
+}
+
+function sumStocktakeKpis(rows: any[]) {
+  return rows.reduce(
+    (acc, r) => {
+      acc.expected_qty += Number(r.expected_qty || 0);
+      acc.actual_qty += Number(r.actual_qty || 0);
+      acc.shortage_qty += Number(r.shortage_qty || 0);
+      acc.surplus_qty += Number(r.surplus_qty || 0);
+      acc.shortage_value += Number(r.shortage_value || 0);
+      acc.surplus_value += Number(r.surplus_value || 0);
+      return acc;
+    },
+    { expected_qty: 0, actual_qty: 0, shortage_qty: 0, surplus_qty: 0, shortage_value: 0, surplus_value: 0 },
+  );
+}
+
+function ReconKpis({ totals, lang, tr }: { totals: ReturnType<typeof sumStocktakeKpis>; lang: string; tr: (k: any) => string }) {
+  return (
+    <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <Stat label={tr("expectedStock")} value={num(totals.expected_qty, lang)} />
+      <Stat label={tr("actualStock")} value={num(totals.actual_qty, lang)} accent="indigo" />
+      <Stat label={tr("shortage")} value={num(totals.shortage_qty, lang)} accent="rose" />
+      <Stat label={`${tr("shortage")} · ${tr("varianceValue")}`} value={money(totals.shortage_value, lang)} accent="rose" />
+      <Stat label={tr("surplus")} value={num(totals.surplus_qty, lang)} accent="emerald" />
+      <Stat label={`${tr("surplus")} · ${tr("varianceValue")}`} value={money(totals.surplus_value, lang)} accent="emerald" />
+    </div>
+  );
+}
 
 function Page({ title, action, children }: { title: string; action?: any; children: any }) {
   return (
@@ -501,6 +551,7 @@ export function TransfersPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({ from_location_id: "", to_location_id: "", notes: "", items: [] as any[] });
   const [batchHits, setBatchHits] = useState<any[]>([]);
+  const [stockQ, setStockQ] = useState("");
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
@@ -514,6 +565,33 @@ export function TransfersPage() {
     if (!locationId) { setBatchHits([]); return; }
     const r = await get<{ data: any[] }>(`/api/inventory/by-location?location_id=${locationId}`);
     setBatchHits(r.data);
+  }
+  const filteredStock = useMemo(() => {
+    const q = stockQ.trim().toLowerCase();
+    if (!q) return batchHits;
+    return batchHits.filter((b) =>
+      [b.name_ar, b.name_en, b.sku, b.quality, b.part_type_ar, b.part_type_en, b.brand_ar, b.brand_en, b.models_label, b.batch_code]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [batchHits, stockQ]);
+  function qtyFor(batchId: number) {
+    const hit = form.items.find((x: any) => x.batch_id === batchId);
+    return hit ? String(hit.qty) : "";
+  }
+  function setQty(b: any, raw: string) {
+    const qty = Number(raw || 0);
+    const items = form.items.filter((x: any) => x.batch_id !== b.id);
+    if (qty > 0) items.push({ product_id: b.product_id, batch_id: b.id, qty });
+    setForm({ ...form, items });
+  }
+  function closeModal() {
+    setOpen(false);
+    act.clear();
+    setStockQ("");
+    setForm({ from_location_id: "", to_location_id: "", notes: "", items: [] });
+    setBatchHits([]);
   }
   return (
     <Page title={tr("transfers")} action={<Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("newTransfer")}</Btn>}>
@@ -542,33 +620,70 @@ export function TransfersPage() {
         ])}
       />
       </ListGate>
-      <Modal open={open} title={tr("newTransfer")} onClose={() => { setOpen(false); act.clear(); }} wide>
-        <div className="grid gap-2 md:grid-cols-2">
+      <Modal open={open} title={tr("newTransfer")} onClose={closeModal} full>
+        <div className="grid items-end gap-3 md:grid-cols-[1fr_auto_1fr]">
           <Field label={tr("fromLocation")}>
-            <select className={inputCls} value={form.from_location_id} onChange={(e) => { setForm({ ...form, from_location_id: e.target.value, items: [] }); loadBatches(e.target.value); }}>
+            <select className={`${inputCls} py-3 text-base`} value={form.from_location_id} onChange={(e) => { setForm({ ...form, from_location_id: e.target.value, items: [] }); loadBatches(e.target.value); }}>
               <option value="">-</option>
               {locs.map((l) => <option key={l.id} value={l.id}>{l.label || l.path || l.name}</option>)}
             </select>
           </Field>
+          <div className="hidden pb-2 text-2xl font-black text-slate-400 md:block" aria-hidden>→</div>
           <Field label={tr("toLocation")}>
-            <select className={inputCls} value={form.to_location_id} onChange={(e) => setForm({ ...form, to_location_id: e.target.value })}>
+            <select className={`${inputCls} py-3 text-base`} value={form.to_location_id} onChange={(e) => setForm({ ...form, to_location_id: e.target.value })}>
               <option value="">-</option>
               {locs.map((l) => <option key={l.id} value={l.id}>{l.label || l.path || l.name}</option>)}
             </select>
           </Field>
         </div>
-        <div className="mt-3 max-h-56 overflow-auto rounded-xl border border-slate-100">
-          {batchHits.map((b) => (
-            <label key={b.id} className="flex items-center justify-between gap-2 border-b border-slate-50 px-3 py-2 text-sm">
-              <span>{b.sku} · {b.batch_code} · {tr("available")} {b.available}</span>
-              <input className={`${inputCls} w-24`} type="number" min={0} max={b.available} placeholder="0" onChange={(e) => {
-                const qty = Number(e.target.value || 0);
-                const items = form.items.filter((x: any) => x.batch_id !== b.id);
-                if (qty > 0) items.push({ product_id: b.product_id, batch_id: b.id, qty });
-                setForm({ ...form, items });
-              }} />
-            </label>
-          ))}
+        <div className="mt-4">
+          <input className={inputCls} value={stockQ} onChange={(e) => setStockQ(e.target.value)} placeholder={tr("search")} />
+        </div>
+        <div className="mt-3 overflow-hidden rounded-xl border border-slate-100">
+          <div className="table-wrap max-h-[52vh] overflow-auto">
+            <table className="min-w-[960px]">
+              <thead>
+                <tr>
+                  <th>{tr("name")}</th>
+                  <th>{tr("quality")}</th>
+                  <th>{tr("partType")}</th>
+                  <th>{tr("brand")}</th>
+                  <th>{tr("models")}</th>
+                  <th>Batch</th>
+                  <th>{tr("available")}</th>
+                  <th>{tr("qty")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredStock.length === 0 ? (
+                  <tr><td colSpan={8} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr>
+                ) : filteredStock.map((b) => (
+                  <tr key={b.id}>
+                    <td>
+                      <div className="font-semibold">{productName(b, lang)}</div>
+                      <div className="text-xs text-slate-400">{b.sku}</div>
+                    </td>
+                    <td>{b.quality || "—"}</td>
+                    <td>{productType(b, lang) || "—"}</td>
+                    <td>{productBrand(b, lang) || "—"}</td>
+                    <td className="max-w-40 truncate">{b.models_label || "—"}</td>
+                    <td>{b.batch_code}</td>
+                    <td>{num(b.available, lang)}</td>
+                    <td>
+                      <input
+                        className={`${inputCls} w-24`}
+                        type="number"
+                        min={0}
+                        max={b.available}
+                        value={qtyFor(b.id)}
+                        onChange={(e) => setQty(b, e.target.value)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
         <ErrorNote message={act.message} />
         <Btn className="mt-4" onClick={async () => {
@@ -587,14 +702,12 @@ export function TransfersPage() {
           try {
             await post("/api/inventory/transfers", { ...form, from_location_id: Number(form.from_location_id), to_location_id: Number(form.to_location_id) });
             playSound("done");
-            act.clear();
-            setOpen(false);
-            setForm({ from_location_id: "", to_location_id: "", notes: "", items: [] });
+            closeModal();
             list.reload();
           } catch (e) {
             act.fail(e);
           }
-        }}>{tr("save")}</Btn>
+        }}>{tr("completeTransfer")}</Btn>
       </Modal>
       {dialog}
     </Page>
@@ -613,7 +726,19 @@ export function TransferDetail() {
     <Page title={d.number} action={d.status === "draft" ? <Btn onClick={async () => { try { act.clear(); await post(`/api/inventory/transfers/${id}/complete`, {}); playSound("done"); load(); } catch (e) { act.fail(e); } }}>{tr("completeTransfer")}</Btn> : null}>
       <ErrorNote message={act.message} />
       <div className="mb-3 text-sm text-slate-500">{d.from_name} → {d.to_name} · {d.date} · {statusLabel(d.status, lang)}</div>
-      <Table cols={[tr("sku"), "Batch", tr("qty"), tr("cost")]} rows={(d.items || []).map((i: any) => [i.sku, i.batch_code, i.qty, money(i.unit_cost, lang)])} />
+      <Table
+        cols={[tr("name"), tr("quality"), tr("partType"), tr("brand"), tr("models"), "Batch", tr("qty"), tr("cost")]}
+        rows={(d.items || []).map((i: any) => [
+          <span><span className="font-semibold">{productName(i, lang)}</span><span className="block text-xs text-slate-400">{i.sku}</span></span>,
+          i.quality || "—",
+          productType(i, lang) || "—",
+          productBrand(i, lang) || "—",
+          i.models_label || "—",
+          i.batch_code,
+          num(i.qty, lang),
+          money(i.unit_cost, lang),
+        ])}
+      />
     </Page>
   );
 }
@@ -644,12 +769,17 @@ export function StocktakesPage() {
         { key: "surplus", label: "surplus", type: "select", options: [{ value: "1", label: tr("surplus") }] },
       ]} />
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
+      <ReconKpis totals={sumStocktakeKpis(rows)} lang={lang} tr={tr} />
       <Table
-        cols={[tr("invoiceNo"), tr("date"), tr("location"), tr("status"), ""]}
+        cols={[tr("invoiceNo"), tr("date"), tr("location"), tr("expectedStock"), tr("actualStock"), tr("shortage"), tr("surplus"), tr("status"), ""]}
         rows={rows.map((r) => [
           <Link className="font-bold text-cyan-800" to={`/stocktake/${r.id}`}>{r.number}</Link>,
           r.date,
           r.location_name || tr("all"),
+          num(r.expected_qty, lang),
+          num(r.actual_qty, lang),
+          <span>{num(r.shortage_qty, lang)} · {money(r.shortage_value, lang)}</span>,
+          <span>{num(r.surplus_qty, lang)} · {money(r.surplus_value, lang)}</span>,
           <span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span>,
           <span className="flex flex-wrap gap-2">
             <Link to={`/stocktake/${r.id}`}>{tr("view")}</Link>
@@ -689,6 +819,9 @@ export function StocktakeDetail() {
   const { tr, lang, can } = useApp();
   const [d, setD] = useState<any>(null);
   const [counts, setCounts] = useState<Record<number, string>>({});
+  const [q, setQ] = useState("");
+  const [location, setLocation] = useState("");
+  const [category, setCategory] = useState("");
   const act = useActionError();
   async function load() {
     const r = await get<{ data: any }>(`/api/inventory/stocktakes/${id}`);
@@ -698,6 +831,30 @@ export function StocktakeDetail() {
     setCounts(next);
   }
   useEffect(() => { load().catch(() => {}); }, [id]);
+  const items = d?.items || [];
+  const locations = useMemo(
+    () => [...new Set(items.map((i: any) => String(i.item_location || "")).filter(Boolean))].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en")),
+    [items, lang],
+  );
+  const categories = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const i of items) {
+      const key = String(i.category_id || "");
+      const label = productCategory(i, lang);
+      if (key && label) map.set(key, label);
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], lang === "ar" ? "ar" : "en"));
+  }, [items, lang]);
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return items.filter((i: any) => {
+      if (location && String(i.item_location || "") !== location) return false;
+      if (category && String(i.category_id || "") !== category) return false;
+      if (!needle) return true;
+      const hay = [i.name_ar, i.name_en, i.sku, i.barcode].map((x) => String(x || "").toLowerCase()).join(" ");
+      return hay.includes(needle);
+    });
+  }, [items, q, location, category]);
   if (!d) return <div>{tr("loading")}</div>;
   const locked = !["draft", "submitted"].includes(d.status);
   return (
@@ -712,11 +869,31 @@ export function StocktakeDetail() {
     >
       <ErrorNote message={act.message} />
       <div className="mb-3 text-sm text-slate-500">{d.location_name || tr("all")} · {d.date} · {statusLabel(d.status, lang)}</div>
+      <ReconKpis totals={d.totals || sumStocktakeKpis([])} lang={lang} tr={tr} />
+      <div className="no-print mb-3 grid gap-2 sm:grid-cols-[1fr_12rem_12rem]">
+        <input className={inputCls} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("search")} />
+        <select className={inputCls} value={location} onChange={(e) => setLocation(e.target.value)}>
+          <option value="">{tr("location")} · {tr("all")}</option>
+          {locations.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">{tr("categories")} · {tr("all")}</option>
+          {categories.map(([id, label]) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
+        </select>
+      </div>
       <Table
-        cols={[tr("sku"), tr("name"), "Batch", tr("location"), tr("systemQty"), tr("counted"), tr("variance")]}
-        rows={(d.items || []).map((i: any) => [
-          i.sku,
-          lang === "ar" ? i.name_ar : i.name_en,
+        cols={[tr("name"), tr("quality"), tr("partType"), tr("models"), "Batch", tr("location"), tr("expectedStock"), tr("actualStock"), tr("varianceQty"), tr("varianceValue")]}
+        rows={filtered.map((i: any) => {
+          const value = lineVarianceValue(i);
+          return [
+          <span><span className="font-semibold">{productName(i, lang)}</span><span className="block text-xs text-slate-400">{i.sku}</span></span>,
+          i.quality || "—",
+          productType(i, lang) || "—",
+          i.models_label || "—",
           i.batch_code,
           i.item_location,
           num(i.system_qty, lang),
@@ -734,8 +911,50 @@ export function StocktakeDetail() {
             }} />
           ),
           i.variance == null ? "-" : num(i.variance, lang),
-        ])}
+          value == null ? "-" : money(value, lang),
+        ];
+        })}
       />
+    </Page>
+  );
+}
+
+export function WastagePage() {
+  const { tr, lang } = useApp();
+  const f = useListQuery("wastage");
+  const [rows, setRows] = useState<any[]>([]);
+  const [totalLoss, setTotalLoss] = useState(0);
+  async function load() {
+    const r = await get<{ data: any[]; total_loss?: number }>(`/api/inventory/wastage?${f.qs}`);
+    setRows(r.data || []);
+    setTotalLoss(Number(r.total_loss || 0));
+  }
+  const list = useLiveList(load, [f.qs]);
+  return (
+    <Page title={tr("wastage")}>
+      <SmartFilter
+        f={f}
+        fields={[{ key: "month", label: "month", type: "text", quick: true }]}
+        extra={<input className={`${inputCls} w-40`} type="month" value={f.values.month || ""} onChange={(e) => f.set("month", e.target.value)} />}
+      />
+      <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <Stat label={tr("financialLoss")} value={money(totalLoss, lang)} accent="rose" />
+        </div>
+        <Table
+          cols={[tr("month"), tr("stocktake"), tr("name"), tr("partType"), tr("models"), tr("qtyLost"), tr("cost"), tr("financialLoss")]}
+          rows={rows.map((r) => [
+            r.month,
+            <Link className="font-bold text-cyan-800" to={`/stocktake/${r.stocktake_id}`}>{r.stocktake_number}</Link>,
+            <span><span className="font-semibold">{productName(r, lang)}</span><span className="block text-xs text-slate-400">{r.sku}</span></span>,
+            productType(r, lang) || "—",
+            r.models_label || "—",
+            num(r.qty, lang),
+            money(r.resolved_cost ?? r.unit_cost, lang),
+            money(r.dynamic_loss_value ?? r.loss_value, lang),
+          ])}
+        />
+      </ListGate>
     </Page>
   );
 }

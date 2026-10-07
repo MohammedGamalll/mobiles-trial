@@ -134,7 +134,7 @@ export default function AppLayout() {
   const nav = useNavigate();
   const loc = useLocation();
   const pos = loc.pathname === "/pos";
-  const classicDesk = classic && (pos || loc.pathname === "/products" || loc.pathname === "/inventory");
+  const classicDesk = classic && (pos || loc.pathname === "/products" || loc.pathname === "/inventory" || loc.pathname.includes("daily-movement"));
   const [cmd, setCmd] = useState(false);
   const [noteType, setNoteType] = useState("");
   const [noteRead, setNoteRead] = useState("");
@@ -230,7 +230,7 @@ export default function AppLayout() {
   };
 
   return (
-    <div className={`app-shell flex ${pos ? "is-pos h-dvh overflow-hidden" : "min-h-screen"}`}>
+    <div className={`app-shell flex ${pos || classicDesk ? "is-pos h-dvh overflow-hidden" : "min-h-screen"}`}>
       <aside className={`${classic || pos ? "hidden" : "hidden md:flex md:flex-col"} app-sidebar sidebar-scroll sticky top-0 h-screen shrink-0 overflow-y-auto overflow-x-hidden transition-[width] duration-300 ease-in-out ${
         classic
           ? `border-e border-slate-200 bg-white text-slate-800 ${collapsed ? "w-[68px]" : "w-[220px]"}`
@@ -307,7 +307,7 @@ export default function AppLayout() {
         </div>
       ) : null}
 
-      <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${pos ? "overflow-hidden" : ""}`}>
+      <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${pos || classicDesk ? "overflow-hidden" : ""}`}>
         <header className={`topbar sticky top-0 z-30 flex items-center gap-1.5 overflow-visible border-b px-2 md:gap-2 md:px-4 ${
           classic ? "h-12 border-[#083056] bg-[#0b2a4a] py-0 text-white" : "border-[var(--border)] bg-[var(--surface)] py-3 text-[var(--text)]"
         }`}>

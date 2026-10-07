@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { audit, getSettings, hashPassword, isDupEntry, like, paginate, randomToken, round2, todayIso, type AppBindings, type AppDb, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
-import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql } from "../lib/filters";
+import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql, sqlText } from "../lib/filters";
 import { postCollectionJournal, postOpeningPartyJournal } from "../lib/ledger";
 import { applyStandaloneReceipt, customerOpeningSigned, fxCurrency, fxRate, openingCreditAbs, supplierPayableEgp } from "../lib/party-money";
 
@@ -327,7 +327,7 @@ peopleRoutes.get("/suppliers", requirePerm("suppliers.view", "purchases.view"), 
   const { page, pageSize, offset } = paginate(url);
   const where = ["deleted_at IS NULL"];
   const params: (string | number)[] = [];
-  applySearch(where, params, p.q, ["name", "IFNULL(phone,'')", "IFNULL(address,'')", "CAST(id AS TEXT)"]);
+  applySearch(where, params, p.q, ["name", "IFNULL(phone,'')", "IFNULL(address,'')", sqlText("id")]);
   applyEq(where, params, "id", p.supplier_id, true);
   applyEq(where, params, "active", p.status === "inactive" ? "0" : p.status === "active" ? "1" : p.active, true);
   if (p.dues === "yes") where.push("balance > 0");

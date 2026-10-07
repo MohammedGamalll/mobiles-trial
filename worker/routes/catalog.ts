@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { audit, isDupEntry, like, nextNumber, paginate, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { availableBatches, logMovement } from "../lib/stock";
-import { applyEq, applyRange, applySearch, listParams, PRODUCT_SORT, sortSql, stockScopeIds } from "../lib/filters";
+import { applyEq, applyRange, applySearch, listParams, PRODUCT_SORT, sortSql, sqlText, stockScopeIds } from "../lib/filters";
 import { placeLabel, resolveProductPlace } from "../lib/product-place";
 import { withLocationLabels } from "../lib/location-label";
 
@@ -327,6 +327,7 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
   const { page, pageSize, offset } = paginate(url);
   const where: string[] = ["p.deleted_at IS NULL"];
   const params: (string | number)[] = [];
+  applyEq(where, params, "p.id", p.product_id, true);
   if (brandId) {
     where.push("p.brand_id = ?");
     params.push(Number(brandId));
@@ -407,7 +408,7 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
   const posMode = url.searchParams.get("pos") === "1";
   const order = qtySort || sortSql(p.sort === "moved" ? "" : p.sort, PRODUCT_SORT, p.sort === "moved"
     ? `(SELECT COALESCE(SUM(ABS(sm.qty)),0) FROM stock_movements sm WHERE sm.product_id = p.id) DESC, p.id DESC`
-    : "p.id DESC");
+    : "p.id ASC");
   const listQ = c.env.DB
     .prepare(`${productSelectSql(stockExpr.availSql, stockExpr.join)} ${whereSql} ${order} LIMIT ? OFFSET ?`)
     .bind(...queryBinds, pageSize, offset)
@@ -578,8 +579,8 @@ catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
     result = await c.env.DB
       .prepare(
         `INSERT INTO products (sku, barcode, part_number, name_ar, name_en, brand_id, part_type_id, category_id, location_id, supplier_id,
-          purchase_price, selling_price, wholesale_price, min_selling_price, min_stock, image_url, description, notes, active, kind)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          purchase_price, last_purchase_price, selling_price, wholesale_price, min_selling_price, min_stock, image_url, description, notes, active, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         sku,
@@ -593,6 +594,7 @@ catalogRoutes.post("/products", requirePerm("products.create"), async (c) => {
         b.location_id || null,
         b.supplier_id || null,
         Number(b.purchase_price || 0),
+        Number(b.last_purchase_price || b.purchase_price || 0),
         Number(b.selling_price || 0),
         Number(b.wholesale_price || 0),
         Number(b.min_selling_price || 0),
@@ -661,7 +663,7 @@ catalogRoutes.put("/products/:id", requirePerm("products.edit"), async (c) => {
     await c.env.DB
       .prepare(
         `UPDATE products SET sku=?, barcode=?, part_number=?, name_ar=?, name_en=?, brand_id=?, part_type_id=?, category_id=?, location_id=?, supplier_id=?,
-         purchase_price=?, selling_price=?, wholesale_price=?, min_selling_price=?, min_stock=?, image_url=?, description=?, notes=?, active=?, kind=?, updated_at=datetime('now')
+         purchase_price=?, last_purchase_price=?, selling_price=?, wholesale_price=?, min_selling_price=?, min_stock=?, image_url=?, description=?, notes=?, active=?, kind=?, updated_at=datetime('now')
          WHERE id=?`,
       )
       .bind(
@@ -676,6 +678,7 @@ catalogRoutes.put("/products/:id", requirePerm("products.edit"), async (c) => {
         b.location_id || null,
         b.supplier_id || null,
         Number(b.purchase_price || 0),
+        Number(b.last_purchase_price || b.purchase_price || 0),
         Number(b.selling_price || 0),
         Number(b.wholesale_price || 0),
         Number(b.min_selling_price || 0),
@@ -748,7 +751,7 @@ function crud(table: string, perm: string, fields: string[]) {
     const where = ["(deleted_at IS NULL OR deleted_at = '')"];
     const params: (string | number)[] = [];
     const searchCols = fields.filter((f) => ["name_ar", "name_en", "name", "code", "path", "warehouse"].includes(f));
-    applySearch(where, params, p.q, searchCols.length ? searchCols : ["CAST(id AS TEXT)"]);
+    applySearch(where, params, p.q, searchCols.length ? searchCols : [sqlText("id")]);
     applyEq(where, params, "brand_id", p.brand_id, true);
     applyEq(where, params, "kind", p.kind);
     applyEq(where, params, "parent_id", p.parent_id, true);

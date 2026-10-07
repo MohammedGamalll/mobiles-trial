@@ -1,0 +1,1 @@
+ALTER TABLE payslips ADD COLUMN manual_deduction REAL NOT NULL DEFAULT 0;

@@ -325,8 +325,8 @@ export async function settleInvoice(
         .first<{ id: number }>();
       if (!emp) throw new Error("no_courier_employee");
       await db
-        .prepare("INSERT INTO salary_advances (employee_id, amount, date, month, status, notes, created_by) VALUES (?, ?, ?, ?, 'open', ?, ?)")
-        .bind(emp.id, cost, todayIso(), todayIso().slice(0, 7), `تالف ${inv.number}`, opts.userId)
+        .prepare("INSERT INTO salary_advances (employee_id, amount, remaining, date, month, status, notes, created_by) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)")
+        .bind(emp.id, cost, cost, todayIso(), todayIso().slice(0, 7), `تالف ${inv.number}`, opts.userId)
         .run();
     }
     if (chargeTo === "customer" && inv.customer_id) {

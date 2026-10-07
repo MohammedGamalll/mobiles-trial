@@ -166,6 +166,19 @@ export async function restockToBatch(db: AppDb, batchId: number, productId: numb
   ]);
 }
 
+export async function consumeFromBatch(db: AppDb, batchId: number, productId: number, qty: number) {
+  const upd = await db
+    .prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty - ? WHERE id = ? AND remaining_qty - reserved_qty >= ?")
+    .bind(qty, batchId, qty)
+    .run();
+  if (!upd.meta.changes) throw new Error("INSUFFICIENT_STOCK");
+  const prod = await db
+    .prepare("UPDATE products SET current_stock = current_stock - ?, updated_at = datetime('now') WHERE id = ? AND current_stock >= ?")
+    .bind(qty, productId, qty)
+    .run();
+  if (!prod.meta.changes) throw new Error("INSUFFICIENT_STOCK");
+}
+
 export async function logMovement(
   db: AppDb,
   opts: {

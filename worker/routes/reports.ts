@@ -3,7 +3,9 @@ import { like, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { csvBody } from "../lib/csv";
 import { reconcile } from "../lib/reconcile";
-import { applyDate, applyEq, applyInvoiceListFilters, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
+import { loadTrialBalance, splitClosingSides } from "../lib/trial-balance";
+import { loadDailyMovement } from "../lib/daily-movement";
+import { applyDate, applyEq, applyInvoiceListFilters, applyRange, applySearch, listParams, resolveDates, sqlText } from "../lib/filters";
 import { listFilteredProducts } from "../lib/product-query";
 import { productToImportCells, productsImportWorkbook } from "../lib/product-import";
 
@@ -337,7 +339,19 @@ reportRoutes.get("/expiry", requirePerm("reports.view", "inventory.view"), async
   return c.json({ data: results || [], days });
 });
 
-reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.view", "customers.view", "inventory.view", "expenses.view"), async (c) => {
+reportRoutes.get("/trial-balance", requirePerm("reports.view", "ledger.view"), async (c) => {
+  const data = await loadTrialBalance(c.env.DB, listParams(new URL(c.req.url)));
+  return c.json(data);
+});
+
+reportRoutes.get("/daily-movement", requirePerm("reports.view"), async (c) => {
+  const user = c.get("user");
+  const hideCost = user.role_slug !== "admin" && !user.permissions.includes("costs.view");
+  const data = await loadDailyMovement(c.env.DB, listParams(new URL(c.req.url)), { hideCost });
+  return c.json(data);
+});
+
+reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.view", "customers.view", "inventory.view", "expenses.view", "ledger.view"), async (c) => {
   const url = new URL(c.req.url);
   const kind = url.searchParams.get("kind") || "invoices";
   const p = listParams(url);
@@ -361,6 +375,8 @@ reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.
     sales: ["reports.view"],
     aging: ["reports.view", "customers.view"],
     profit: ["reports.view"],
+    "trial-balance": ["reports.view", "ledger.view"],
+    "daily-movement": ["reports.view"],
   };
   if (need[kind] && !allow(...need[kind])) return c.json({ error: "forbidden" }, 403);
   let headers: string[] = [];
@@ -433,7 +449,7 @@ reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.
     applyEq(where, params, "pmt.customer_id", p.customer_id, true);
     applyEq(where, params, "pmt.method", p.payment_method || p.method);
     applyRange(where, params, "pmt.amount", p.amount_min, p.amount_max);
-    applySearch(where, params, p.q, ["IFNULL(c.name,'')", "CAST(pmt.id AS TEXT)", "IFNULL(si.number,'')"]);
+    applySearch(where, params, p.q, ["IFNULL(c.name,'')", sqlText("pmt.id"), "IFNULL(si.number,'')"]);
     const { results } = await c.env.DB
       .prepare(
         `SELECT pmt.date, si.number as invoice_number, c.name as customer, pmt.method, pmt.amount, pmt.notes
@@ -497,6 +513,65 @@ reportRoutes.get("/export", requirePerm("reports.view", "sales.view", "products.
       .all<Record<string, unknown>>();
     headers = ["number", "date", "product", "qty", "cost", "price", "profit"];
     rows = (results || []).map((r) => [r.number, r.date, r.product_name, r.qty, r.unit_cost, r.unit_price, r.profit]);
+  } else if (kind === "trial-balance") {
+    const tb = await loadTrialBalance(c.env.DB, p);
+    headers = ["code", "name_ar", "name_en", "type", "opening", "debit", "credit", "closing_debit", "closing_credit"];
+    rows = tb.data.map((r) => {
+      const sides = splitClosingSides(r.closing_balance);
+      const absOrEmpty = (n: number) => (Math.abs(n) < 0.005 ? "" : Math.abs(n));
+      return [
+        r.code,
+        r.name_ar,
+        r.name_en,
+        r.type,
+        absOrEmpty(r.opening_balance),
+        absOrEmpty(r.total_debit),
+        absOrEmpty(r.total_credit),
+        sides.debit || "",
+        sides.credit || "",
+      ];
+    });
+    filename = `trial-balance-${tb.from}-${tb.to}`;
+  } else if (kind === "daily-movement") {
+    const hideCost = user.role_slug !== "admin" && !user.permissions.includes("costs.view");
+    const dm = await loadDailyMovement(c.env.DB, p, { hideCost });
+    headers = ["section", "date", "time", "sku", "name", "unit", "qty", "price", "total", "discount", "addition", "net", ...(hideCost ? [] : ["cost", "profit"]), "customer"];
+    rows = [
+      ...Object.entries(dm.summary).map(([k, v]) => ["summary", k, "", "", "", "", "", "", v, "", "", "", ...(hideCost ? [] : ["", ""]), ""]),
+      ...dm.sales_lines.map((r) => [
+        "sale",
+        r.date,
+        r.time,
+        r.sku,
+        r.name,
+        r.unit,
+        r.qty,
+        r.price,
+        r.total,
+        r.discount,
+        r.addition,
+        r.net,
+        ...(hideCost ? [] : [(r as { cost?: number }).cost ?? "", (r as { profit?: number }).profit ?? ""]),
+        r.customer,
+      ]),
+      ...dm.return_lines.map((r) => [
+        "return",
+        r.date,
+        r.time,
+        r.sku,
+        r.name,
+        r.unit,
+        r.qty,
+        r.price,
+        r.total,
+        r.discount,
+        r.addition,
+        r.net,
+        ...(hideCost ? [] : ["", ""]),
+        r.customer,
+      ]),
+    ];
+    filename = `daily-movement-${dm.from.slice(0, 10)}-${dm.to.slice(0, 10)}`;
   } else {
     return c.json({ error: "unknown_export" }, 400);
   }

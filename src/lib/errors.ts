@@ -31,6 +31,8 @@ const ERR_KEYS: Record<string, Msg> = {
   no_items: "errNoItems",
   missing: "errMissing",
   missing_fields: "errMissing",
+  equity_cap: "errEquityCap",
+  invalid_percent: "errInvalidPercent",
   ledger: "errLedger",
   bad_excel: "errBadExcel",
   missing_headers: "errBadExcel",

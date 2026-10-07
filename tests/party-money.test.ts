@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyStandaloneReceipt,
+  applySupplierPayment,
   customerOpeningSigned,
   fromEgp,
   splitInvoiceCash,
@@ -64,4 +65,23 @@ test("quote overpay wallet records surplus", () => {
   assert.equal(s.invoicePaid, 1000);
   assert.equal(s.remaining, 0);
   assert.equal(s.surplus, 200);
+});
+
+test("supplier overpay becomes negative wallet (prepaid)", () => {
+  const r = applySupplierPayment({
+    requested: 700,
+    apBalance: 500,
+    invoiceRemainings: [{ id: 1, remaining: 500 }],
+    surplusMode: "wallet",
+  });
+  assert.equal(r.take, 700);
+  assert.equal(r.surplus, 200);
+  assert.equal(r.nextBalance, -200);
+});
+
+test("underpay leaves supplier debt", () => {
+  const s = splitInvoiceCash(600, 1000, "wallet");
+  assert.equal(s.invoicePaid, 600);
+  assert.equal(s.remaining, 400);
+  assert.equal(s.surplus, 0);
 });

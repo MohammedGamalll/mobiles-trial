@@ -1,9 +1,11 @@
 import { Hono } from "hono";
-import { audit, nextNumber, paginate, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
+import { audit, nextNumber, paginate, round2, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { applyDate, applyEq, applyLocationCol, applySearch, listParams } from "../lib/filters";
 import { requirePerm } from "../lib/auth";
 import { logMovement, maybeStockAlerts } from "../lib/stock";
 import { withLocationLabels } from "../lib/location-label";
+import { executeTransfer, stocktakeAbsVarianceValue, stocktakeUnitCost, wastageFromVariance } from "../lib/stock-transfer";
+import { postWastageJournal } from "../lib/ledger";
 
 export const stockOpsRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -57,7 +59,7 @@ stockOpsRoutes.get("/locations", requirePerm("locations.manage", "inventory.view
   return c.json({ data: labeled.filter((l) => Number((l as { active?: number }).active) !== 0) });
 });
 
-stockOpsRoutes.get("/locations/tree", requirePerm("locations.manage", "inventory.view"), async (c) => {
+stockOpsRoutes.get("/locations/tree", requirePerm("locations.manage", "inventory.view", "transfers.view", "stocktake.view"), async (c) => {
   const { results } = await c.env.DB
     .prepare(
       `SELECT sl.*,
@@ -180,17 +182,23 @@ stockOpsRoutes.delete("/locations/:id", requirePerm("locations.manage"), async (
   return c.json({ ok: true });
 });
 
-stockOpsRoutes.get("/by-location", requirePerm("inventory.view"), async (c) => {
+stockOpsRoutes.get("/by-location", requirePerm("inventory.view", "transfers.view", "transfers.create", "stocktake.view"), async (c) => {
   const locationId = Number(new URL(c.req.url).searchParams.get("location_id") || 0);
   if (!locationId) return c.json({ data: [] });
   const ids = await descendantIds(c.env.DB, locationId);
   const placeholders = ids.map(() => "?").join(",");
   const { results } = await c.env.DB
     .prepare(
-      `SELECT ib.*, p.name_ar, p.name_en, p.sku, sl.name as location_name, sl.path as location_path,
+      `SELECT ib.*, p.name_ar, p.name_en, p.sku, p.quality,
+              pt.name_ar as part_type_ar, pt.name_en as part_type_en,
+              b.name_ar as brand_ar, b.name_en as brand_en,
+              (SELECT GROUP_CONCAT(dm.name SEPARATOR ', ') FROM product_models pm JOIN device_models dm ON dm.id = pm.model_id WHERE pm.product_id = p.id) as models_label,
+              sl.name as location_name, sl.path as location_path,
               (ib.remaining_qty - ib.reserved_qty) as available
        FROM inventory_batches ib
        JOIN products p ON p.id = ib.product_id
+       LEFT JOIN part_types pt ON pt.id = p.part_type_id
+       LEFT JOIN brands b ON b.id = p.brand_id
        LEFT JOIN storage_locations sl ON sl.id = ib.location_id
        WHERE ib.location_id IN (${placeholders}) AND ib.remaining_qty > 0
        ORDER BY p.name_ar, ib.id`,
@@ -245,10 +253,16 @@ stockOpsRoutes.get("/transfers/:id", requirePerm("transfers.view"), async (c) =>
   if (!row) return c.json({ error: "not_found" }, 404);
   const items = await c.env.DB
     .prepare(
-      `SELECT ti.*, p.name_ar, p.sku, ib.batch_code
+      `SELECT ti.*, p.name_ar, p.name_en, p.sku, p.quality,
+              pt.name_ar as part_type_ar, pt.name_en as part_type_en,
+              b.name_ar as brand_ar, b.name_en as brand_en,
+              (SELECT GROUP_CONCAT(dm.name SEPARATOR ', ') FROM product_models pm JOIN device_models dm ON dm.id = pm.model_id WHERE pm.product_id = p.id) as models_label,
+              ib.batch_code
        FROM stock_transfer_items ti
        JOIN products p ON p.id = ti.product_id
        JOIN inventory_batches ib ON ib.id = ti.batch_id
+       LEFT JOIN part_types pt ON pt.id = p.part_type_id
+       LEFT JOIN brands b ON b.id = p.brand_id
        WHERE ti.transfer_id = ?`,
     )
     .bind(id)
@@ -274,130 +288,55 @@ stockOpsRoutes.post("/transfers", requirePerm("transfers.create"), async (c) => 
   const from = await locationById(c.env.DB, b.from_location_id);
   const to = await locationById(c.env.DB, b.to_location_id);
   if (!from || !to) return c.json({ error: "location_missing" }, 400);
-  const number = await nextNumber(c.env.DB, "transfer");
-  const ins = await c.env.DB
-    .prepare(
-      `INSERT INTO stock_transfers (number, date, status, from_location_id, to_location_id, notes, created_by)
-       VALUES (?, ?, 'draft', ?, ?, ?, ?)`,
-    )
-    .bind(number, b.date || todayIso(), from.id, to.id, b.notes || null, c.get("user").id)
-    .run();
-  const id = ins.meta.last_row_id;
-  for (const item of b.items) {
-    const batch = await c.env.DB
-      .prepare("SELECT id, product_id, remaining_qty, reserved_qty, unit_cost FROM inventory_batches WHERE id = ?")
-      .bind(item.batch_id)
-      .first<{ id: number; product_id: number; remaining_qty: number; reserved_qty: number; unit_cost: number }>();
-    if (!batch || batch.product_id !== item.product_id) return c.json({ error: "batch_missing" }, 400);
-    if (item.qty <= 0 || item.qty > batch.remaining_qty - batch.reserved_qty) return c.json({ error: "insufficient_stock" }, 400);
-    await c.env.DB
-      .prepare("INSERT INTO stock_transfer_items (transfer_id, product_id, batch_id, qty, unit_cost) VALUES (?, ?, ?, ?, ?)")
-      .bind(id, item.product_id, item.batch_id, item.qty, batch.unit_cost)
-      .run();
+  const user = c.get("user");
+  try {
+    const created = await c.env.DB.transaction(async (tx) => {
+      const number = await nextNumber(tx, "transfer");
+      const ins = await tx
+        .prepare(
+          `INSERT INTO stock_transfers (number, date, status, from_location_id, to_location_id, notes, created_by)
+           VALUES (?, ?, 'draft', ?, ?, ?, ?)`,
+        )
+        .bind(number, b.date || todayIso(), from.id, to.id, b.notes || null, user.id)
+        .run();
+      const id = ins.meta.last_row_id;
+      for (const item of b.items) {
+        const batch = await tx
+          .prepare("SELECT id, product_id, remaining_qty, reserved_qty, unit_cost FROM inventory_batches WHERE id = ?")
+          .bind(item.batch_id)
+          .first<{ id: number; product_id: number; remaining_qty: number; reserved_qty: number; unit_cost: number }>();
+        if (!batch || batch.product_id !== item.product_id) throw new Error("batch_missing");
+        if (item.qty <= 0 || item.qty > batch.remaining_qty - batch.reserved_qty) throw new Error("insufficient_stock");
+        await tx
+          .prepare("INSERT INTO stock_transfer_items (transfer_id, product_id, batch_id, qty, unit_cost) VALUES (?, ?, ?, ?, ?)")
+          .bind(id, item.product_id, item.batch_id, item.qty, batch.unit_cost)
+          .run();
+      }
+      await executeTransfer(tx, id, user.id);
+      return { id, number };
+    });
+    await audit(c.env.DB, user, "create_transfer", "stock_transfer", created.id, `Create ${created.number}`);
+    return c.json({ id: created.id, number: created.number }, 201);
+  } catch (err) {
+    const msg = String((err as Error)?.message || "");
+    if (["insufficient_stock", "batch_missing", "cancelled"].includes(msg)) return c.json({ error: msg }, 400);
+    throw err;
   }
-  await audit(c.env.DB, c.get("user"), "create_transfer", "stock_transfer", id, `Create ${number}`);
-  return c.json({ id, number }, 201);
 });
 
 stockOpsRoutes.post("/transfers/:id/complete", requirePerm("transfers.complete"), async (c) => {
   const id = Number(c.req.param("id"));
-  const trn = await c.env.DB.prepare("SELECT * FROM stock_transfers WHERE id = ?").bind(id).first<{
-    id: number;
-    number: string;
-    status: string;
-    from_location_id: number;
-    to_location_id: number;
-  }>();
-  if (!trn) return c.json({ error: "not_found" }, 404);
-  if (trn.status === "completed") return c.json({ error: "already_completed" }, 400);
-  if (trn.status === "cancelled") return c.json({ error: "cancelled" }, 400);
-  const { results: items } = await c.env.DB
-    .prepare("SELECT * FROM stock_transfer_items WHERE transfer_id = ?")
-    .bind(id)
-    .all<{ id: number; product_id: number; batch_id: number; qty: number; unit_cost: number }>();
   const user = c.get("user");
-  for (const item of items) {
-    const batch = await c.env.DB
-      .prepare("SELECT * FROM inventory_batches WHERE id = ?")
-      .bind(item.batch_id)
-      .first<{
-        id: number;
-        remaining_qty: number;
-        reserved_qty: number;
-        unit_cost: number;
-        product_id: number;
-        batch_code: string;
-        purchase_id: number | null;
-        supplier_id: number | null;
-        purchase_date: string | null;
-        expiry_date: string | null;
-        production_date: string | null;
-      }>();
-    if (!batch) return c.json({ error: "batch_missing" }, 400);
-    const avail = batch.remaining_qty - batch.reserved_qty;
-    if (item.qty > avail) return c.json({ error: "insufficient_stock", batch: batch.batch_code }, 400);
-    const moveAll = item.qty === batch.remaining_qty && batch.reserved_qty === 0;
-    let destBatchId = batch.id;
-    if (moveAll) {
-      await c.env.DB.prepare("UPDATE inventory_batches SET location_id = ? WHERE id = ?").bind(trn.to_location_id, batch.id).run();
-    } else {
-      const code = await nextNumber(c.env.DB, "batch");
-      const dest = await c.env.DB
-        .prepare(
-          `INSERT INTO inventory_batches (batch_code, product_id, purchase_id, supplier_id, purchase_date, original_qty, remaining_qty, reserved_qty, unit_cost, expiry_date, production_date, notes, location_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          code,
-          item.product_id,
-          batch.purchase_id,
-          batch.supplier_id,
-          batch.purchase_date,
-          item.qty,
-          item.qty,
-          batch.unit_cost,
-          batch.expiry_date,
-          batch.production_date,
-          `Transfer ${trn.number}`,
-          trn.to_location_id,
-        )
-        .run();
-      destBatchId = dest.meta.last_row_id;
-      await c.env.DB.prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty - ? WHERE id = ?").bind(item.qty, batch.id).run();
-    }
-    await logMovement(c.env.DB, {
-      productId: item.product_id,
-      batchId: batch.id,
-      type: "transfer_out",
-      qty: -item.qty,
-      unitCost: item.unit_cost,
-      referenceType: "transfer",
-      referenceId: id,
-      notes: trn.number,
-      userId: user.id,
-      fromLocationId: trn.from_location_id,
-      toLocationId: trn.to_location_id,
-    });
-    await logMovement(c.env.DB, {
-      productId: item.product_id,
-      batchId: destBatchId,
-      type: "transfer_in",
-      qty: item.qty,
-      unitCost: item.unit_cost,
-      referenceType: "transfer",
-      referenceId: id,
-      notes: trn.number,
-      userId: user.id,
-      fromLocationId: trn.from_location_id,
-      toLocationId: trn.to_location_id,
-    });
+  try {
+    const done = await c.env.DB.transaction(async (tx) => executeTransfer(tx, id, user.id));
+    await audit(c.env.DB, user, "complete_transfer", "stock_transfer", id, `Complete ${done.number}`);
+    return c.json({ ok: true });
+  } catch (err) {
+    const msg = String((err as Error)?.message || "");
+    if (msg === "not_found") return c.json({ error: "not_found" }, 404);
+    if (["insufficient_stock", "batch_missing", "cancelled"].includes(msg)) return c.json({ error: msg }, 400);
+    throw err;
   }
-  await c.env.DB
-    .prepare("UPDATE stock_transfers SET status = 'completed', completed_by = ?, completed_at = datetime('now') WHERE id = ?")
-    .bind(user.id, id)
-    .run();
-  await audit(c.env.DB, user, "complete_transfer", "stock_transfer", id, `Complete ${trn.number}`);
-  return c.json({ ok: true });
 });
 
 stockOpsRoutes.post("/transfers/:id/cancel", requirePerm("transfers.create"), async (c) => {
@@ -431,7 +370,14 @@ stockOpsRoutes.get("/stocktakes", requirePerm("stocktake.view"), async (c) => {
   }
   const { results } = await c.env.DB
     .prepare(
-      `SELECT s.*, sl.name as location_name
+      `SELECT s.*, sl.name as location_name,
+              (SELECT COALESCE(SUM(i.system_qty),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as expected_qty,
+              (SELECT COALESCE(SUM(CASE WHEN i.counted_qty IS NULL THEN 0 ELSE i.counted_qty END),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as actual_qty,
+              (SELECT COALESCE(SUM(IFNULL(i.variance,0)),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as variance_qty,
+              (SELECT COALESCE(SUM(CASE WHEN IFNULL(i.variance,0) < 0 THEN -i.variance ELSE 0 END),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as shortage_qty,
+              (SELECT COALESCE(SUM(CASE WHEN IFNULL(i.variance,0) > 0 THEN i.variance ELSE 0 END),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as surplus_qty,
+              (SELECT COALESCE(SUM(CASE WHEN IFNULL(i.variance,0) < 0 THEN -i.variance * COALESCE(i.unit_cost,0) ELSE 0 END),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as shortage_value,
+              (SELECT COALESCE(SUM(CASE WHEN IFNULL(i.variance,0) > 0 THEN i.variance * COALESCE(i.unit_cost,0) ELSE 0 END),0) FROM stocktake_items i WHERE i.stocktake_id = s.id) as surplus_value
        FROM stocktakes s
        LEFT JOIN storage_locations sl ON sl.id = s.location_id
        WHERE ${where.join(" AND ")}
@@ -453,9 +399,18 @@ stockOpsRoutes.get("/stocktakes/:id", requirePerm("stocktake.view"), async (c) =
   if (!row) return c.json({ error: "not_found" }, 404);
   const items = await c.env.DB
     .prepare(
-      `SELECT si.*, p.name_ar, p.name_en, p.sku, ib.batch_code, sl.name as item_location
+      `SELECT si.*, p.name_ar, p.name_en, p.sku, p.barcode, p.quality, p.category_id,
+              p.purchase_price, p.last_purchase_price,
+              pt.name_ar as part_type_ar, pt.name_en as part_type_en,
+              br.name_ar as brand_ar, br.name_en as brand_en,
+              cat.name_ar as category_ar, cat.name_en as category_en,
+              (SELECT GROUP_CONCAT(dm.name SEPARATOR ', ') FROM product_models pm JOIN device_models dm ON dm.id = pm.model_id WHERE pm.product_id = p.id) as models_label,
+              ib.batch_code, ib.unit_cost as batch_unit_cost, sl.name as item_location
        FROM stocktake_items si
        JOIN products p ON p.id = si.product_id
+       LEFT JOIN part_types pt ON pt.id = p.part_type_id
+       LEFT JOIN brands br ON br.id = p.brand_id
+       LEFT JOIN categories cat ON cat.id = p.category_id
        LEFT JOIN inventory_batches ib ON ib.id = si.batch_id
        LEFT JOIN storage_locations sl ON sl.id = si.location_id
        WHERE si.stocktake_id = ?
@@ -463,7 +418,43 @@ stockOpsRoutes.get("/stocktakes/:id", requirePerm("stocktake.view"), async (c) =
     )
     .bind(id)
     .all();
-  return c.json({ data: { ...row, items: items.results } });
+  const lines = (items.results || []).map((i: any) => {
+    const unit_cost = stocktakeUnitCost(i.unit_cost, i.batch_unit_cost, i.last_purchase_price, i.purchase_price);
+    const counted = i.counted_qty == null ? null : Number(i.counted_qty);
+    const expected = Number(i.system_qty || 0);
+    const variance = i.variance == null && counted == null ? null : Number(i.variance ?? counted - expected);
+    const variance_value = stocktakeAbsVarianceValue(expected, counted, unit_cost);
+    return { ...i, unit_cost, variance, variance_value };
+  });
+  const totals = lines.reduce(
+    (acc, i: any) => {
+      const expected = Number(i.system_qty || 0);
+      const counted = i.counted_qty == null ? null : Number(i.counted_qty);
+      const actual = counted == null ? 0 : counted;
+      const variance = Number(i.variance || 0);
+      const value = Number(i.variance_value || 0);
+      acc.expected_qty += expected;
+      acc.actual_qty += actual;
+      acc.variance_qty += variance;
+      if (counted != null && variance < 0) {
+        acc.shortage_qty += -variance;
+        acc.shortage_value += value;
+      } else if (counted != null && variance > 0) {
+        acc.surplus_qty += variance;
+        acc.surplus_value += value;
+      }
+      return acc;
+    },
+    { expected_qty: 0, actual_qty: 0, variance_qty: 0, shortage_qty: 0, surplus_qty: 0, shortage_value: 0, surplus_value: 0 },
+  );
+  totals.expected_qty = round2(totals.expected_qty);
+  totals.actual_qty = round2(totals.actual_qty);
+  totals.variance_qty = round2(totals.variance_qty);
+  totals.shortage_qty = round2(totals.shortage_qty);
+  totals.surplus_qty = round2(totals.surplus_qty);
+  totals.shortage_value = round2(totals.shortage_value);
+  totals.surplus_value = round2(totals.surplus_value);
+  return c.json({ data: { ...row, items: lines, totals } });
 });
 
 stockOpsRoutes.post("/stocktakes", requirePerm("stocktake.create"), async (c) => {
@@ -541,50 +532,127 @@ stockOpsRoutes.post("/stocktakes/:id/approve", requirePerm("stocktake.approve"),
     id: number;
     number: string;
     status: string;
+    date: string;
   }>();
   if (!st) return c.json({ error: "not_found" }, 404);
   if (st.status === "approved") return c.json({ error: "already_approved" }, 400);
   if (st.status !== "submitted") return c.json({ error: "not_submitted" }, 400);
-  const { results: items } = await c.env.DB
-    .prepare("SELECT * FROM stocktake_items WHERE stocktake_id = ? AND counted_qty IS NOT NULL")
-    .bind(id)
-    .all<{
-      id: number;
-      product_id: number;
-      batch_id: number | null;
-      location_id: number | null;
-      system_qty: number;
-      counted_qty: number;
-      unit_cost: number;
-    }>();
   const user = c.get("user");
-  for (const item of items) {
-    const variance = item.counted_qty - item.system_qty;
-    if (!variance || !item.batch_id) continue;
-    await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty + ? WHERE id = ?").bind(variance, item.batch_id),
-      c.env.DB.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(variance, item.product_id),
-    ]);
-    await logMovement(c.env.DB, {
-      productId: item.product_id,
-      batchId: item.batch_id,
-      type: "stocktake_adjust",
-      qty: variance,
-      unitCost: item.unit_cost,
-      referenceType: "stocktake",
-      referenceId: id,
-      notes: `${st.number} ${variance > 0 ? "+" : ""}${variance}`,
-      userId: user.id,
-      toLocationId: item.location_id,
+  try {
+    await c.env.DB.transaction(async (tx) => {
+      const { results: items } = await tx
+        .prepare(
+          `SELECT si.id, si.product_id, si.batch_id, si.location_id, si.system_qty, si.counted_qty, si.unit_cost,
+                  ib.unit_cost as batch_unit_cost, p.last_purchase_price, p.purchase_price
+           FROM stocktake_items si
+           LEFT JOIN inventory_batches ib ON ib.id = si.batch_id
+           LEFT JOIN products p ON p.id = si.product_id
+           WHERE si.stocktake_id = ? AND si.counted_qty IS NOT NULL`,
+        )
+        .bind(id)
+        .all<{
+          id: number;
+          product_id: number;
+          batch_id: number | null;
+          location_id: number | null;
+          system_qty: number;
+          counted_qty: number;
+          unit_cost: number;
+          batch_unit_cost: number | null;
+          last_purchase_price: number | null;
+          purchase_price: number | null;
+        }>();
+      let shortageValue = 0;
+      const month = String(st.date || todayIso()).slice(0, 7);
+      for (const item of items) {
+        const variance = Number(item.counted_qty) - Number(item.system_qty);
+        if (!variance || !item.batch_id) continue;
+        const cost = stocktakeUnitCost(item.unit_cost, item.batch_unit_cost, item.last_purchase_price, item.purchase_price);
+        await tx.prepare("UPDATE inventory_batches SET remaining_qty = remaining_qty + ? WHERE id = ?").bind(variance, item.batch_id).run();
+        await tx.prepare("UPDATE products SET current_stock = current_stock + ?, updated_at = datetime('now') WHERE id = ?").bind(variance, item.product_id).run();
+        await logMovement(tx, {
+          productId: item.product_id,
+          batchId: item.batch_id,
+          type: "stocktake_adjust",
+          qty: variance,
+          unitCost: cost,
+          referenceType: "stocktake",
+          referenceId: id,
+          notes: `${st.number} ${variance > 0 ? "+" : ""}${variance}`,
+          userId: user.id,
+          toLocationId: item.location_id,
+        });
+        await maybeStockAlerts(tx, item.product_id);
+        if (variance < 0) {
+          const waste = wastageFromVariance(variance, cost);
+          if (!waste) continue;
+          shortageValue = round2(shortageValue + waste.loss_value);
+          await tx
+            .prepare(
+              `INSERT INTO stock_wastage (stocktake_id, stocktake_item_id, product_id, batch_id, location_id, qty, unit_cost, loss_value, month)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(id, item.id, item.product_id, item.batch_id, item.location_id, waste.qty, waste.unit_cost, waste.loss_value, month)
+            .run();
+        }
+      }
+      await tx
+        .prepare("UPDATE stocktakes SET status = 'approved', approved_by = ?, approved_at = datetime('now') WHERE id = ?")
+        .bind(user.id, id)
+        .run();
+      if (shortageValue > 0.005) {
+        await postWastageJournal(tx, {
+          stocktakeId: id,
+          number: st.number,
+          date: st.date || todayIso(),
+          amount: shortageValue,
+          userId: user.id,
+        });
+      }
     });
-    await maybeStockAlerts(c.env.DB, item.product_id);
+  } catch (err) {
+    const msg = String((err as Error)?.message || "");
+    if (msg === "ledger" || msg === "unbalanced_journal") return c.json({ error: "ledger" }, 500);
+    throw err;
   }
-  await c.env.DB
-    .prepare("UPDATE stocktakes SET status = 'approved', approved_by = ?, approved_at = datetime('now') WHERE id = ?")
-    .bind(user.id, id)
-    .run();
   await audit(c.env.DB, user, "approve_stocktake", "stocktake", id, `Approve ${st.number}`);
   return c.json({ ok: true });
+});
+
+stockOpsRoutes.get("/wastage", requirePerm("stocktake.view"), async (c) => {
+  const p = listParams(new URL(c.req.url));
+  const where = ["1=1"];
+  const params: (string | number)[] = [];
+  applyEq(where, params, "w.month", p.month || p.pick_month);
+  applyEq(where, params, "w.stocktake_id", p.stocktake_id, true);
+  applySearch(where, params, p.q, ["st.number", "pr.name_ar", "pr.name_en", "pr.sku"]);
+  applyDate(where, params, "st.date", p);
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT w.*, st.number as stocktake_number, st.date as stocktake_date,
+              pr.name_ar, pr.name_en, pr.sku, pr.quality, pr.last_purchase_price, pr.purchase_price,
+              pt.name_ar as part_type_ar, pt.name_en as part_type_en,
+              (SELECT GROUP_CONCAT(dm.name SEPARATOR ', ') FROM product_models pm JOIN device_models dm ON dm.id = pm.model_id WHERE pm.product_id = pr.id) as models_label,
+              ib.unit_cost as batch_unit_cost,
+              COALESCE(NULLIF(w.unit_cost, 0), NULLIF(ib.unit_cost, 0), NULLIF(pr.last_purchase_price, 0), NULLIF(pr.purchase_price, 0), 0) as resolved_cost,
+              w.qty * COALESCE(NULLIF(w.unit_cost, 0), NULLIF(ib.unit_cost, 0), NULLIF(pr.last_purchase_price, 0), NULLIF(pr.purchase_price, 0), 0) as dynamic_loss_value
+       FROM stock_wastage w
+       JOIN stocktakes st ON st.id = w.stocktake_id
+       JOIN products pr ON pr.id = w.product_id
+       LEFT JOIN part_types pt ON pt.id = pr.part_type_id
+       LEFT JOIN inventory_batches ib ON ib.id = w.batch_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY w.id DESC LIMIT 400`,
+    )
+    .bind(...params)
+    .all();
+  const rows = (results || []).map((r: any) => {
+    const resolved_cost = stocktakeUnitCost(r.unit_cost, r.batch_unit_cost, r.last_purchase_price, r.purchase_price);
+    const dynamic_loss_value = round2(Number(r.qty || 0) * resolved_cost);
+    return { ...r, resolved_cost, dynamic_loss_value };
+  });
+  const total_loss = round2(rows.reduce((s: number, r: any) => s + Number(r.dynamic_loss_value || 0), 0));
+  return c.json({ data: rows, total_loss });
 });
 
 stockOpsRoutes.post("/stocktakes/:id/cancel", requirePerm("stocktake.create"), async (c) => {

@@ -26,6 +26,7 @@ import { ProductDialogClassic } from "../components/classic/ProductDialogClassic
 import { AccountDialogClassic } from "../components/classic/AccountDialogClassic";
 import { emptyProduct, type ProductForm } from "../hooks/useProductCatalog";
 import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
+import { PageSizeControl } from "../components/PageSizeControl";
 import { PosHeaderFilter, applyPosHeaderFilters, uniqueFilterValues } from "../components/PosHeaderFilter";
 import { binText, lastSupplierName } from "../lib/place";
 
@@ -75,7 +76,7 @@ export default function POSClassic() {
     retOpen, setRetOpen, retNo, setRetNo, retInv, setRetInv, retItems, setRetItems,
     newCust, setNewCust, qtyField, setQtyField, priceField, setPriceField,
     partyKind, setPartyKind,
-    catalogLoading, catalogError, catalogPage, setCatalogPage, catalogTotal, catalogPageSize, reloadCatalog,
+    catalogLoading, catalogError, catalogPage, setCatalogPage, catalogTotal, catalogPageSize, setCatalogPageSize, reloadCatalog,
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
@@ -437,6 +438,9 @@ export default function POSClassic() {
             </div>
           ) : (
             <div className="pos-classic-grid-wrap">
+              <div className="pos-classic-empty" style={{ display: "flex", gap: 8, justifyContent: "flex-end", opacity: 1, flex: "none" }}>
+                <PageSizeControl value={catalogPageSize} onChange={setCatalogPageSize} />
+              </div>
               <div className="pos-classic-table">
                 <table>
                   <thead>
@@ -477,7 +481,7 @@ export default function POSClassic() {
                           <td>{p.unit || ""}</td>
                           <td>{num(p.current_stock ?? p.available, lang)}</td>
                           <td>{num(p.available, lang)}</td>
-                          <td>{p.quality || ""}</td>
+                          <td>{p.quality || (lang === "ar" ? p.category_ar : p.category_en) || p.category_ar || ""}</td>
                           <td>{(lang === "ar" ? p.part_type_ar : p.part_type_en) || p.part_type_ar || ""}</td>
                           <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || ""}</td>
                           <td>{lastSupplierName(p)}</td>
@@ -501,6 +505,7 @@ export default function POSClassic() {
                 </table>
                 {catalogTotal > 0 ? (
                   <div className="pos-classic-empty" style={{ display: "flex", gap: 8, justifyContent: "flex-end", opacity: 1 }}>
+                    <PageSizeControl value={catalogPageSize} onChange={setCatalogPageSize} />
                     <span>{num((catalogPage - 1) * catalogPageSize + (visible.length ? 1 : 0), lang)}–{num((catalogPage - 1) * catalogPageSize + visible.length, lang)} {tr("of")} {num(catalogTotal, lang)}</span>
                     <button type="button" disabled={catalogPage <= 1 || catalogLoading} onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}>{tr("prev")}</button>
                     <button type="button" disabled={catalogLoading || catalogPage >= Math.max(1, Math.ceil(catalogTotal / catalogPageSize))} onClick={() => setCatalogPage((n) => n + 1)}>{tr("next")}</button>

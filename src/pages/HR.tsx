@@ -68,6 +68,7 @@ export function EmployeesPage() {
                 <th>{tr("shift")}</th>
                 <th>{tr("basicSalary")}</th>
                 <th>{tr("allowances")}</th>
+                <th>{tr("advances")}</th>
                 <th>{tr("status")}</th>
                 <th></th>
               </tr>
@@ -83,6 +84,7 @@ export function EmployeesPage() {
                   <td>{e.shift_name || "-"}</td>
                   <td>{money(e.basic_salary, lang)}</td>
                   <td>{money(e.allowances, lang)}</td>
+                  <td>{money(e.open_advances, lang)}</td>
                   <td><span className={statusClass(e.status === "active" ? "in" : "out")}>{e.status === "active" ? tr("active") : tr("inactive")}</span></td>
                   <td>
                     {can("hr.manage") ? (
@@ -327,7 +329,13 @@ export function PayrollPage() {
   const [runs, setRuns] = useState<any[]>([]);
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [detail, setDetail] = useState<any>(null);
+  const [payouts, setPayouts] = useState<Record<number, string>>({});
+  const [deducts, setDeducts] = useState<Record<number, string>>({});
   const { confirm, dialog } = useConfirm();
+
+  function slipDue(s: any) {
+    return Math.max(0, Math.round((Number(s.net || 0) - Number(s.paid_amount || 0)) * 100) / 100);
+  }
 
   async function load() {
     setRuns((await get<{ data: any[] }>(`/api/hr/payroll?${f.qs}`)).data || []);
@@ -337,6 +345,49 @@ export function PayrollPage() {
   async function openRun(id: number) {
     const r = await get<{ data: any }>(`/api/hr/payroll/${id}`);
     setDetail(r.data);
+    const next: Record<number, string> = {};
+    const nextDeduct: Record<number, string> = {};
+    for (const s of r.data?.slips || []) {
+      next[s.id] = String(slipDue(s));
+      nextDeduct[s.id] = String(Number(s.manual_deduction || 0));
+    }
+    setPayouts(next);
+    setDeducts(nextDeduct);
+  }
+
+  async function applyDeduction(slipId: number) {
+    if (!detail?.run) return;
+    await post(`/api/hr/payroll/${detail.run.id}/deduct`, {
+      payslip_id: slipId,
+      amount: Number(deducts[slipId] || 0),
+    });
+    await list.reload();
+    await openRun(detail.run.id);
+  }
+
+  function payoutList(slips: any[], oneId?: number) {
+    const list = oneId ? slips.filter((s) => s.id === oneId) : slips;
+    return list
+      .map((s) => ({ payslip_id: s.id, amount: Number(payouts[s.id] ?? slipDue(s)) }))
+      .filter((p) => {
+        const s = slips.find((x) => x.id === p.payslip_id);
+        return p.amount > 0 || (s && Number(s.net) <= 0 && !s.advances_settled);
+      });
+  }
+
+  async function payRun(oneId?: number) {
+    if (!detail?.run) return;
+    const body = { payouts: payoutList(detail.slips || [], oneId) };
+    if (!body.payouts.length) return;
+    await post(`/api/hr/payroll/${detail.run.id}/pay`, body);
+    await list.reload();
+    await openRun(detail.run.id);
+  }
+
+  function runStatusLabel(status: string) {
+    if (status === "paid") return tr("salaryPaid");
+    if (status === "partial") return tr("salaryPartial");
+    return tr("draft");
   }
 
   return (
@@ -347,7 +398,7 @@ export function PayrollPage() {
         <PrintBtn />
       </div>
       <SmartFilter f={f} date={false} search={false} fields={[
-        { key: "status", label: "status", type: "select", quick: true, options: [{ value: "draft", label: tr("draft") }, { value: "paid", label: tr("salaryPaid") }] },
+        { key: "status", label: "status", type: "select", quick: true, options: [{ value: "draft", label: tr("draft") }, { value: "partial", label: tr("salaryPartial") }, { value: "paid", label: tr("salaryPaid") }] },
         { key: "month", label: "pickMonth", type: "text" },
         { key: "year", label: "pickYear", type: "text" },
       ]} />
@@ -376,7 +427,7 @@ export function PayrollPage() {
                   {runs.map((r) => (
                     <tr key={r.id} className="cursor-pointer" onClick={() => openRun(r.id)}>
                       <td className="font-bold">{r.month}</td>
-                      <td><span className={statusClass(r.status === "paid" ? "in" : "open")}>{r.status === "paid" ? tr("salaryPaid") : tr("draft")}</span></td>
+                      <td><span className={statusClass(r.status === "paid" ? "in" : r.status === "partial" ? "partial" : "open")}>{runStatusLabel(r.status)}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -389,13 +440,14 @@ export function PayrollPage() {
             <div className="flex items-center justify-between">
               <h2 className="font-black">{detail.run.month}</h2>
               {can("hr.payroll") && detail.run.status !== "paid" ? (
-                <Btn className="no-print" onClick={() => confirm(tr("paySalaries"), tr("deleteConfirm"), async () => { await post(`/api/hr/payroll/${detail.run.id}/pay`, {}); await list.reload(); await openRun(detail.run.id); })}>{tr("paySalaries")}</Btn>
+                <Btn className="no-print" onClick={() => confirm(tr("paySalaries"), tr("deleteConfirm"), () => payRun())}>{tr("paySalaries")}</Btn>
               ) : null}
             </div>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-5">
               <Stat label={tr("employees")} value={String(detail.slips?.length || 0)} />
               <Stat label={tr("net")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.net || 0), 0), lang)} accent="emerald" />
-              <Stat label={tr("overtime")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.overtime || 0), 0), lang)} accent="cyan" />
+              <Stat label={tr("paidAmount")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.paid_amount || 0), 0), lang)} accent="cyan" />
+              <Stat label={tr("advances")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.advances || 0), 0), lang)} accent="rose" />
               <Stat label={tr("deductions")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.deductions || 0), 0), lang)} accent="rose" />
             </div>
             <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
@@ -407,31 +459,68 @@ export function PayrollPage() {
                       <th>{tr("name")}</th>
                       <th>{tr("basicSalary")}</th>
                       <th>{tr("allowances")}</th>
-                      <th>{tr("present")}</th>
-                      <th>{tr("leaves")}</th>
-                      <th>{tr("absent")}</th>
+                      <th>{tr("absentDays")}</th>
                       <th>{tr("overtime")}</th>
                       <th>{tr("advances")}</th>
-                      <th>{tr("deductions")}</th>
+                      <th>{tr("manualDeduction")}</th>
                       <th>{tr("net")}</th>
+                      <th>{tr("paidAmount")}</th>
+                      <th>{tr("remainingPay")}</th>
+                      <th className="no-print">{tr("payThisCycle")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(detail.slips || []).map((s: any) => (
+                    {(detail.slips || []).map((s: any) => {
+                      const due = slipDue(s);
+                      return (
                       <tr key={s.id}>
                         <td>{s.employee_code}</td>
                         <td>{s.employee_name}</td>
-                        <td>{money(s.basic, lang)}</td>
-                        <td>{money(s.allowances, lang)}</td>
-                        <td>{s.present_days}</td>
-                        <td>{s.leave_days || 0}</td>
-                        <td>{s.absent_days}</td>
-                        <td>{money(s.overtime, lang)}</td>
-                        <td>{money(s.advances, lang)}</td>
-                        <td>{money(s.deductions, lang)}</td>
-                        <td className="font-bold">{money(s.net, lang)}</td>
+                        <td dir="ltr">{money(s.basic, lang)}</td>
+                        <td dir="ltr">{money(s.allowances, lang)}</td>
+                        <td dir="ltr">{s.absent_days || 0}</td>
+                        <td dir="ltr">{money(s.overtime, lang)}</td>
+                        <td dir="ltr" className="font-bold text-rose-700">{money(s.advances, lang)}</td>
+                        <td>
+                          <span className="print:inline hidden" dir="ltr">{money(s.manual_deduction, lang)}</span>
+                          {detail.run.status !== "paid" && can("hr.payroll") && Number(s.paid_amount || 0) <= 0.005 ? (
+                            <div className="no-print flex flex-wrap items-center gap-1">
+                              <input
+                                className={`${inputCls} w-24`}
+                                dir="ltr"
+                                type="number"
+                                min={0}
+                                value={deducts[s.id] ?? String(Number(s.manual_deduction || 0))}
+                                onChange={(e) => setDeducts((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                              />
+                              <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => applyDeduction(s.id)}>{tr("applyDeduction")}</Btn>
+                            </div>
+                          ) : (
+                            <span className="no-print" dir="ltr">{money(s.manual_deduction, lang)}</span>
+                          )}
+                        </td>
+                        <td dir="ltr" className="font-bold">{money(s.net, lang)}</td>
+                        <td dir="ltr">{money(s.paid_amount, lang)}</td>
+                        <td dir="ltr">{money(due, lang)}</td>
+                        <td className="no-print">
+                          {detail.run.status !== "paid" && can("hr.payroll") && (due > 0 || !s.advances_settled) ? (
+                            <div className="flex flex-wrap items-center gap-1">
+                              <input
+                                className={`${inputCls} w-24`}
+                                dir="ltr"
+                                type="number"
+                                min={0}
+                                max={due}
+                                value={payouts[s.id] ?? String(due)}
+                                onChange={(e) => setPayouts((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                              />
+                              <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => payRun(s.id)}>{tr("payThisCycle")}</Btn>
+                            </div>
+                          ) : null}
+                        </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -727,6 +816,7 @@ export function AdvancesPage() {
       <SmartFilter f={f} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [
           { value: "open", label: statusLabel("open", lang) },
+          { value: "settled", label: statusLabel("settled", lang) },
           { value: "deducted", label: statusLabel("deducted", lang) },
           { value: "cancelled", label: statusLabel("cancelled", lang) },
         ] },
@@ -743,6 +833,7 @@ export function AdvancesPage() {
                 <th>{tr("date")}</th>
                 <th>{tr("month")}</th>
                 <th>{tr("amount")}</th>
+                <th>{tr("remaining")}</th>
                 <th>{tr("status")}</th>
                 <th></th>
               </tr>
@@ -754,6 +845,7 @@ export function AdvancesPage() {
                   <td>{r.date}</td>
                   <td>{r.month}</td>
                   <td>{money(r.amount, lang)}</td>
+                  <td>{money(r.remaining ?? (r.status === "open" ? r.amount : 0), lang)}</td>
                   <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
                   <td>
                     {r.status === "open" && can("advances.manage", "hr.payroll") ? (
@@ -762,7 +854,7 @@ export function AdvancesPage() {
                   </td>
                 </tr>
               ))}
-              {!rows.length ? <tr><td colSpan={6} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
+              {!rows.length ? <tr><td colSpan={7} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr> : null}
             </tbody>
           </table>
         </div>

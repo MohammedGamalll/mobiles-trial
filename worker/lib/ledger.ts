@@ -172,21 +172,52 @@ export async function postDamageJournal(
 
 export async function postPurchaseJournal(
   db: AppDb,
-  purchase: { id: number; number: string; date: string; total: number; paid: number; remaining: number; payment_method?: string | null },
+  purchase: { id: number; number: string; date: string; total: number; paid: number; remaining: number; surplus?: number; payment_method?: string | null },
   userId?: number | null,
 ) {
   if (await existingJournal(db, "purchase", purchase.id)) return;
   const inventory = await accountByCode(db, "1300");
   const ap = await accountByCode(db, "2100");
-  if (!inventory) return;
-  const lines: JournalLine[] = [{ account_id: inventory.id, debit: purchase.total }];
-  if (purchase.paid > 0) {
+  if (!inventory) throw new Error("ledger");
+  const paid = round2(purchase.paid || 0);
+  const remaining = round2(purchase.remaining || 0);
+  const surplus = round2(purchase.surplus || 0);
+  const lines: JournalLine[] = [{ account_id: inventory.id, debit: round2(purchase.total) }];
+  if (paid > 0) {
     const cash = await cashByKind(db, methodKind(purchase.payment_method));
-    if (cash) lines.push({ account_id: cash.account_id, credit: purchase.paid });
+    if (!cash) throw new Error("ledger");
+    lines.push({ account_id: cash.account_id, credit: paid });
   }
-  if (purchase.remaining > 0 && ap) lines.push({ account_id: ap.id, credit: purchase.remaining });
-  if (lines.length < 2) return;
+  if (remaining > 0) {
+    if (!ap) throw new Error("ledger");
+    lines.push({ account_id: ap.id, credit: remaining });
+  }
+  if (surplus > 0) {
+    if (!ap) throw new Error("ledger");
+    lines.push({ account_id: ap.id, debit: surplus, notes: "surplus wallet" });
+  }
   await postJournal(db, { date: purchase.date, description: `شراء ${purchase.number}`, source: "purchase", sourceId: purchase.id, lines, userId });
+}
+
+export async function postPurchaseReturnJournal(
+  db: AppDb,
+  opts: { returnId: number; number: string; date: string; retTotal: number; apDrop: number; refund: number; method?: string | null; userId?: number | null },
+) {
+  if (await existingJournal(db, "purchase_return", opts.returnId)) return;
+  const inventory = await accountByCode(db, "1300");
+  const ap = await accountByCode(db, "2100");
+  if (!inventory) throw new Error("ledger");
+  const lines: JournalLine[] = [{ account_id: inventory.id, credit: opts.retTotal }];
+  if (opts.apDrop > 0) {
+    if (!ap) throw new Error("ledger");
+    lines.push({ account_id: ap.id, debit: opts.apDrop });
+  }
+  if (opts.refund > 0) {
+    const cash = await cashAccountFor(db, opts.method);
+    if (!cash) throw new Error("ledger");
+    lines.push({ account_id: cash.account_id, debit: opts.refund });
+  }
+  await postJournal(db, { date: opts.date, description: `مرتجع شراء ${opts.number}`, source: "purchase_return", sourceId: opts.returnId, lines, userId: opts.userId });
 }
 
 export async function postReturnJournal(
@@ -260,6 +291,27 @@ export async function postCollectionJournal(
   });
 }
 
+export async function postSupplierPaymentJournal(
+  db: AppDb,
+  opts: { paymentId: number; invoiceNumber: string; amount: number; method?: string; date: string; userId?: number | null },
+) {
+  if (await existingJournal(db, "supplier_payment", opts.paymentId)) return;
+  const ap = await accountByCode(db, "2100");
+  const cash = await cashAccountFor(db, opts.method);
+  if (!ap || !cash) throw new Error("ledger");
+  await postJournal(db, {
+    date: opts.date,
+    description: `سداد مورد ${opts.invoiceNumber}`,
+    source: "supplier_payment",
+    sourceId: opts.paymentId,
+    userId: opts.userId,
+    lines: [
+      { account_id: ap.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
 export async function postExpenseJournal(db: AppDb, opts: { id: number; amount: number; date: string; description?: string | null; userId?: number | null; cashAccountId?: number | null }) {
   if (await existingJournal(db, "expense", opts.id)) return;
   const exp = await accountByCode(db, "5200");
@@ -310,6 +362,71 @@ export async function postPayrollJournal(db: AppDb, opts: { runId: number; month
     lines: [
       { account_id: sal.id, debit: opts.total },
       { account_id: cash.account_id, credit: opts.total },
+    ],
+  });
+}
+
+export async function postWastageJournal(
+  db: AppDb,
+  opts: { stocktakeId: number; number: string; date: string; amount: number; userId?: number | null },
+) {
+  const amount = round2(opts.amount);
+  if (amount <= 0) return;
+  if (await existingJournal(db, "stock_wastage", opts.stocktakeId)) return;
+  const inv = await accountByCode(db, "1300");
+  const waste = await accountByCode(db, "5400");
+  if (!inv || !waste) throw new Error("ledger");
+  await postJournal(db, {
+    date: opts.date || todayIso(),
+    description: `هوالك جرد ${opts.number}`,
+    source: "stock_wastage",
+    sourceId: opts.stocktakeId,
+    userId: opts.userId,
+    lines: [
+      { account_id: waste.id, debit: amount },
+      { account_id: inv.id, credit: amount },
+    ],
+  });
+}
+
+export async function postPartnerDrawJournal(
+  db: AppDb,
+  opts: { txId: number; partnerName: string; amount: number; date: string; cashAccountId: number; userId?: number | null },
+) {
+  if (await existingJournal(db, "partner_draw", opts.txId)) return;
+  const equity = await accountByCode(db, "3100");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!equity || !cash) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: `مسحوبات شريك ${opts.partnerName}`,
+    source: "partner_draw",
+    sourceId: opts.txId,
+    userId: opts.userId,
+    lines: [
+      { account_id: equity.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
+export async function postPartnerDepositJournal(
+  db: AppDb,
+  opts: { txId: number; partnerName: string; amount: number; date: string; cashAccountId: number; userId?: number | null },
+) {
+  if (await existingJournal(db, "partner_deposit", opts.txId)) return;
+  const equity = await accountByCode(db, "3100");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!equity || !cash) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: `حصة رأسمال ${opts.partnerName}`,
+    source: "partner_deposit",
+    sourceId: opts.txId,
+    userId: opts.userId,
+    lines: [
+      { account_id: cash.account_id, debit: opts.amount },
+      { account_id: equity.id, credit: opts.amount },
     ],
   });
 }

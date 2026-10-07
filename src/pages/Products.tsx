@@ -20,6 +20,7 @@ import {
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
 import type { Product } from "../hooks/usePOSLogic";
+import { PageSizeControl, parsePageSize } from "../components/PageSizeControl";
 
 function lookupLabel(row: { name_ar?: string; name_en?: string; name?: string } | undefined, lang: string) {
   if (!row) return "";
@@ -128,6 +129,7 @@ export default function Products() {
       box: "",
       supplier_id: "",
       purchase_price: 0,
+      last_purchase_price: 0,
       selling_price: 0,
       wholesale_price: 0,
       min_selling_price: 0,
@@ -163,7 +165,7 @@ export default function Products() {
   async function load() {
     const gen = ++loadGen.current;
     const p = new URLSearchParams(f.qs);
-    p.set("pageSize", "80");
+    p.set("pageSize", String(parsePageSize(f.values.pageSize, 50)));
     if (!p.get("page")) p.set("page", "1");
     if (warehouseId) {
       p.set("location_id", String(warehouseId));
@@ -203,7 +205,7 @@ export default function Products() {
       setCatalogQualities((r.data || []).map((x) => String(x.name || "").trim()).filter(Boolean));
     } catch {
       const r = await get<{ data: { quality?: string }[] }>("/api/products?pageSize=5000");
-      setCatalogQualities([...new Set((r.data || []).map((p) => String(p.quality || "").trim()).filter(Boolean))]);
+      setCatalogQualities([...new Set((r.data || []).map((p) => String(p.quality || p.category_ar || p.category_en || "").trim()).filter(Boolean))]);
     }
   }
 
@@ -261,6 +263,7 @@ export default function Products() {
     { value: "out", label: tr("stockOut") },
     { value: "dead", label: tr("deadStock") },
   ];
+  const pageSize = parsePageSize(f.values.pageSize, 50);
   const partTypeOptions = [...new Set((lookups?.part_types || []).map((r) => lookupLabel(r, lang)).filter(Boolean))].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
   const brandOptions = [...new Set((lookups?.brands || []).map((r) => lookupLabel(r, lang)).filter(Boolean))].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
   const modelOptions = [...new Set(
@@ -423,6 +426,9 @@ export default function Products() {
       </div>
       ) : (
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="no-print flex flex-wrap items-center justify-end gap-2 border-b border-slate-100 px-3 py-2">
+          <PageSizeControl value={pageSize} onChange={(n) => f.set("pageSize", String(n))} />
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -500,7 +506,7 @@ export default function Products() {
             <tbody>
               {catalogRows.map((p, i) => (
                 <tr key={p.id}>
-                  <td className="font-mono text-xs text-slate-400">{(f.page - 1) * 80 + i + 1}</td>
+                  <td className="font-mono text-xs text-slate-400">{(f.page - 1) * pageSize + i + 1}</td>
                   <td>
                     <div className="font-semibold">{lang === "ar" ? p.name_ar : p.name_en}</div>
                     <div className="text-xs text-slate-400">
@@ -509,7 +515,7 @@ export default function Products() {
                     </div>
                   </td>
                   <td>{p.sku}</td>
-                  <td>{p.quality || "—"}</td>
+                  <td>{p.quality || (lang === "ar" ? p.category_ar : p.category_en) || p.category_ar || "—"}</td>
                   <td>{lang === "ar" ? p.part_type_ar : p.part_type_en}</td>
                   <td>{lang === "ar" ? p.brand_ar : p.brand_en}</td>
                   <td className="max-w-40 truncate">{(p.models || []).map((m: any) => m.name).join(", ")}</td>
@@ -559,7 +565,7 @@ export default function Products() {
                       {can("products.delete") ? (
                         <button className="filter-link is-danger text-sm" onClick={() => confirmDelete(lang === "ar" ? p.name_ar : p.name_en, async () => { await del(`/api/products/${p.id}`); load(); })}>{tr("delete")}</button>
                       ) : null}
-                      <Link className="filter-link is-muted text-sm" to={`/inventory?q=${encodeURIComponent(p.sku)}`}>{tr("movements")}</Link>
+                      <Link className="filter-link is-muted text-sm" to={`/inventory?product_id=${p.id}${p.sku ? `&q=${encodeURIComponent(p.sku)}` : ""}`}>{tr("movements")}</Link>
                       <Link className="filter-link is-muted text-sm" to="/serials">{tr("serialSearch")}</Link>
                     </div>
                   </td>
@@ -571,9 +577,10 @@ export default function Products() {
       </div>
       )}
       <div className="no-print flex flex-wrap items-center justify-end gap-2 text-sm font-bold">
+        <PageSizeControl value={pageSize} onChange={(n) => f.set("pageSize", String(n))} />
         <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={f.page <= 1 || loading} onClick={() => f.set("page", String(f.page - 1))}>{tr("prev")}</button>
-        <span>{num(f.page, lang)} / {num(Math.max(1, Math.ceil((Number(totals.count) || 0) / 80)), lang)}</span>
-        <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={loading || f.page >= Math.max(1, Math.ceil((Number(totals.count) || 0) / 80))} onClick={() => f.set("page", String(f.page + 1))}>{tr("next")}</button>
+        <span>{num(f.page, lang)} / {num(Math.max(1, Math.ceil((Number(totals.count) || 0) / pageSize)), lang)}</span>
+        <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={loading || f.page >= Math.max(1, Math.ceil((Number(totals.count) || 0) / pageSize))} onClick={() => f.set("page", String(f.page + 1))}>{tr("next")}</button>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
@@ -715,7 +722,17 @@ export default function Products() {
               <option value={1}>{tr("yes")}</option>
             </select>
           </Field>
-          {["purchase_price", "selling_price", "wholesale_price", "min_selling_price", "min_stock", "price_2", "price_3", "price_4", "discount_pct", "opening_qty"].filter((k) => k !== "purchase_price" || can("costs.view")).map((k) => (
+          {can("costs.view") ? (
+            <>
+              <Field label={tr("posColAvgBuy")}>
+                <input className={inputCls} type="number" value={form.purchase_price} onChange={(e) => setForm({ ...form, purchase_price: Number(e.target.value) })} />
+              </Field>
+              <Field label={tr("posColLastBuy")}>
+                <input className={inputCls} type="number" value={form.last_purchase_price} onChange={(e) => setForm({ ...form, last_purchase_price: Number(e.target.value) })} />
+              </Field>
+            </>
+          ) : null}
+          {["selling_price", "wholesale_price", "min_selling_price", "min_stock", "price_2", "price_3", "price_4", "discount_pct", "opening_qty"].map((k) => (
             <Field key={k} label={k}>
               <input className={inputCls} type="number" value={form[k]} onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })} />
             </Field>

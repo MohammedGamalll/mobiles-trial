@@ -13,6 +13,7 @@ export function Drawer({
   children,
   wide,
   xl,
+  full,
 }: {
   open: boolean;
   title: string;
@@ -20,12 +21,13 @@ export function Drawer({
   children: ReactNode;
   wide?: boolean;
   xl?: boolean;
+  full?: boolean;
 }) {
   if (!open) return null;
   return (
     <div className="drawer-root fixed inset-0 z-50 no-print">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <aside className={`drawer-panel absolute inset-y-0 end-0 flex h-full flex-col border-s border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-2xl ${xl ? "w-full max-w-4xl" : wide ? "w-full max-w-xl" : "w-full max-w-md"}`}>
+      <aside className={`drawer-panel absolute inset-y-0 end-0 flex h-full flex-col border-s border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-2xl ${full ? "w-full max-w-6xl" : xl ? "w-full max-w-4xl" : wide ? "w-full max-w-xl" : "w-full max-w-md"}`}>
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h3 className="text-base font-bold">{title}</h3>
           <button className="rounded-lg px-2 py-1 text-[var(--muted)] hover:bg-[var(--surface-2)]" onClick={onClose}>
@@ -45,6 +47,7 @@ export function Modal(props: {
   children: ReactNode;
   wide?: boolean;
   xl?: boolean;
+  full?: boolean;
 }) {
   return <Drawer {...props} />;
 }

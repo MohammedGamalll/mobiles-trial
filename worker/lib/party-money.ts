@@ -61,6 +61,21 @@ export function applyStandaloneReceipt(opts: {
   return { take, applied, surplus, nextBalance };
 }
 
+/** Paying a supplier: same split as a customer receipt against AP. */
+export function applySupplierPayment(opts: {
+  requested: number;
+  apBalance: number;
+  invoiceRemainings: { id: number; remaining: number }[];
+  surplusMode: SurplusMode;
+}) {
+  return applyStandaloneReceipt({
+    requested: opts.requested,
+    arBalance: opts.apBalance,
+    invoiceRemainings: opts.invoiceRemainings,
+    surplusMode: opts.surplusMode,
+  });
+}
+
 export function splitInvoiceCash(requested: number, total: number, surplusMode: SurplusMode) {
   const req = round2(Math.max(0, Number(requested || 0)));
   const tot = round2(Math.max(0, Number(total || 0)));
