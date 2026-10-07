@@ -4,7 +4,7 @@ import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { ListGate } from "../components/ListGate";
 import { useLiveList } from "../hooks/useLiveList";
-import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel, invoicePayStatus } from "../lib/format";
+import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel, invoicePayStatus, posExchangePath } from "../lib/format";
 import { mergeWarehouseCards } from "../lib/warehouses";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls, printPage } from "../components/ui";
 import { apiMessage, useActionError } from "../lib/errors";
@@ -26,6 +26,7 @@ import { ReturnForm } from "./Invoice";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId, settings } = useApp();
+  const nav = useNavigate();
   const f = useListQuery("sales", { period: "today" });
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>({});
@@ -154,7 +155,7 @@ export function SalesList() {
       />
       </ListGate>
       <Modal open={!!retInv} title={tr("returnCreate")} onClose={() => setRetInv(null)} wide>
-        {retInv ? <ReturnForm inv={retInv} onDone={() => { setRetInv(null); list.reload(); }} onExchange={() => { window.location.href = "/pos"; }} /> : null}
+        {retInv ? <ReturnForm inv={retInv} onDone={() => { setRetInv(null); list.reload(); }} onExchange={() => { nav(posExchangePath(retInv)); }} /> : null}
       </Modal>
       <PaymentModal
         open={!!payRow}
@@ -1062,7 +1063,7 @@ export function CustomerDetail() {
         </div>
       ) : null}
       {tab === "invoices" ? <Table cols={[tr("invoiceNo"), tr("date"), tr("total"), tr("remaining"), tr("status")]} rows={(d.invoices||[]).map((i: any) => {
-        const payStatus = Number(i.remaining) > 0 && Number(i.paid) <= 0 && i.status === "partial" ? "unpaid_sale" : i.status;
+        const payStatus = invoicePayStatus(i);
         return [<Link to={`/sales/${i.id}`}>{i.number}</Link>, i.date, money(i.total, lang), money(i.remaining, lang), statusLabel(payStatus, lang)];
       })} /> : null}
       {tab === "payments" ? <Table cols={[tr("date"), tr("amount"), tr("payMethod")]} rows={(d.payments||[]).map((p: any) => [p.date, money(p.amount, lang), p.method || p.payment_method])} /> : null}

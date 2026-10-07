@@ -332,9 +332,24 @@ export function ExportBtn({ kind, query = "", className = "" }: { kind: string; 
 }
 
 export function printPage(mode: "a4" | "thermal" = "a4") {
-  document.documentElement.classList.toggle("print-thermal", mode === "thermal");
+  const html = document.documentElement;
+  html.classList.toggle("print-thermal", mode === "thermal");
+  let style = document.getElementById("print-page-size") as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "print-page-size";
+    document.head.appendChild(style);
+  }
+  style.textContent = mode === "thermal"
+    ? "@page { size: 80mm auto; margin: 2mm; }"
+    : "@page { size: A4; margin: 12mm; }";
+  const cleanup = () => {
+    html.classList.remove("print-thermal");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
   window.print();
-  window.setTimeout(() => document.documentElement.classList.remove("print-thermal"), 400);
+  window.setTimeout(cleanup, 1500);
 }
 
 export function PrintBtn({ className = "", thermal = false, onClick }: { className?: string; thermal?: boolean; onClick?: () => void | Promise<void> }) {

@@ -328,6 +328,38 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     return () => { live = false; };
   }, [params.get("held")]);
 
+  const exchangeMode = params.get("exchange") === "1";
+
+  useEffect(() => {
+    if (params.get("held")) return;
+    const cid = Number(params.get("customer") || 0);
+    const walk = String(params.get("walkin") || "").trim();
+    if (!cid && !walk && !exchangeMode) return;
+    if (exchangeMode) {
+      setPartyKind("customer");
+      setNotes((n) => n || "exchange");
+    }
+    if (walk && !cid) {
+      setCustomer(null);
+      setWalkIn(walk);
+      setCustomerQ(walk);
+    }
+    if (!cid) return;
+    let live = true;
+    get<{ data: any }>(`/api/customers/${cid}`).then((r) => {
+      if (!live || !r.data?.id) return;
+      setPartyKind("customer");
+      setCustomer(r.data);
+      setCustomerQ("");
+      setWalkIn("");
+      setAccountCode(String(r.data.id));
+      setAddress(r.data.address || "");
+      setArea(r.data.area || "");
+      if (r.data.price_list_id) setListId(Number(r.data.price_list_id));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [params.get("customer"), params.get("walkin"), params.get("exchange")]);
+
   useEffect(() => {
     get<{ data: any[] }>("/api/customers?pageSize=80").then((r) => {
       const rows = r.data || [];
@@ -775,6 +807,58 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     await submit({ hold: true });
   }
 
+  async function submitInvoiceReturn(exchange = false) {
+    if (!retInv) return;
+    try {
+      let lines = retItems.filter((x) => x.qty > 0);
+      if (exchange && !lines.length) {
+        lines = retItems.filter((x) => x.max > 0).map((x) => ({ ...x, qty: x.max }));
+        setRetItems(retItems.map((x) => (x.max > 0 && x.qty <= 0 ? { ...x, qty: x.max } : x)));
+      }
+      if (!lines.length) {
+        playSound("err");
+        setErr(tr("errNoItems"));
+        return;
+      }
+      await post(`/api/invoices/${retInv.id}/returns`, {
+        reason: exchange ? "exchange" : "",
+        items: lines.map((x) => ({ invoice_item_id: x.invoice_item_id, qty: x.qty })),
+      });
+      playSound("done");
+      setStockTick((n) => n + 1);
+      await loadToday().catch(() => {});
+      if (exchange) {
+        if (retInv.customer_id) {
+          setPartyKind("customer");
+          setCustomer({
+            id: retInv.customer_id,
+            name: retInv.customer_name,
+            phone: retInv.customer_phone,
+            whatsapp: retInv.customer_whatsapp,
+            address: retInv.address,
+            area: retInv.area,
+          });
+          setCustomerQ("");
+          setWalkIn("");
+          setAddress(retInv.address || "");
+          setArea(retInv.area || "");
+        } else if (retInv.customer_name) {
+          setCustomer(null);
+          setWalkIn(retInv.customer_name);
+          setCustomerQ(retInv.customer_name);
+        }
+        setNotes((n) => n || "exchange");
+      }
+      setRetOpen(false);
+      setRetInv(null);
+      setErr("");
+      searchRef.current?.focus();
+    } catch (e) {
+      playSound("err");
+      setErr(apiMessage(tr, e));
+    }
+  }
+
   async function saveAccount() {
     const name = (newCust.name || customerQ || walkIn || customer?.name || "").trim();
     if (!name) {
@@ -943,7 +1027,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       : customers;
 
   return {
-    tr, lang, lookups, can, nav, quoteMode, showCost,
+    tr, lang, lookups, can, nav, quoteMode, exchangeMode, showCost,
     q, setQ, catalog, typeFilter, setTypeFilter, kindFilter, setKindFilter,
     cart, setCart, sel, setSel, type, setType,
     customerQ, setCustomerQ, customers, custListOpen, setCustListOpen,
@@ -968,7 +1052,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
     subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer,
     printRows, printTotal, printExtra, printInvoice, related, waEnabled, cartQty,
-    loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice,
+    loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
   };
 }

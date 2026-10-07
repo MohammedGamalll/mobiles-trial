@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { money, num, statusClass, statusLabel } from "../lib/format";
+import { invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { Barcode } from "../components/Barcode";
@@ -59,7 +59,7 @@ function ClassicDropUp({
 export default function POSClassic() {
   const pos = usePOSLogic("classic");
   const {
-    tr, lang, lookups, can, nav, quoteMode, showCost,
+    tr, lang, lookups, can, nav, quoteMode, exchangeMode, showCost,
     q, setQ, typeFilter, setTypeFilter,
     cart, setCart, sel, setSel, type, setType, method, setMethod,
     customerQ, setCustomerQ, customers, custListOpen, setCustListOpen,
@@ -81,7 +81,7 @@ export default function POSClassic() {
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
     printRows, printInvoice, waEnabled, cartQty, applyParty, saveAccount,
-    loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice,
+    loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
     forceGoods, setForceGoods, setStockTick,
   } = pos;
@@ -150,6 +150,9 @@ export default function POSClassic() {
         ))}
       </div>
 
+      {exchangeMode ? (
+        <div className="no-print bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">{tr("exchangeHint")}</div>
+      ) : null}
       <div className={`pos-classic-body no-print ${railOpen ? "" : "is-rail-off"}`}>
         <aside className="pos-classic-rail">
           <button type="button" className="pos-classic-rail-tog" onClick={() => setRailOpen((v) => !v)} title={railOpen ? tr("collapse") : tr("expand")}>
@@ -775,7 +778,7 @@ export default function POSClassic() {
             <div className="text-lg font-black">{doneInv.number}</div>
             <div className="text-sm text-slate-500">{doneInv.customer_name || tr("walkIn")} · {money(doneInv.total, lang)}</div>
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className={statusClass(Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0 ? "unpaid_sale" : doneInv.status)}>{statusLabel(Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0 ? "unpaid_sale" : doneInv.status, lang)}</span>
+              <span className={statusClass(invoicePayStatus(doneInv))}>{statusLabel(invoicePayStatus(doneInv), lang)}</span>
             </div>
             <div className="print-sheet max-h-[50vh] overflow-auto rounded-2xl border border-slate-100 bg-white p-4">
               <InvoicePrint inv={printInvoice.number ? printInvoice : { ...printInvoice, ...doneInv }} screen title={quoteMode ? tr("quoteMode") : tr("invoice")} />
@@ -844,18 +847,10 @@ export default function POSClassic() {
                   }} />
                 </div>
               ))}
-              <Btn onClick={async () => {
-                try {
-                  await post(`/api/invoices/${retInv.id}/returns`, { items: retItems.filter((x) => x.qty > 0) });
-                  playSound("done");
-                  await loadToday().catch(() => {});
-                  setRetOpen(false);
-                  setRetInv(null);
-                } catch (e) {
-                  playSound("err");
-                  setErr(apiMessage(tr, e));
-                }
-              }}>{tr("save")}</Btn>
+              <div className="flex gap-2">
+                <Btn onClick={() => void submitInvoiceReturn(false)}>{tr("save")}</Btn>
+                <Btn kind="soft" onClick={() => void submitInvoiceReturn(true)}>{tr("exchange")}</Btn>
+              </div>
             </>
           ) : null}
         </div>

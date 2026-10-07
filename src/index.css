@@ -987,18 +987,29 @@ html.dark .hover\:bg-slate-50:hover {
 
   html.print-thermal,
   html.print-thermal body,
-  html.print-thermal main {
+  html.print-thermal main,
+  html.print-thermal #root {
     width: 76mm !important;
     max-width: 76mm !important;
+    overflow: hidden !important;
   }
 
-  html.print-thermal .print-sheet {
+  html.print-thermal .print-sheet,
+  html.print-thermal .inv-print {
     border: 0 !important;
     box-shadow: none !important;
     padding: 0 !important;
-    font-size: 12px;
+    width: 76mm !important;
+    max-width: 76mm !important;
+    overflow: hidden !important;
+    font-size: 11px;
+    line-height: 1.3;
   }
 
+  html.print-thermal .print-sheet table th.is-price,
+  html.print-thermal .print-sheet table td.is-price,
+  html.print-thermal .print-sheet table th.is-disc,
+  html.print-thermal .print-sheet table td.is-disc,
   html.print-thermal .print-sheet table th:nth-child(3),
   html.print-thermal .print-sheet table td:nth-child(3),
   html.print-thermal .print-wide {
@@ -4176,7 +4187,95 @@ html[data-ui="modern"] .login-gold {
     print-color-adjust: exact;
   }
 
-  html.print-thermal .inv-print-meta.is-split {
+  html.print-thermal .inv-print-meta.is-split,
+  html.print-thermal .inv-print-head,
+  html.print-thermal .inv-print-foot {
+    display: grid;
     grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  html.print-thermal .inv-print-head {
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+  }
+
+  html.print-thermal .inv-print-brand img {
+    width: 32px;
+    height: 32px;
+  }
+
+  html.print-thermal .inv-print-title {
+    font-size: 15px;
+  }
+
+  html.print-thermal .inv-print-side,
+  html.print-thermal .inv-print-doc {
+    text-align: start;
+    font-size: 11px;
+  }
+
+  html.print-thermal .inv-print-box {
+    padding: 6px 8px;
+  }
+
+  html.print-thermal .inv-print-item {
+    min-width: 0 !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  html.print-thermal .inv-print-itemmeta,
+  html.print-thermal .inv-print-muted {
+    display: none !important;
+  }
+
+  html.print-thermal .inv-print-table {
+    table-layout: fixed;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-bottom: 8px;
+  }
+
+  html.print-thermal .inv-print-table th,
+  html.print-thermal .inv-print-table td {
+    padding: 3px 3px;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  html.print-thermal .inv-print-table th.is-n,
+  html.print-thermal .inv-print-table td.is-n {
+    width: 14px;
+    padding: 3px 1px;
+  }
+
+  html.print-thermal .inv-print-table th.is-qty,
+  html.print-thermal .inv-print-table td.is-qty {
+    width: 28px;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  html.print-thermal .inv-print-table th.is-amt,
+  html.print-thermal .inv-print-table td.is-amt {
+    width: 62px;
+    text-align: end;
+    white-space: nowrap;
+  }
+
+  html.print-thermal .inv-print-tot {
+    width: 100%;
+  }
+
+  html.print-thermal .inv-print-tot .is-grand {
+    font-size: 13px;
+  }
+
+  html.print-thermal .print-brand-footer,
+  html.print-thermal .inv-print-thanks {
+    font-size: 10px;
+    margin-top: 8px;
   }
 }

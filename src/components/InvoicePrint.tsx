@@ -257,10 +257,10 @@ export function InvoicePrint({
           <tr>
             <th className="is-n">#</th>
             <th>{tr("items")}</th>
-            <th>{tr("sellingPrice")}</th>
-            <th>{tr("qty")}</th>
-            <th>{tr("discount")}</th>
-            <th>{tr("total")}</th>
+            <th className="is-price">{tr("sellingPrice")}</th>
+            <th className="is-qty">{tr("qty")}</th>
+            <th className="is-disc">{tr("discount")}</th>
+            <th className="is-amt">{tr("total")}</th>
           </tr>
         </thead>
         <tbody>
@@ -301,12 +301,12 @@ export function InvoicePrint({
                       </div>
                     ) : null}
                   </td>
-                  <td>{money(item.unit_price, lang)}</td>
-                  <td>{num(itemQty(item), lang)}</td>
-                  <td>
+                  <td className="is-price">{money(item.unit_price, lang)}</td>
+                  <td className="is-qty">{num(itemQty(item), lang)}</td>
+                  <td className="is-disc">
                     {Number(item.discount) ? money(item.discount, lang) : "—"}
                   </td>
-                  <td className="inv-print-strong">
+                  <td className="is-amt inv-print-strong">
                     {money(itemTotal(item), lang)}
                   </td>
                 </tr>

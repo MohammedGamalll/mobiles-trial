@@ -16,7 +16,7 @@
     "db:import-products": "tsx scripts/import-products-xlsx.ts",
     "db:migrate": "node scripts/migrate.mjs",
     "build:live": "npm run build && npm run db:migrate",
-    "test": "tsx --test tests/calc.test.ts tests/party-money.test.ts tests/pos-today.test.ts tests/delivery-pod.test.ts tests/gps-ping.test.ts tests/daily-movement.test.ts tests/partners.test.ts tests/product-import.test.ts",
+    "test": "tsx --test tests/calc.test.ts tests/party-money.test.ts tests/pos-today.test.ts tests/delivery-pod.test.ts tests/gps-ping.test.ts tests/daily-movement.test.ts tests/partners.test.ts tests/product-import.test.ts tests/invoice-status.test.ts",
     "pack:hostinger": "node scripts/pack-hostinger.mjs"
   },
   "dependencies": {

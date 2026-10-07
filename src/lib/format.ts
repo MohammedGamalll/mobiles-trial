@@ -136,11 +136,19 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
 
 export function invoicePayStatus(row: { status?: string | null; total?: number; paid?: number; remaining?: number }) {
   const s = (row.status || "").toLowerCase();
-  if (["cancelled", "void", "rejected", "held", "quote", "order"].includes(s)) return s;
+  if (["cancelled", "void", "rejected", "held", "quote", "order", "fully_returned", "partially_returned"].includes(s)) return s;
   const remaining = Number(row.remaining || 0);
   const paid = Number(row.paid || 0);
   const total = Number(row.total || 0);
   if (remaining <= 0.005 && (paid > 0.005 || total > 0.005)) return "paid_full";
   if (paid > 0.005 && remaining > 0.005) return "partial";
   return "unpaid_sale";
+}
+
+export function posExchangePath(inv: { customer_id?: number | null; customer_name?: string | null }) {
+  const p = new URLSearchParams();
+  p.set("exchange", "1");
+  if (inv.customer_id) p.set("customer", String(inv.customer_id));
+  else if (inv.customer_name) p.set("walkin", String(inv.customer_name));
+  return `/pos?${p.toString()}`;
 }

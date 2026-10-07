@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { Btn, ErrorNote, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { useConfirm } from "../components/Confirm";
+import { posExchangePath } from "../lib/format";
 import { rememberResumeInvoice } from "../hooks/usePOSLogic";
 import { PaymentModal } from "../components/PaymentModal";
 
 export default function Invoice() {
   const { id } = useParams();
   const { tr, lang, can, settings } = useApp();
+  const nav = useNavigate();
   const [inv, setInv] = useState<any>(null);
   const [wa, setWa] = useState<any>(null);
   const [msg, setMsg] = useState("");
@@ -136,7 +138,7 @@ export default function Invoice() {
       </Modal>
 
       <Modal open={retOpen} title={tr("returnCreate")} onClose={() => setRetOpen(false)} wide>
-        <ReturnForm inv={inv} onDone={() => { setRetOpen(false); reload(); }} onExchange={() => { window.location.href = "/pos"; }} />
+        <ReturnForm inv={inv} onDone={() => { setRetOpen(false); reload(); }} onExchange={() => { nav(posExchangePath(inv)); }} />
       </Modal>
       <PaymentModal
         open={collectOpen}
@@ -210,15 +212,28 @@ export function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () =
   const { tr } = useApp();
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");
-  const [items, setItems] = useState(inv.items.map((i: any) => ({ invoice_item_id: i.id, qty: 0, max: i.quantity - i.returned_qty, name: i.product_name })));
+  const [busy, setBusy] = useState(false);
+  const [items, setItems] = useState(inv.items.map((i: any) => ({ invoice_item_id: i.id, qty: 0, max: Math.max(0, Number(i.quantity || 0) - Number(i.returned_qty || 0)), name: i.product_name })));
   async function send(exchange = false) {
     try {
       setErr("");
-      await post(`/api/invoices/${inv.id}/returns`, { reason: reason || (exchange ? "exchange" : ""), items: items.filter((x: any) => x.qty > 0) });
+      let chosen = items.filter((x: any) => x.qty > 0);
+      if (exchange && !chosen.length) {
+        chosen = items.filter((x: any) => x.max > 0).map((x: any) => ({ ...x, qty: x.max }));
+        setItems(items.map((x: any) => (x.max > 0 && x.qty <= 0 ? { ...x, qty: x.max } : x)));
+      }
+      if (!chosen.length) {
+        setErr(apiMessage(tr, { message: "no_items" }));
+        return;
+      }
+      setBusy(true);
+      await post(`/api/invoices/${inv.id}/returns`, { reason: reason || (exchange ? "exchange" : ""), items: chosen.map((x: any) => ({ invoice_item_id: x.invoice_item_id, qty: x.qty })) });
       if (exchange && onExchange) onExchange();
       else onDone();
     } catch (e) {
       setErr(apiMessage(tr, e));
+    } finally {
+      setBusy(false);
     }
   }
   return (
@@ -235,8 +250,8 @@ export function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () =
       <input className={inputCls} placeholder={tr("reason")} value={reason} onChange={(e) => setReason(e.target.value)} />
       {err ? <div className="text-sm text-rose-600">{err}</div> : null}
       <div className="flex gap-2">
-        <Btn onClick={() => send(false)}>{tr("save")}</Btn>
-        <Btn kind="soft" onClick={() => send(true)}>{tr("exchange")}</Btn>
+        <Btn disabled={busy} onClick={() => send(false)}>{tr("save")}</Btn>
+        {onExchange ? <Btn kind="soft" disabled={busy} onClick={() => send(true)}>{tr("exchange")}</Btn> : null}
       </div>
     </div>
   );

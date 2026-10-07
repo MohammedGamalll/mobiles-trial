@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Minus, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { money, num, statusClass, statusLabel } from "../lib/format";
+import { invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, Stat, inputCls } from "../components/ui";
 import { binText, lastSupplierName } from "../lib/place";
 import { InvoicePrint } from "../components/InvoicePrint";
@@ -26,6 +26,7 @@ export default function POS() {
     can,
     nav,
     quoteMode,
+    exchangeMode,
     q,
     setQ,
     cart,
@@ -148,8 +149,6 @@ export default function POS() {
     printInvoice,
     related,
     waEnabled,
-    loadToday,
-    setStockTick,
     openHeld,
     cancelHeld,
     finalizeHeld,
@@ -157,6 +156,7 @@ export default function POS() {
     submit,
     showCost,
     holdInvoice,
+    submitInvoiceReturn,
     beginResumeHeld,
   } = usePOSLogic("modern");
   const [cartOpen, setCartOpen] = useState(false);
@@ -241,6 +241,11 @@ export default function POS() {
         ))}
       </div>
 
+      {exchangeMode ? (
+        <div className="no-print shrink-0 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
+          {tr("exchangeHint")}
+        </div>
+      ) : null}
       <div className="pos-modern-shell no-print flex h-full min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--surface-2)] max-lg:pb-[4.75rem]">
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-[var(--surface)] px-3 py-2">
@@ -1530,19 +1535,8 @@ export default function POS() {
               {money(doneInv.total, lang)}
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span
-                className={statusClass(
-                  Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0
-                    ? "unpaid_sale"
-                    : doneInv.status,
-                )}
-              >
-                {statusLabel(
-                  Number(doneInv.remaining) > 0 && Number(doneInv.paid) <= 0
-                    ? "unpaid_sale"
-                    : doneInv.status,
-                  lang,
-                )}
+              <span className={statusClass(invoicePayStatus(doneInv))}>
+                {statusLabel(invoicePayStatus(doneInv), lang)}
               </span>
               <span>
                 {tr("paid")}: {money(doneInv.paid, lang)}
@@ -1752,26 +1746,10 @@ export default function POS() {
                   />
                 </div>
               ))}
-              <Btn
-                onClick={async () => {
-                  try {
-                    await post(`/api/invoices/${retInv.id}/returns`, {
-                      items: retItems.filter((x) => x.qty > 0),
-                    });
-                    playSound("done");
-                    setStockTick((n) => n + 1);
-                    await loadToday().catch(() => {});
-                    setRetOpen(false);
-                    setRetInv(null);
-                    setErr("");
-                  } catch (e) {
-                    playSound("err");
-                    setErr(apiMessage(tr, e));
-                  }
-                }}
-              >
-                {tr("save")}
-              </Btn>
+              <div className="flex gap-2">
+                <Btn onClick={() => void submitInvoiceReturn(false)}>{tr("save")}</Btn>
+                <Btn kind="soft" onClick={() => void submitInvoiceReturn(true)}>{tr("exchange")}</Btn>
+              </div>
             </>
           ) : (
             <div className="text-xs text-slate-400">{tr("invoiceNo")}</div>
