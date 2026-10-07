@@ -448,7 +448,7 @@ export function PayrollPage() {
               <Stat label={tr("net")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.net || 0), 0), lang)} accent="emerald" />
               <Stat label={tr("paidAmount")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.paid_amount || 0), 0), lang)} accent="cyan" />
               <Stat label={tr("advances")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.advances || 0), 0), lang)} accent="rose" />
-              <Stat label={tr("deductions")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.deductions || 0), 0), lang)} accent="rose" />
+              <Stat label={tr("deductions")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.manual_deduction || 0), 0), lang)} accent="rose" />
             </div>
             <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
               <div className="table-wrap">

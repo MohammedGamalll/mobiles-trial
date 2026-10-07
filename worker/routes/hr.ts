@@ -170,7 +170,7 @@ async function computeEmployeeSlip(db: AppDb, e: Employee, month: string, manual
     unpaidLeave,
     overtime,
     advances: pay.advances,
-    deductions: pay.deductions,
+    deductions: pay.manual,
     manual: pay.manual,
     net: pay.net,
   };
