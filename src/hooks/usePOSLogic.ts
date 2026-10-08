@@ -705,9 +705,68 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     }));
   }
 
-  async function submit(opts?: { paid?: number; method?: string; hold?: boolean; quote?: boolean; order?: boolean; print?: boolean }) {
+  async function ensureCustomerForCredit() {
+    if (customer?.id) return customer;
+    const typed = String(walkIn || customerQ || newCust.name || "").trim();
+    if (typed) {
+      const hit = [...customers, ...custPool].find((c) => String(c.name || "").trim().toLowerCase() === typed.toLowerCase());
+      if (hit?.id) {
+        applyParty(hit, "customer");
+        return hit;
+      }
+    }
+    if (!typed) return null;
+    const r = await post<{ id: number }>("/api/customers", {
+      name: typed,
+      phone: newCust.phone || null,
+      address: address || newCust.address || null,
+      area: area || newCust.area || null,
+      payment_terms: "credit",
+      account_kind: "credit",
+    });
+    const created = {
+      id: r.id,
+      name: typed,
+      phone: newCust.phone,
+      address,
+      area,
+      whatsapp: newCust.phone,
+      current_balance: 0,
+      payment_terms: "credit",
+    };
+    setCustomer(created);
+    setCustomerQ("");
+    setWalkIn("");
+    setCustPool((rows) => [created, ...rows]);
+    setCustomers((rows) => [created, ...rows]);
+    return created;
+  }
+
+  async function submitCredit(opts?: { print?: boolean }) {
+    setMethod("credit");
+    setPaid(0);
+    let party = customer;
+    try {
+      party = await ensureCustomerForCredit();
+    } catch (e) {
+      playSound("err");
+      setErr(apiMessage(tr, e));
+      setCustListOpen(true);
+      return;
+    }
+    if (!party?.id) {
+      playSound("err");
+      setErr(tr("errCustomerRequired"));
+      setCustListOpen(true);
+      return;
+    }
+    await submit({ method: "credit", paid: 0, customer: party, print: opts?.print });
+  }
+
+  async function submit(opts?: { paid?: number; method?: string; hold?: boolean; quote?: boolean; order?: boolean; print?: boolean; customer?: any }) {
     const payMethod = opts?.method ?? method;
-    if (payMethod === "credit" && !customer && !opts?.hold && !opts?.quote && !opts?.order && type !== "delivery") {
+    const party = opts?.customer ?? customer;
+    if (payMethod === "credit" && !party && !opts?.hold && !opts?.quote && !opts?.order && type !== "delivery") {
       playSound("err");
       setErr(tr("errCustomerRequired"));
       return;
@@ -715,7 +774,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     const paidAmt = opts?.paid ?? paid;
     const asQuote = !!(opts?.quote || quoteMode);
     const cashOut = splitPaid || paidAmt || 0;
-    if (!opts?.hold && !asQuote && !opts?.order && cashOut > total + 0.001 && !customer && type !== "delivery") {
+    if (!opts?.hold && !asQuote && !opts?.order && cashOut > total + 0.001 && !party && type !== "delivery") {
       playSound("err");
       setErr(tr("errCustomerRequired"));
       return;
@@ -731,12 +790,12 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         order: !!opts?.order,
         reserve: asQuote,
         branch_id: branchId || null,
-        customer_id: customer?.id || null,
-        customer_name: customer?.name || walkIn || customerQ || null,
-        customer_phone: customer?.phone || newCust.phone,
-        customer_whatsapp: customer?.whatsapp || customer?.phone || newCust.phone,
-        address: address || customer?.address,
-        area: area || customer?.area,
+        customer_id: party?.id || null,
+        customer_name: party?.name || walkIn || customerQ || null,
+        customer_phone: party?.phone || newCust.phone,
+        customer_whatsapp: party?.whatsapp || party?.phone || newCust.phone,
+        address: address || party?.address,
+        area: area || party?.area,
         delivery_agent_id: type === "delivery" ? agentId || null : null,
         sales_agent_id: salesAgentId || null,
         expected_delivery_time: time || null,
@@ -748,7 +807,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         surplus_mode: "wallet" as const,
         payments: pays.filter((p) => p.amount > 0),
         tax_rate: taxOn ? taxRate : 0,
-        price_list_id: listId || customer?.price_list_id || null,
+        price_list_id: listId || party?.price_list_id || null,
         discount: can("sales.discount") ? discAmt : 0,
         due_date: payMethod === "credit" ? (due || invDate || null) : (due || null),
         notes,
@@ -771,22 +830,22 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         discount: discAmt,
         tax_amount: taxAmount,
         type,
-        customer_name: customer?.name || walkIn || customerQ,
-        customer_phone: customer?.phone || newCust.phone,
-        customer_whatsapp: customer?.whatsapp || customer?.phone || newCust.phone,
-        address: address || customer?.address,
-        area: area || customer?.area,
-        city: (customer as { city?: string } | null)?.city,
+        customer_name: party?.name || walkIn || customerQ,
+        customer_phone: party?.phone || newCust.phone,
+        customer_whatsapp: party?.whatsapp || party?.phone || newCust.phone,
+        address: address || party?.address,
+        area: area || party?.area,
+        city: (party as { city?: string } | null)?.city,
         notes,
         payment_method: payMethod,
       });
       setDoneInv(res.data);
       setStockTick((n) => n + 1);
       await loadToday().catch(() => {});
-      if (customer?.id) {
+      if (party?.id) {
         try {
-          const fresh = await get<{ data: any }>(`/api/customers/${customer.id}`);
-          if (fresh.data) setCustomer({ ...customer, current_balance: fresh.data.current_balance });
+          const fresh = await get<{ data: any }>(`/api/customers/${party.id}`);
+          if (fresh.data) setCustomer({ ...party, current_balance: fresh.data.current_balance });
         } catch {
           /* keep prior snapshot */
         }
@@ -921,6 +980,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
 
   const submitRef = useRef(submit);
   submitRef.current = submit;
+  const submitCreditRef = useRef(submitCredit);
+  submitCreditRef.current = submitCredit;
   const holdRef = useRef(holdInvoice);
   holdRef.current = holdInvoice;
   const cartRef = useRef(cart);
@@ -938,6 +999,9 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         if (e.key === "F12") {
           e.preventDefault();
           if (cartRef.current.length) void submitRef.current({ print: true });
+        } else if (e.key === "F8") {
+          e.preventDefault();
+          if (cartRef.current.length) void submitCreditRef.current();
         } else if (e.key === "F11") {
           e.preventDefault();
           if (cartRef.current.length) void submitRef.current({ paid: undefined, method: "cash", print: false });
@@ -1052,7 +1116,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
     subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer,
     printRows, printTotal, printExtra, printInvoice, related, waEnabled, cartQty,
-    loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice, submitInvoiceReturn,
+    loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
   };
 }

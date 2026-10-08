@@ -2829,6 +2829,12 @@ html[data-ui="modern"] .login-gold {
   background: #ececec;
 }
 
+.pos-classic-rail-btn.is-credit {
+  background: #fb8c00;
+  border-color: #ef6c00;
+  color: #fff;
+}
+
 .pos-classic-rail-btn.is-on:not(.is-sell) {
   border-color: #43a047;
   box-shadow: inset 0 0 0 1px #43a047;
@@ -3376,6 +3382,20 @@ html[data-ui="modern"] .login-gold {
   flex: 1;
 }
 
+.pos-classic-black button.is-credit {
+  height: 28px;
+  padding: 0 12px;
+  background: #ef6c00;
+  color: #fff;
+  border: 1px solid #ffb74d;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pos-classic-black button.is-credit:hover {
+  background: #e65100;
+}
+
 .pos-classic-black button.is-hold {
   height: 28px;
   padding: 0 14px;
@@ -3909,7 +3929,9 @@ html[data-ui="modern"] .login-gold {
   background-color: #fff !important;
 }
 
-.pos-classic-black button.is-hold {
+.pos-classic-black button.is-hold,
+.pos-classic-black button.is-credit,
+.pos-classic-rail-btn.is-credit {
   color: #fff !important;
 }
 

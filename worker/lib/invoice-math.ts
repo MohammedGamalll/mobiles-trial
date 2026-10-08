@@ -113,3 +113,15 @@ export function applyAdvanceDeduction(advances: { id: number; remaining: number 
 export function availableQty(onHand: number, reserved: number) {
   return round2(onHand - reserved);
 }
+
+/** Zero/empty credit_limit means unlimited; remaining is posted to the wallet. */
+export function creditLimitBlocked(
+  customer: { credit_limit?: number | null; current_balance?: number | null } | null,
+  remaining: number,
+) {
+  if (remaining <= 0.005) return false;
+  if (!customer) return true;
+  const limit = Number(customer.credit_limit || 0);
+  if (!(limit > 0)) return false;
+  return Number(customer.current_balance || 0) + remaining > limit + 0.005;
+}

@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Clock,
   FileText,
   Pause,
   Printer,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
+import { customerBalanceLabel, invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { Barcode } from "../components/Barcode";
@@ -81,7 +82,7 @@ export default function POSClassic() {
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer,
     printRows, printInvoice, waEnabled, cartQty, applyParty, saveAccount,
-    loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, holdInvoice, submitInvoiceReturn,
+    loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
     forceGoods, setForceGoods, setStockTick,
   } = pos;
@@ -200,13 +201,24 @@ export default function POSClassic() {
               <button
                 type="button"
                 className="pos-classic-rail-btn is-pay"
-                disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer}
+                disabled={busy || !cart.length || !can("sales.create")}
                 onClick={() => void submit({ method: "cash" })}
                 title={`${tr("posPayF11")} F11`}
               >
                 <Wallet size={18} />
                 <small>F11</small>
                 <span>{tr("posPayF11")}</span>
+              </button>
+              <button
+                type="button"
+                className="pos-classic-rail-btn is-credit"
+                disabled={busy || !cart.length || !can("sales.create")}
+                onClick={() => void submitCredit()}
+                title={`${tr("posCreditSale")} F8`}
+              >
+                <Clock size={18} />
+                <small>F8</small>
+                <span>{tr("posCreditSale")}</span>
               </button>
             </>
           ) : null}
@@ -572,7 +584,7 @@ export default function POSClassic() {
             <ClassicDropUp
               wide
               label={tr("customer")}
-              display={customerName}
+              display={customer ? `${customer.name}${customer.current_balance != null ? ` · ${customerBalanceLabel(customer.current_balance, lang)}` : ""}` : customerName}
               open={custListOpen}
               onToggle={() => { setCashOpen(false); setCourierOpen(false); setCustListOpen((v) => !v); }}
             >
@@ -612,7 +624,7 @@ export default function POSClassic() {
                   }}
                 >
                   <b>{c.name}</b>
-                  <small>{[c.phone, c.area].filter(Boolean).join(" · ")}</small>
+                  <small>{[c.phone, c.area, customerBalanceLabel(c.current_balance, lang)].filter(Boolean).join(" · ")}</small>
                 </button>
               ))}
             </ClassicDropUp>
@@ -662,6 +674,7 @@ export default function POSClassic() {
             <button type="button" onClick={() => window.print()}><Printer size={12} /> {tr("posPrintBarcode")}</button>
             {can("settings.edit") ? <button type="button" onClick={() => nav("/settings")}><Settings size={12} /> {tr("settings")}</button> : null}
             <button type="button" onClick={() => nav("/")}>{tr("posClose")}</button>
+            <button type="button" className="is-credit" disabled={busy || !cart.length || !can("sales.create")} onClick={() => void submitCredit()}>{tr("posCreditSale")}</button>
             <span className="pos-classic-black-gap" />
             <button type="button" className="is-hold" disabled={busy || resuming || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>
           </div>

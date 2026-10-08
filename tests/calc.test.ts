@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableQty, applyAdvanceDeduction, fifoUnitCost, grossProfit, invoiceTotals, netPay, returnLineNet, settleReturn } from "../worker/lib/invoice-math.ts";
+import { availableQty, applyAdvanceDeduction, creditLimitBlocked, fifoUnitCost, grossProfit, invoiceTotals, netPay, returnLineNet, settleReturn } from "../worker/lib/invoice-math.ts";
 import { planAllocation } from "../worker/lib/stock.ts";
 import { applyTransferQtys, applyTransferQtysAtomic, stocktakeAbsVarianceValue, stocktakeLineValue, stocktakeUnitCost, wastageFromVariance } from "../worker/lib/stock-transfer.ts";
 import { finalizeTrialRow, splitClosingSides, trialBalanceTotals } from "../worker/lib/trial-balance.ts";
@@ -294,4 +294,11 @@ test("type-filtered rows do not flip ledger balanced", () => {
   assert.equal(totals.balanced, true);
   assert.equal(totals.debit, 80);
   assert.equal(totals.credit, 80);
+});
+
+test("credit sale is allowed when no limit is set and posts to wallet", () => {
+  assert.equal(creditLimitBlocked({ credit_limit: 0, current_balance: 0 }, 150), false);
+  assert.equal(creditLimitBlocked({ credit_limit: 100, current_balance: 20 }, 90), true);
+  assert.equal(creditLimitBlocked({ credit_limit: 100, current_balance: 20 }, 70), false);
+  assert.equal(creditLimitBlocked(null, 10), true);
 });

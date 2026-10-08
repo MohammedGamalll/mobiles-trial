@@ -18,7 +18,7 @@ import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
-import { invoiceTotals, returnLineNet, settleReturn } from "../lib/invoice-math";
+import { creditLimitBlocked, invoiceTotals, returnLineNet, settleReturn } from "../lib/invoice-math";
 import { splitInvoiceCash } from "../lib/party-money";
 import {
   applyIssue,
@@ -80,9 +80,7 @@ const RETURNABLE_STATUSES = new Set([
 function creditError(customer: { credit_limit: number; current_balance: number } | null, remaining: number) {
   if (remaining <= 0) return null;
   if (!customer) return "customer_required";
-  const limit = Number(customer.credit_limit || 0);
-  const balance = Number(customer.current_balance || 0);
-  if (!(limit > 0) || balance + remaining > limit) return "credit_limit";
+  if (creditLimitBlocked(customer, remaining)) return "credit_limit";
   return null;
 }
 
