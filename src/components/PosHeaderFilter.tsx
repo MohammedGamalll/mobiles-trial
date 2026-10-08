@@ -126,7 +126,7 @@ export function PosHeaderFilter({
         aria-haspopup="listbox"
         data-col={column}
       >
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="whitespace-nowrap">{label}</span>
         <span
           className={`max-w-[8.5rem] truncate text-[11px] leading-tight ${
             value

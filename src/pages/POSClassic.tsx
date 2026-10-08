@@ -101,6 +101,7 @@ export default function POSClassic() {
   const cashName = cashAccounts.find((a) => a.id === cashAccountId)?.name || tr("posTreasury");
   const courierName = couriers.find((a) => a.id === agentId)?.name || tr("agent");
   const customerName = customer?.name || walkIn || customerQ || tr("walkIn");
+  const cartQtyTotal = cart.reduce((s, l) => s + (Number(l.qty) || 0), 0);
   const setHeaderFilter = (col: string, v: string) => setHeaderFilters((prev) => ({ ...prev, [col]: v }));
   const catalogRows = useMemo(
     () => applyPosHeaderFilters(visible, headerFilters, lang, pickPrice),
@@ -301,8 +302,8 @@ export default function POSClassic() {
                       <th>#</th>
                       <th>{tr("posColName")}</th>
                       <th>{tr("posColSku")}</th>
-                      <th>{tr("qty")}</th>
-                      <th>{tr("sellingPrice")}</th>
+                      <th className="is-qty">{tr("qty")}</th>
+                      <th className="is-price">{tr("sellingPrice")}</th>
                       <th>{tr("discount")}</th>
                       <th>{tr("total")}</th>
                       <th></th>
@@ -314,9 +315,9 @@ export default function POSClassic() {
                         <td>{i + 1}</td>
                         <td className="is-name">{nameOf(l)}{l.unit_name ? ` · ${l.unit_name}` : ""}</td>
                         <td>{l.sku}</td>
-                        <td>
+                        <td className="is-qty">
                           <input
-                            className="pos-classic-cell"
+                            className="pos-classic-cell is-qty"
                             type="number"
                             min={1}
                             value={l.qty}
@@ -326,9 +327,9 @@ export default function POSClassic() {
                             }}
                           />
                         </td>
-                        <td>
+                        <td className="is-price">
                           <input
-                            className="pos-classic-cell"
+                            className="pos-classic-cell is-price"
                             type="number"
                             value={l.unit_price}
                             onChange={(e) => setCart((c) => c.map((x, j) => (j === i ? { ...x, unit_price: Number(e.target.value) || 0 } : x)))}
@@ -345,8 +346,8 @@ export default function POSClassic() {
                   <tfoot>
                     <tr>
                       <td colSpan={3}>{tr("posCurrentCart")}</td>
-                      <td>{num(cart.reduce((s, l) => s + l.qty, 0), lang)}</td>
-                      <td colSpan={4}>{money(total, lang)}</td>
+                      <td className="is-qty">{num(cartQtyTotal, lang)}</td>
+                      <td className="is-price" colSpan={4}>{money(total, lang)}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -463,7 +464,8 @@ export default function POSClassic() {
                       <th>#</th>
                       <PosHeaderFilter column="sku" label={tr("posColSku")} values={uniqueFilterValues(visible, "sku", lang, pickPrice)} value={headerFilters.sku || ""} onChange={(v) => setHeaderFilter("sku", v)} />
                       <PosHeaderFilter column="name" label={tr("posColName")} values={uniqueFilterValues(visible, "name", lang, pickPrice)} value={headerFilters.name || ""} onChange={(v) => setHeaderFilter("name", v)} />
-                      <th>{tr("posColTotalQty")}</th>
+                      <th className="is-qty">{tr("posColTotalQty")}</th>
+                      <PosHeaderFilter className="is-price" column="selling" label={tr("sellingPrice")} values={uniqueFilterValues(visible, "selling", lang, pickPrice)} value={headerFilters.selling || ""} onChange={(v) => setHeaderFilter("selling", v)} />
                       <th>{tr("posColUnit")}</th>
                       <th>{tr("posColStoreQty")}</th>
                       <th>{tr("posColShopQty")}</th>
@@ -473,7 +475,6 @@ export default function POSClassic() {
                       <th>{tr("supplier")}</th>
                       <PosHeaderFilter column="box" label={tr("posColPack")} values={uniqueFilterValues(visible, "box", lang, pickPrice)} value={headerFilters.box || ""} onChange={(v) => setHeaderFilter("box", v)} />
                       <PosHeaderFilter column="bin" label={tr("posColBin")} values={uniqueFilterValues(visible, "bin", lang, pickPrice)} value={headerFilters.bin || ""} onChange={(v) => setHeaderFilter("bin", v)} />
-                      <PosHeaderFilter column="selling" label={tr("sellingPrice")} values={uniqueFilterValues(visible, "selling", lang, pickPrice)} value={headerFilters.selling || ""} onChange={(v) => setHeaderFilter("selling", v)} />
                       <PosHeaderFilter column="min" label={tr("posColMinPrice")} values={uniqueFilterValues(visible, "min", lang, pickPrice)} value={headerFilters.min || ""} onChange={(v) => setHeaderFilter("min", v)} />
                       {showCost ? <th>{tr("posColAvgBuy")}</th> : null}
                       {showCost ? <th>{tr("posColLastBuy")}</th> : null}
@@ -492,7 +493,8 @@ export default function POSClassic() {
                           <td>{(catalogPage - 1) * catalogPageSize + i + 1}</td>
                           <td>{p.sku}</td>
                           <td className="is-name">{nameOf(p)}{inCart ? ` (${inCart})` : ""}</td>
-                          <td>{num(p.current_stock ?? p.available, lang)}</td>
+                          <td className="is-qty">{num(p.current_stock ?? p.available, lang)}</td>
+                          <td className="is-price">{money(pickPrice(p), lang)}</td>
                           <td>{p.unit || ""}</td>
                           <td>{num(p.current_stock ?? p.available, lang)}</td>
                           <td>{num(p.available, lang)}</td>
@@ -502,7 +504,6 @@ export default function POSClassic() {
                           <td>{lastSupplierName(p)}</td>
                           <td>{p.box || ""}</td>
                           <td>{binText(p)}</td>
-                          <td className="is-price">{money(pickPrice(p), lang)}</td>
                           <td>{money(p.min_selling_price || 0, lang)}</td>
                           {showCost ? <td>{money(p.purchase_price || 0, lang)}</td> : null}
                           {showCost ? <td>{money(p.last_purchase_price || p.purchase_price || 0, lang)}</td> : null}
@@ -513,8 +514,9 @@ export default function POSClassic() {
                   <tfoot>
                     <tr>
                       <td colSpan={3}>{tr("posGoods")}</td>
-                      <td>{num(visible.reduce((s, p) => s + Number(p.current_stock ?? p.available ?? 0), 0), lang)}</td>
-                      <td colSpan={showCost ? 13 : 11}>{cart.length ? `${tr("total")}: ${money(total, lang)} · ${num(cart.reduce((s, l) => s + l.qty, 0), lang)}` : ""}</td>
+                      <td className="is-qty">{num(visible.reduce((s, p) => s + Number(p.current_stock ?? p.available ?? 0), 0), lang)}</td>
+                      <td className="is-price">{cart.length ? money(total, lang) : ""}</td>
+                      <td colSpan={showCost ? 12 : 10}>{cart.length ? `${tr("qty")}: ${num(cartQtyTotal, lang)}` : ""}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -662,7 +664,16 @@ export default function POSClassic() {
                 </label>
               </>
             ) : null}
-            <div className="pos-classic-green-total">{money(total, lang)}</div>
+            <div className="pos-classic-green-totals">
+              <div className="pos-classic-green-stat">
+                <small>{tr("qty")}</small>
+                <b>{num(cartQtyTotal, lang)}</b>
+              </div>
+              <div className="pos-classic-green-stat is-sum">
+                <small>{tr("total")}</small>
+                <b>{money(total, lang)}</b>
+              </div>
+            </div>
           </div>
 
           <div className="pos-classic-black">

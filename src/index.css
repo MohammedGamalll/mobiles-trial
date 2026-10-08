@@ -2892,10 +2892,16 @@ html[data-ui="modern"] .login-gold {
   flex-direction: column;
 }
 
-.pos-classic-field.is-qty,
-.pos-classic-field.is-price,
+.pos-classic-field.is-qty {
+  flex: 0 0 112px;
+}
+
+.pos-classic-field.is-price {
+  flex: 0 0 168px;
+}
+
 .pos-classic-field.is-no {
-  flex: 0 0 88px;
+  flex: 0 0 100px;
 }
 
 .pos-classic-field.is-search {
@@ -2909,6 +2915,7 @@ html[data-ui="modern"] .login-gold {
   font-size: 12px;
   font-weight: 800;
   border-radius: 3px 3px 0 0;
+  white-space: nowrap;
 }
 
 .pos-classic-field.is-qty span,
@@ -2995,9 +3002,20 @@ html[data-ui="modern"] .login-gold {
 
 .pos-classic-cell {
   width: 72px;
+  min-width: 72px;
   height: 24px;
   border: 1px solid #ccc;
   padding: 0 4px;
+}
+
+.pos-classic-cell.is-qty {
+  width: 88px;
+  min-width: 88px;
+}
+
+.pos-classic-cell.is-price {
+  width: 128px;
+  min-width: 128px;
 }
 
 .pos-classic-table td button {
@@ -3190,8 +3208,23 @@ html[data-ui="modern"] .login-gold {
   font-weight: 700;
 }
 
+.pos-classic-table th.is-qty,
+.pos-classic-table td.is-qty {
+  min-width: 92px;
+  white-space: nowrap;
+}
+
+.pos-classic-table th.is-price,
 .pos-classic-table td.is-price {
+  min-width: 128px;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.pos-classic-table tfoot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
 }
 
 .pos-classic-table tbody tr:hover {
@@ -3256,10 +3289,43 @@ html[data-ui="modern"] .login-gold {
   color: #111;
 }
 
-.pos-classic-green-total {
+.pos-classic-green-total,
+.pos-classic-green-totals {
   margin-inline-start: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.pos-classic-green-totals {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.pos-classic-green-stat {
+  min-width: max-content;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.16);
+  white-space: nowrap;
+}
+
+.pos-classic-green-stat small {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  opacity: 0.9;
+}
+
+.pos-classic-green-stat b {
+  display: block;
   font-size: 20px;
   font-weight: 900;
+  line-height: 1.15;
+}
+
+.pos-classic-green-stat.is-sum b {
+  font-size: 22px;
 }
 
 .pos-classic-dropup {
