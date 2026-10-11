@@ -219,6 +219,7 @@ export default function DailyReportClassic() {
   }[] = s
     ? [
         { key: "dailyCashSale", value: s.cash_sales },
+        { key: "dailyCreditSale", value: s.credit_sales || 0 },
         { key: "dailyCashSaleReturn", value: s.sales_returns },
         { key: "dailyCashPurchase", value: s.purchases },
         { key: "dailyCashPurchaseReturn", value: s.purchase_returns },
@@ -386,6 +387,7 @@ export default function DailyReportClassic() {
                       <td className={row.bold ? "is-bold" : ""}>
                         {tr(row.key)}
                       </td>
+                    
                       <td className={row.bold ? "is-bold" : ""}>
                         {sahlNum(row.value)}
                       </td>

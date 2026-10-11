@@ -204,11 +204,11 @@ export default function ProductsClassic() {
                 <td colSpan={cat.showCost ? 10 : 8}>
                   {num(cat.rows.length, lang)} / {num(cat.total, lang)}
                   <span className="ms-3">
-                    <button type="button" disabled={cat.filters.page <= 1 || cat.loading} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page - 1 })}>{tr("prev")}</button>
+                    <button className="inv-classic-btn" type="button" disabled={cat.filters.page <= 1 || cat.loading} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page - 1 })}>{tr("prev")}</button>
                     {" "}
                     {cat.filters.page}/{Math.max(1, Math.ceil((cat.total || 0) / 80))}
                     {" "}
-                    <button type="button" disabled={cat.loading || cat.filters.page >= Math.max(1, Math.ceil((cat.total || 0) / 80))} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page + 1 })}>{tr("next")}</button>
+                    <button className="inv-classic-btn" type="button" disabled={cat.loading || cat.filters.page >= Math.max(1, Math.ceil((cat.total || 0) / 80))} onClick={() => cat.setFilters({ ...cat.filters, page: cat.filters.page + 1 })}>{tr("next")}</button>
                   </span>
                 </td>
               </tr>
