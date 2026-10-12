@@ -3607,6 +3607,34 @@ html[data-ui="modern"] .login-gold {
   opacity: 0.35;
 }
 
+.inv-classic-stock {
+  margin-top: 4px;
+  border: 1px solid #2e7d32;
+  background: #e8f5e9;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.inv-classic-stock span {
+  display: block;
+  font-weight: 800;
+  color: #1b5e20;
+}
+
+.inv-classic-stock b {
+  display: block;
+  margin: 2px 0 6px;
+  font-size: 20px;
+  color: #111;
+}
+
+.inv-classic-stock small {
+  display: block;
+  font-weight: 700;
+  color: #333;
+}
+
 .inv-classic-dist {
   margin-top: auto;
   border: 1px solid #ccc;

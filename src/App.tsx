@@ -34,6 +34,7 @@ import {
   UsersPage,
 } from "./pages/More";
 import { LocationsPage, TransferDetail, TransfersPage, StocktakeDetail, StocktakesPage, WastagePage } from "./pages/Stock";
+import { MovementsPage } from "./pages/Movements";
 import { RepsPage, RepDetail, VisitsPage, TargetsPage, CommissionsPage } from "./pages/Reps";
 import { CashAccountsPage, ChartPage, JournalPage, VouchersPage } from "./pages/Ledger";
 import TrialBalance from "./pages/TrialBalance";
@@ -116,6 +117,7 @@ function AppRoutes() {
         <Route path="products" element={<ProductsGate />} />
         <Route path="products/:id" element={<ProductDetail />} />
         <Route path="inventory" element={<PermGuard perm="inventory.view"><InventoryGate /></PermGuard>} />
+        <Route path="inventory/movements" element={<PermGuard perm="inventory.view"><MovementsPage /></PermGuard>} />
         <Route path="batches" element={<PermGuard perm="inventory.view"><BatchesPage /></PermGuard>} />
         <Route path="purchases/new" element={<PermGuard perm="purchases.create"><PurchaseInvoiceForm /></PermGuard>} />
         <Route path="purchases" element={<PermGuard perm="purchases.view"><PurchasesPage /></PermGuard>} />

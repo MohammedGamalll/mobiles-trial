@@ -24,6 +24,7 @@ import {
   AlarmClock,
   Radio,
   ArrowRightLeft,
+  History,
   ListChecks,
   Recycle,
   Target,
@@ -104,6 +105,7 @@ export const modernNav: NavGroup[] = [
     items: [
       { to: "/products", key: "products", icon: Package, perm: "products.view" },
       { to: "/inventory", key: "inventory", icon: Warehouse, perm: "inventory.view" },
+      { to: "/inventory/movements", key: "movements", icon: History, perm: "inventory.view" },
       { to: "/batches", key: "batches", icon: Boxes, perm: "inventory.view" },
       { to: "/serials", key: "serials", icon: Hash, perm: "serials.manage" },
       { to: "/brands", key: "brands", icon: Tags, perm: "brands.manage" },

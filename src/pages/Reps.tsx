@@ -8,6 +8,8 @@ import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { useActionError } from "../lib/errors";
+import { ListPager } from "../components/TablePager";
+import { listPageSize, usePagedRows } from "../hooks/usePagedRows";
 
 function Page({ title, action, children }: { title: string; action?: any; children: any }) {
   return (
@@ -66,6 +68,7 @@ export function RepsPage() {
     setRows(r.data || []);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const pagedReps = usePagedRows(rows, f.page, listPageSize(f.values));
   return (
     <Page title={tr("reps")} action={
       <div className="flex flex-wrap gap-2">
@@ -85,7 +88,7 @@ export function RepsPage() {
       ]} extra={<input className={`${inputCls} w-36`} type="month" value={f.values.month || monthNow()} onChange={(e) => f.set("month", e.target.value)} />} />
       <Table
         cols={[tr("code"), tr("name"), tr("roleType"), tr("area"), tr("targetAmount"), tr("achieved"), "%", tr("visits"), tr("commissions"), ""]}
-        rows={rows.map((r) => {
+        rows={pagedReps.rows.map((r) => {
           const target = Number(r.target_amount || 0);
           const sales = Number(r.sales_amount || 0);
           const pct = target ? Math.round((sales / target) * 100) : 0;
@@ -103,6 +106,7 @@ export function RepsPage() {
           ];
         })}
       />
+      <ListPager f={f} total={rows.length} />
     </Page>
   );
 }
@@ -169,6 +173,7 @@ export function VisitsPage() {
     setRows((await get<{ data: any[] }>(`/api/visits?${f.qs}`)).data || []);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const pagedVisits = usePagedRows(rows, f.page, listPageSize(f.values));
   return (
     <Page title={tr("visits")} action={can("visits.own", "visits.manage") ? <Btn onClick={() => { setForm({ id: 0, agent_id: user?.delivery_agent_id || "", customer_id: "", customer_name: "", date: new Date().toISOString().slice(0, 10), visit_time: "", purpose: "", result: "planned", notes: "" }); setOpen(true); }}>{tr("newVisit")}</Btn> : null}>
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -189,7 +194,7 @@ export function VisitsPage() {
       ]} />
       <Table
         cols={[tr("date"), tr("agent"), tr("customer"), tr("visitPurpose"), tr("status"), ""]}
-        rows={rows.map((v) => [
+        rows={pagedVisits.rows.map((v) => [
           `${v.date} ${v.visit_time || ""}`,
           `${v.agent_name} (${v.agent_code})`,
           v.customer_name || "-",
@@ -208,6 +213,7 @@ export function VisitsPage() {
           ) : null,
         ])}
       />
+      <ListPager f={f} total={rows.length} />
       <Modal open={open} title={form.id ? tr("edit") : tr("newVisit")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           {can("visits.manage") ? (
@@ -256,6 +262,7 @@ export function TargetsPage() {
     setRows((await get<{ data: any[] }>(`/api/targets?${f.qs}`)).data || []);
   }
   useEffect(() => { load().catch(() => {}); }, [f.qs]);
+  const pagedTargets = usePagedRows(rows, f.page, listPageSize(f.values));
   return (
     <Page title={tr("targets")} action={<Btn onClick={() => setOpen(true)}>{tr("add")}</Btn>}>
       <SmartFilter f={f} date={false} fields={[
@@ -264,7 +271,7 @@ export function TargetsPage() {
       ]} />
       <Table
         cols={[tr("code"), tr("name"), tr("targetAmount"), tr("targetVisits"), tr("notes"), ""]}
-        rows={rows.map((t) => [
+        rows={pagedTargets.rows.map((t) => [
           t.agent_code,
           t.agent_name,
           money(t.target_amount, lang),
@@ -273,6 +280,7 @@ export function TargetsPage() {
           <button className="font-bold text-rose-600" onClick={() => confirmDelete(t.agent_name, async () => { await del(`/api/targets/${t.id}`); load(); })}>{tr("delete")}</button>,
         ])}
       />
+      <ListPager f={f} total={rows.length} />
       <Modal open={open} title={tr("targets")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("agent")}>
@@ -313,6 +321,7 @@ export function CommissionsPage() {
   useEffect(() => {
     if (cashAccounts.length && !cashAccounts.some((a) => a.id === cashId)) setCashId(cashAccounts[0].id);
   }, [cashAccounts]);
+  const pagedComm = usePagedRows(rows, f.page, listPageSize(f.values));
   async function payLine(id: number) {
     clearPay();
     try {
@@ -364,7 +373,7 @@ export function CommissionsPage() {
       ]} />
       <Table
         cols={[tr("agent"), tr("invoiceNo"), tr("customer"), tr("total"), tr("commissionRate"), tr("commissions"), tr("status"), ""]}
-        rows={rows.map((c) => [
+        rows={pagedComm.rows.map((c) => [
           `${c.agent_name} (${c.agent_code})`,
           c.invoice_number ? <Link className="font-bold" to={`/sales/${c.invoice_id}`}>{c.invoice_number}</Link> : c.invoice_id,
           c.customer_name || "-",
@@ -377,6 +386,7 @@ export function CommissionsPage() {
           ) : null,
         ])}
       />
+      <ListPager f={f} total={rows.length} />
     </Page>
   );
 }

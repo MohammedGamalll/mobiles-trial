@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../context";
 import { del, get, post, put } from "../lib/api";
+import { parsePageSize } from "../components/PageSizeControl";
 import { apiMessage } from "../lib/errors";
 import { playSound } from "../lib/sounds";
 
@@ -14,6 +15,7 @@ export type CatalogFilters = {
   quality: string;
   barcode: string;
   page: number;
+  pageSize: number;
 };
 
 export function emptyProduct() {
@@ -70,19 +72,27 @@ export function useProductCatalog() {
     quality: "",
     barcode: "",
     page: 1,
+    pageSize: 50,
   });
   const [picked, setPicked] = useState<number | null>(null);
   const [checked, setChecked] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const [totals, setTotals] = useState<{
+    count?: number;
+    qty?: number;
+    value?: number;
+    actual_qty?: number;
+    actual_value?: number;
+  }>({});
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
   const loadGen = useRef(0);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    p.set("pageSize", "80");
+    p.set("pageSize", String(parsePageSize(filters.pageSize, 50)));
     p.set("page", String(filters.page || 1));
     p.set("active", "1");
     if (filters.q.trim()) p.set("q", filters.q.trim());
@@ -106,10 +116,11 @@ export function useProductCatalog() {
     setLoading(true);
     setErr("");
     try {
-      const r = await get<{ data: any[]; total?: number }>(path);
+      const r = await get<{ data: any[]; total?: number; totals?: typeof totals }>(path);
       if (gen !== loadGen.current) return;
       setRows(r.data || []);
-      setTotal(Number(r.total) || (r.data || []).length);
+      setTotal(Number(r.totals?.count ?? r.total) || (r.data || []).length);
+      setTotals(r.totals || {});
     } catch (e) {
       if (gen !== loadGen.current) return;
       setErr(apiMessage(tr, e));
@@ -217,7 +228,7 @@ export function useProductCatalog() {
   }, [qs]);
 
   return {
-    rows, filters, setFilters, picked, setPicked, selected, checked, setChecked, toggleCheck,
+    rows, filters, setFilters, picked, setPicked, selected, checked, setChecked, toggleCheck, totals,
     showCost, busy, loading, total, err, setErr, load, loadOne, save, remove, loadAllFiltered, exportQuery,
     reload: () => setTick((n) => n + 1),
   };

@@ -8,6 +8,8 @@ import { money, num } from "../lib/format";
 import { ErrorNote, PrintLetterhead } from "../components/ui";
 import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
+import { TablePager } from "../components/TablePager";
+import { usePagedRows } from "../hooks/usePagedRows";
 
 type SalesLine = {
   invoice_id?: number;
@@ -472,6 +474,9 @@ function LineGrid({
   rows: string[][];
   footer: string[];
 }) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const paged = usePagedRows(rows, page, pageSize);
   return (
     <div className="sahl-daily-grid">
       <div className="sahl-daily-grid-wrap">
@@ -484,7 +489,7 @@ function LineGrid({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
+            {paged.rows.map((row, i) => (
               <tr key={i}>
                 {row.map((cell, j) => (
                   <td
@@ -508,6 +513,7 @@ function LineGrid({
           </tfoot>
         </table>
       </div>
+      <TablePager page={page} pageSize={pageSize} total={rows.length} onPage={setPage} onPageSize={setPageSize} />
     </div>
   );
 }

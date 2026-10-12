@@ -5,6 +5,8 @@ import { apiMessage } from "../lib/errors";
 import { money, num } from "../lib/format";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, PageLoading, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import type { Msg } from "../i18n";
+import { TablePager } from "../components/TablePager";
+import { usePagedRows } from "../hooks/usePagedRows";
 
 type SalesLine = {
   invoice_id?: number;
@@ -422,6 +424,9 @@ function LineTable({
   footer: (string | number)[];
   minWidth: string;
 }) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const paged = usePagedRows(rows, page, pageSize);
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm">
       <div className="table-wrap overflow-x-auto">
@@ -434,7 +439,7 @@ function LineTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {paged.rows.map((r, i) => (
               <tr key={i}>
                 {r.map((cell, j) => (
                   <td key={j} className={j >= 5 && j < r.length - 1 ? "tabular-nums text-end" : undefined}>
@@ -455,6 +460,7 @@ function LineTable({
           </tfoot>
         </table>
       </div>
+      <TablePager page={page} pageSize={pageSize} total={rows.length} onPage={setPage} onPageSize={setPageSize} />
     </div>
   );
 }

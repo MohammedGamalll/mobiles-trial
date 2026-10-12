@@ -10,12 +10,17 @@ import { useListQuery } from "../hooks/useListQuery";
 import { useLiveList } from "../hooks/useLiveList";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
+import { ListPager, TablePager } from "../components/TablePager";
+import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
 
 export function DeliveryBoard() {
   const { tr, lang, can, user, settings } = useApp();
   const [tab, setTab] = useState<"orders" | "map" | "agents">(user?.role_slug === "delivery" ? "orders" : "orders");
   const f = useListQuery("delivery");
   const [rows, setRows] = useState<any[]>([]);
+  const [orderTotal, setOrderTotal] = useState(0);
+  const [agentPage, setAgentPage] = useState(1);
+  const [agentSize, setAgentSize] = useState(50);
   const [live, setLive] = useState<{ agents: any[]; trail: any[] }>({ agents: [], trail: [] });
   const [liveErr, setLiveErr] = useState("");
   const [trailAgentId, setTrailAgentId] = useState<number | null>(null);
@@ -25,8 +30,11 @@ export function DeliveryBoard() {
   const { confirmDelete, dialog } = useConfirm();
 
   async function loadOrders() {
-    const r = await get<{ data: any[] }>(`/api/delivery/orders?${f.qs}`);
-    setRows(r.data);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/delivery/orders?${p}`);
+    setRows(r.data || []);
+    setOrderTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   async function loadLive(agentId = trailAgentId) {
     const q = agentId ? `?trail_agent_id=${agentId}` : "";
@@ -57,6 +65,7 @@ export function DeliveryBoard() {
     return () => clearInterval(t);
   }, [tab, trailAgentId]);
 
+  const pagedAgents = usePagedRows(agents, agentPage, agentSize);
   const shop = {
     lat: Number(settings.workplace_lat || 30.0566),
     lng: Number(settings.workplace_lng || 31.3300),
@@ -151,6 +160,7 @@ export function DeliveryBoard() {
               </div>
             </div>
           </ListGate>
+          <ListPager f={f} total={orderTotal} disabled={orders.loading} />
         </>
       ) : null}
 
@@ -228,7 +238,7 @@ export function DeliveryBoard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {agents.map((a) => (
+                    {pagedAgents.rows.map((a) => (
                       <tr key={a.id}>
                         <td className="font-bold">{a.code}</td>
                         <td>{a.name}</td>
@@ -253,6 +263,7 @@ export function DeliveryBoard() {
               </div>
             </div>
           </ListGate>
+          <TablePager page={agentPage} pageSize={agentSize} total={agents.length} disabled={agentsList.loading} onPage={setAgentPage} onPageSize={setAgentSize} />
           <Modal open={open} title={form.id ? tr("edit") : tr("addCourier")} onClose={() => setOpen(false)}>
             <div className="space-y-3">
               <Field label={tr("name")}><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>

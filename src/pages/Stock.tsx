@@ -14,6 +14,8 @@ import { Barcode } from "../components/Barcode";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { playSound } from "../lib/sounds";
 import { isWarehouseLocation } from "../lib/warehouses";
+import { ListPager } from "../components/TablePager";
+import { applyListPaging, inferredTotal, listPageSize } from "../hooks/usePagedRows";
 
 const KINDS = ["warehouse", "zone", "aisle", "bay", "shelf", "bin"] as const;
 
@@ -547,6 +549,7 @@ export function TransfersPage() {
   const { tr, lang } = useApp();
   const f = useListQuery("transfers");
   const [rows, setRows] = useState<any[]>([]);
+  const [transferTotal, setTransferTotal] = useState(0);
   const [locs, setLocs] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>({ from_location_id: "", to_location_id: "", notes: "", items: [] as any[] });
@@ -555,8 +558,11 @@ export function TransfersPage() {
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
-    const r = await get<{ data: any[] }>(`/api/inventory/transfers?${f.qs}`);
-    setRows(r.data);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/inventory/transfers?${p}`);
+    setRows(r.data || []);
+    setTransferTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
     const t = await get<{ data: any[] }>("/api/inventory/locations/tree");
     setLocs(t.data);
   }
@@ -620,6 +626,7 @@ export function TransfersPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={transferTotal} disabled={list.loading} />
       <Modal open={open} title={tr("newTransfer")} onClose={closeModal} full>
         <div className="grid items-end gap-3 md:grid-cols-[1fr_auto_1fr]">
           <Field label={tr("fromLocation")}>
@@ -748,13 +755,18 @@ export function StocktakesPage() {
   const nav = useNavigate();
   const f = useListQuery("stocktakes");
   const [rows, setRows] = useState<any[]>([]);
+  const [takeTotal, setTakeTotal] = useState(0);
   const [locs, setLocs] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [locationId, setLocationId] = useState("");
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/inventory/stocktakes?${f.qs}`)).data);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/inventory/stocktakes?${p}`);
+    setRows(r.data || []);
+    setTakeTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
     setLocs((await get<{ data: any[] }>("/api/inventory/locations/tree")).data);
   }
   const list = useLiveList(load, [f.qs]);
@@ -790,6 +802,7 @@ export function StocktakesPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={takeTotal} disabled={list.loading} />
       <Modal open={open} title={tr("newStocktake")} onClose={() => { setOpen(false); act.clear(); }}>
         <Field label={tr("location")}>
           <select className={inputCls} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
@@ -923,9 +936,13 @@ export function WastagePage() {
   const { tr, lang } = useApp();
   const f = useListQuery("wastage");
   const [rows, setRows] = useState<any[]>([]);
+  const [wastageTotal, setWastageTotal] = useState(0);
   const [totalLoss, setTotalLoss] = useState(0);
   async function load() {
-    const r = await get<{ data: any[]; total_loss?: number }>(`/api/inventory/wastage?${f.qs}`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number; total_loss?: number }>(`/api/inventory/wastage?${p}`);
+    setWastageTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
     setRows(r.data || []);
     setTotalLoss(Number(r.total_loss || 0));
   }
@@ -955,6 +972,7 @@ export function WastagePage() {
           ])}
         />
       </ListGate>
+      <ListPager f={f} total={wastageTotal} disabled={list.loading} />
     </Page>
   );
 }

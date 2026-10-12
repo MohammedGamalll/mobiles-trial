@@ -23,6 +23,8 @@ import {
 } from "../components/PosHeaderFilter";
 import { rememberResumeInvoice, type Product } from "../hooks/usePOSLogic";
 import { ReturnForm } from "./Invoice";
+import { ListPager, TablePager } from "../components/TablePager";
+import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId, settings } = useApp();
@@ -41,7 +43,7 @@ export function SalesList() {
   const waEnabled = settings.whatsapp_enabled !== "0";
   async function load() {
     const p = new URLSearchParams(f.qs);
-    p.set("pageSize", "50");
+    applyListPaging(p, f.page, listPageSize(f.values));
     if (warehouseId) {
       p.set("location_id", String(warehouseId));
       p.delete("locations");
@@ -154,6 +156,7 @@ export function SalesList() {
         })}
       />
       </ListGate>
+      <ListPager f={f} total={inferredTotal(f.page, listPageSize(f.values), rows.length, totals.count)} disabled={list.loading} />
       <Modal open={!!retInv} title={tr("returnCreate")} onClose={() => setRetInv(null)} wide>
         {retInv ? <ReturnForm inv={retInv} onDone={() => { setRetInv(null); list.reload(); }} onExchange={() => { nav(posExchangePath(retInv)); }} /> : null}
       </Modal>
@@ -314,10 +317,9 @@ function InvKpi({
 export function InventoryPage() {
   const { tr, lang, can, warehouseId, lookups } = useApp();
   const f = useListQuery("inventory");
-  const m = useListQuery("movements");
   const [rows, setRows] = useState<any[]>([]);
   const [sum, setSum] = useState<any>({});
-  const [moves, setMoves] = useState<any[]>([]);
+  const [productTotal, setProductTotal] = useState(0);
   const [adjOpen, setAdjOpen] = useState(false);
   const [adj, setAdj] = useState<any>({ product_id: "", qty: 1, reason: "" });
   const [headerFilters, setHeaderFilters] = useState<Record<string, string>>({});
@@ -347,16 +349,16 @@ export function InventoryPage() {
 
   async function reload() {
     const qs = listFilterQuery();
-    const [sumR, prodR, moveR] = await Promise.all([
+    const prodSize = listPageSize(f.values);
+    const [sumR, prodR] = await Promise.all([
       get(`/api/inventory/summary?${qs}`),
-      get<{ data: any[] }>(`/api/products?${listFilterQuery({ pageSize: "80" })}`),
-      get<{ data: any[] }>(`/api/inventory/movements?${m.qs}&pageSize=20`),
+      get<{ data: any[]; total?: number; totals?: { count?: number } }>(`/api/products?${listFilterQuery({ page: String(f.page || 1), pageSize: String(prodSize) })}`),
     ]);
     setSum(sumR);
     setRows(prodR.data || []);
-    setMoves(moveR.data || []);
+    setProductTotal(inferredTotal(f.page, prodSize, (prodR.data || []).length, prodR.totals?.count ?? prodR.total));
   }
-  const list = useLiveList(reload, [f.qs, m.qs, warehouseId]);
+  const list = useLiveList(reload, [f.qs, warehouseId]);
 
   async function printFiltered() {
     const r = await get<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
@@ -470,29 +472,7 @@ export function InventoryPage() {
         </div>
       </div>
       </ListGate>
-      <h3 className="mb-2 mt-6 font-bold">{tr("movements")}</h3>
-      <SmartFilter
-        f={m}
-        fields={[
-          { key: "type", label: "movementType", type: "select", quick: true, options: ["sale_out", "purchase_in", "adjust", "transfer", "return_in", "damage"].map((t) => ({ value: t, label: statusLabel(t, lang) })) },
-          { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
-          { key: "model_id", label: "model", type: "select", lookup: "models" },
-          { key: "locations", label: "warehouse", type: "locations" },
-          { key: "reference_type", label: "source", type: "text" },
-        ]}
-      />
-      <Table
-        cols={[tr("date"), tr("movementType"), tr("sku"), "Batch", tr("qty"), tr("fromLocation"), tr("toLocation")]}
-        rows={moves.map((mv) => [
-          mv.created_at,
-          statusLabel(mv.type === "in" ? "purchase_in" : mv.type === "out" ? "sale_out" : mv.type === "return" ? "return_in" : mv.type, lang),
-          mv.sku,
-          mv.batch_code,
-          mv.qty,
-          mv.from_location || "-",
-          mv.to_location || "-",
-        ])}
-      />
+      <ListPager f={f} total={productTotal} disabled={list.loading} />
       {dialog}
       <Modal open={adjOpen} title={tr("easyAdjust")} onClose={() => { setAdjOpen(false); act.clear(); }}>
         <Field label={tr("products")}>
@@ -533,9 +513,13 @@ export function BatchesPage() {
   const { tr, lang } = useApp();
   const f = useListQuery("batches");
   const [rows, setRows] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
   async function load() {
-    const r = await get<{ data: any[] }>(`/api/inventory/batches?${f.qs}&pageSize=80`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/inventory/batches?${p}`);
     setRows(r.data || []);
+    setTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(load, [f.qs]);
   return (
@@ -560,6 +544,7 @@ export function BatchesPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={total} disabled={list.loading} />
     </Page>
   );
 }
@@ -575,9 +560,12 @@ export function PurchasesPage() {
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
-    const r = await get<{ data: any[]; totals?: any }>(`/api/inventory/purchases?${f.qs}`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; totals?: any; total?: number }>(`/api/inventory/purchases?${p}`);
     setRows(r.data || []);
     setTotals(r.totals || {});
+    if (r.total != null) setTotals((t: any) => ({ ...t, count: r.totals?.count ?? r.total }));
   }
   const list = useLiveList(load, [f.qs]);
   async function openReturn(id: number) {
@@ -632,6 +620,7 @@ export function PurchasesPage() {
         })}
       />
       </ListGate>
+      <ListPager f={f} total={inferredTotal(f.page, listPageSize(f.values), rows.length, totals.count)} disabled={list.loading} />
       <Modal open={!!retInv} title={tr("purchaseReturn")} onClose={() => setRetInv(null)} wide>
         {retInv ? <PurchaseReturnForm inv={retInv} onDone={() => { setRetInv(null); list.reload(); }} /> : null}
       </Modal>
@@ -892,7 +881,9 @@ export function CustomersPage() {
   const act = useActionError();
   const shop = { lat: Number(settings.workplace_lat || 30.0566), lng: Number(settings.workplace_lng || 31.33) };
   async function load() {
-    const r = await get<{ data: any[]; totals?: any }>(`/api/customers?${f.qs}`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; totals?: any }>(`/api/customers?${p}`);
     setRows(r.data || []);
     setTotals(r.totals || {});
   }
@@ -939,6 +930,7 @@ export function CustomersPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={inferredTotal(f.page, listPageSize(f.values), rows.length, totals.count)} disabled={list.loading} />
       <Modal open={open} title={form.id ? tr("edit") : tr("addCustomer")} onClose={() => setOpen(false)}>
         {["name","phone","email","company","national_id","tax_id","city","address","area"].map((k) => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
         <Field label={tr("customerType")}>
@@ -1088,7 +1080,14 @@ export function SuppliersPage() {
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   const rate = Number(form.fx_rate || settings.usd_egp_rate || 50);
-  async function load() { setRows((await get<{ data: any[] }>(`/api/suppliers?${f.qs}`)).data || []); }
+  const [total, setTotal] = useState(0);
+  async function load() {
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number; totals?: { count?: number } }>(`/api/suppliers?${p}`);
+    setRows(r.data || []);
+    setTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.totals?.count ?? r.total));
+  }
   const list = useLiveList(load, [f.qs]);
   return (
     <Page title={tr("suppliers")} action={<Btn onClick={() => { act.clear(); setForm(emptySup()); setOpen(true); }}>{tr("add")}</Btn>}>
@@ -1112,6 +1111,7 @@ export function SuppliersPage() {
         />,
       ])} />
       </ListGate>
+      <ListPager f={f} total={total} disabled={list.loading} />
       <Modal open={open} title={form.id ? tr("edit") : tr("suppliers")} onClose={() => setOpen(false)}>
         {["name","contact_name","phone","email","tax_id","city","address","notes"].map((k) => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}
         <Field label={tr("currency")}>
@@ -1200,12 +1200,13 @@ export function PriceListsPage() {
     setLists(q ? all.filter((l) => `${l.name} ${l.name_en || ""}`.toLowerCase().includes(q)) : all);
   }
   const list = useLiveList(load, [f.qs]);
+  const pagedLists = usePagedRows(lists, f.page, listPageSize(f.values));
   return (
     <Page title={tr("priceLists")} action={can("prices.manage") ? <Btn onClick={() => { act.clear(); setOpen(true); }}>{tr("add")}</Btn> : null}>
       <ErrorNote message={act.message} />
       <SmartFilter f={f} date={false} fields={[]} />
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!lists.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
-      <Table cols={[tr("name"), tr("status"), ""]} rows={lists.map((l) => [
+      <Table cols={[tr("name"), tr("status"), ""]} rows={pagedLists.rows.map((l) => [
         lang==="ar"?l.name:(l.name_en||l.name),
         l.active ? tr("active") : tr("inactive"),
         <span className="flex gap-2">
@@ -1214,6 +1215,7 @@ export function PriceListsPage() {
         </span>,
       ])} />
       </ListGate>
+      <ListPager f={f} total={lists.length} disabled={list.loading} />
       <Modal open={open} title={tr("priceLists")} onClose={() => setOpen(false)}>
         <Field label={tr("name")}><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <ErrorNote message={act.message} />
@@ -1242,6 +1244,7 @@ export function PriceListDetail() {
   if (!d) return <div>{tr("loading")}</div>;
   const q = (f.values.q || "").toLowerCase();
   const items = (d.items || []).filter((i: any) => !q || `${i.sku} ${i.name_ar} ${i.name_en}`.toLowerCase().includes(q));
+  const pagedItems = usePagedRows(items, f.page, listPageSize(f.values));
   return (
     <Page title={d.name} action={can("prices.manage") ? <Btn onClick={async () => {
       const payload = Object.entries(edits).map(([pid, price]) => ({ product_id: Number(pid), price: Number(price) }));
@@ -1252,13 +1255,14 @@ export function PriceListDetail() {
       <SmartFilter f={f} date={false} fields={[]} />
       <Table
         cols={[tr("sku"), tr("name"), tr("sellingPrice"), tr("price")]}
-        rows={items.map((i: any) => [
+        rows={pagedItems.rows.map((i: any) => [
           i.sku,
           lang === "ar" ? i.name_ar : i.name_en,
           money(i.selling_price, lang),
           <input className={`${inputCls} w-28`} type="number" defaultValue={i.price} onChange={(e) => setEdits({ ...edits, [i.product_id]: e.target.value })} />,
         ])}
       />
+      <ListPager f={f} total={items.length} />
     </Page>
   );
 }
@@ -1273,7 +1277,14 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
   const act = useActionError();
   const path = table === "models" ? "/api/models" : `/api/${table}`;
   const apiTable = table === "models" ? "device_models" : table;
-  async function load() { setRows((await get<{ data: any[] }>(`${path}?${f.qs}`)).data || []); }
+  const [total, setTotal] = useState(0);
+  async function load() {
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`${path}?${p}`);
+    setRows(r.data || []);
+    setTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
+  }
   const list = useLiveList(load, [table, f.qs]);
   return (
     <Page title={title} action={<Btn onClick={() => { act.clear(); setForm({ name_ar: "", name_en: "", name: "", code: "", warehouse: "", rack: "", shelf: "", drawer: "", box: "", brand_id: "", year: "", id: 0 }); setOpen(true); }}>{tr("add")}</Btn>}>
@@ -1294,6 +1305,7 @@ export function CatalogCrud({ table, title }: { table: string; title: string }) 
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={total} disabled={list.loading} />
       <Modal open={open} title={form.id ? tr("edit") : title} onClose={() => { setOpen(false); act.clear(); }}>
         {table === "storage_locations" ? (
           ["name","warehouse","section","rack","shelf","drawer","box"].map((k) => <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)
@@ -1358,7 +1370,10 @@ export function QualitiesPage() {
   }
   const list = useLiveList(load, []);
 
+  const [qualPage, setQualPage] = useState(1);
+  const [qualSize, setQualSize] = useState(50);
   const shown = rows.filter((r) => !q.trim() || r.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const pagedQual = usePagedRows(shown, qualPage, qualSize);
 
   return (
     <Page title={tr("categories")}>
@@ -1370,7 +1385,7 @@ export function QualitiesPage() {
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!shown.length} emptyFallback={<div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] py-10 text-center text-sm text-slate-400">{tr("noData")}</div>}>
         <Table
           cols={[tr("quality"), tr("qualityUsedOn"), ""]}
-          rows={shown.map((r) => [
+          rows={pagedQual.rows.map((r) => [
             <span className="font-extrabold">{r.name}</span>,
             r.products,
             <div className="flex flex-wrap items-center gap-3">
@@ -1391,6 +1406,7 @@ export function QualitiesPage() {
           ])}
         />
       </ListGate>
+      <TablePager page={qualPage} pageSize={qualSize} total={shown.length} disabled={list.loading} onPage={setQualPage} onPageSize={setQualSize} />
       <Modal open={open} title={tr("renameQuality")} onClose={() => { setOpen(false); act.clear(); }}>
         <Field label={tr("quality")}>
           <input className={inputCls} value={to} onChange={(e) => setTo(e.target.value)} />
@@ -1426,7 +1442,9 @@ export function ExpensesPage() {
   const { confirmDelete, dialog } = useConfirm();
   const { message: expErr, fail: failExp, clear: clearExp } = useActionError();
   async function load() {
-    const r = await get<{ data: any[]; totals?: any }>(`/api/expenses?${f.qs}`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; totals?: any }>(`/api/expenses?${p}`);
     setRows(r.data);
     setTotals(r.totals || {});
     setCats((await get<{ data: any[] }>("/api/expense-categories")).data);
@@ -1471,6 +1489,7 @@ export function ExpensesPage() {
         can("expenses.void", "expenses.create") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(e.description || String(e.amount), async () => { await post(`/api/expenses/${e.id}/void`, {}); list.reload(); })}>{tr("delete")}</button> : null,
       ])} />
       </ListGate>
+      <ListPager f={f} total={inferredTotal(f.page, listPageSize(f.values), rows.length, totals.count)} disabled={list.loading} />
       <Modal open={open} title={tr("newExpense")} onClose={() => setOpen(false)}>
         <ErrorNote message={expErr} />
         <select className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: Number(e.target.value) })}>
@@ -1510,7 +1529,9 @@ export function PaymentsPage() {
   const [totals, setTotals] = useState<any>({});
   const { confirmDelete, dialog } = useConfirm();
   async function load() {
-    const r = await get<{ data: any[]; totals?: any }>(`/api/payments?${f.qs}`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; totals?: any }>(`/api/payments?${p}`);
     setRows(r.data);
     setTotals(r.totals || {});
   }
@@ -1534,6 +1555,7 @@ export function PaymentsPage() {
         can("payments.void", "payments.create") ? <button className="font-bold text-rose-600" onClick={() => confirmDelete(money(p.amount, lang), async () => { await del(`/api/payments/${p.id}`); list.reload(); })}>{tr("delete")}</button> : null,
       ])} />
       </ListGate>
+      <ListPager f={f} total={inferredTotal(f.page, listPageSize(f.values), rows.length, totals.count)} disabled={list.loading} />
       {dialog}
     </Page>
   );
@@ -1703,6 +1725,7 @@ export function UsersPage() {
   const { tr, can } = useApp();
   const f = useListQuery("users");
   const [rows, setRows] = useState<any[]>([]);
+  const [userTotal, setUserTotal] = useState(0);
   const [roles, setRoles] = useState<any>(null);
   const [draft, setDraft] = useState<Record<number, number[]>>({});
   const [pq, setPq] = useState("");
@@ -1713,7 +1736,11 @@ export function UsersPage() {
   const [form, setForm] = useState({ id: 0, username: "", full_name: "", phone: "", role_id: 2, active: 1, password: "" });
   const { confirmDelete, dialog } = useConfirm();
   async function loadUsers() {
-    setRows((await get<{ data: any[] }>(`/api/users?${f.qs}`)).data);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/users?${p}`);
+    setRows(r.data || []);
+    setUserTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(loadUsers, [f.qs]);
   function applyRoles(data: any) {
@@ -1765,6 +1792,7 @@ export function UsersPage() {
         ) : null,
       ])} />
       </ListGate>
+      <ListPager f={f} total={userTotal} disabled={list.loading} />
       <Modal open={open} title={form.id ? tr("edit") : tr("add")} onClose={() => setOpen(false)}>
         <div className="grid gap-3">
           <Field label={tr("username")}><input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></Field>
@@ -1858,11 +1886,16 @@ export function AuditPage() {
   const [tab, setTab] = useState<"log" | "approvals">(sp.get("tab") === "approvals" ? "approvals" : "log");
   const f = useListQuery("audit");
   const [rows, setRows] = useState<any[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
   const [detail, setDetail] = useState<any>(null);
   const [pending, setPending] = useState<any>({ purchases: [], stocktakes: [], leaves: [] });
   const [kind, setKind] = useState("");
   async function loadLog() {
-    setRows((await get<{ data: any[] }>(`/api/audit?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/audit?${p}`);
+    setRows(r.data || []);
+    setAuditTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   async function loadPending() {
     if (!can("approvals.view", "purchases.approve", "leaves.manage", "stocktake.approve")) return;
@@ -1902,6 +1935,7 @@ export function AuditPage() {
             ])}
           />
           </ListGate>
+          <ListPager f={f} total={auditTotal} disabled={list.loading} />
           <Modal open={!!detail} title={detail?.action || ""} onClose={() => setDetail(null)} wide>
             <pre className="whitespace-pre-wrap text-xs">{JSON.stringify({
               old: (() => { try { return detail?.old_value ? JSON.parse(detail.old_value) : null; } catch { return detail?.old_value; } })(),

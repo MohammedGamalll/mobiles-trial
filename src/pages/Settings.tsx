@@ -239,7 +239,8 @@ export function SettingsPage() {
 }
 
 function SettingsBody() {
-  const { tr, settings, refreshSettings, refreshLookups, lang, can } = useApp();
+  const { tr, settings, refreshSettings, refreshLookups, lang, can, user } = useApp();
+  const isAdmin = user?.role_slug === "admin";
   const [tab, setTab] = useState<Tab>("general");
   const [form, setForm] = useState<Record<string, string>>({});
   const [templates, setTemplates] = useState<any[]>([]);
@@ -258,6 +259,7 @@ function SettingsBody() {
   const [mapsLink, setMapsLink] = useState("");
   const [mapsZoom, setMapsZoom] = useState(17);
   const [mapsErr, setMapsErr] = useState("");
+  const [wipePassword, setWipePassword] = useState("");
   const { confirm, dialog } = useConfirm();
   const canBackup = can("backup.manage") || can("settings.edit");
   const canEdit = can("settings.edit");
@@ -750,6 +752,43 @@ function SettingsBody() {
                     />
                   </Card>
                 </>
+              ) : null}
+
+              {isAdmin ? (
+                <Card title={tr("wipeAllData")} hint={tr("wipeAllDataHint")}>
+                  <Field label={tr("wipePassword")}>
+                    <input
+                      className={inputCls}
+                      type="password"
+                      value={wipePassword}
+                      onChange={(e) => setWipePassword(e.target.value)}
+                      autoComplete="current-password"
+                    />
+                  </Field>
+                  <Btn
+                    kind="danger"
+                    disabled={busy || !wipePassword.trim()}
+                    onClick={() => confirm(tr("wipeAllData"), tr("wipeAllDataConfirm"), async () => {
+                      setBusy(true);
+                      setMsg("");
+                      try {
+                        await post("/api/backup/wipe", { confirm: true, password: wipePassword });
+                        setWipePassword("");
+                        setMsg(tr("wipeDone"));
+                        await loadDemo();
+                        await refreshLookups();
+                        window.location.reload();
+                      } catch (e) {
+                        const code = (e as Error).message || "";
+                        setMsg(code === "invalid_password" ? tr("wipeBadPassword") : (code || tr("error")));
+                      } finally {
+                        setBusy(false);
+                      }
+                    })}
+                  >
+                    {tr("wipeAllData")}
+                  </Btn>
+                </Card>
               ) : null}
             </>
           ) : null}

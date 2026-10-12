@@ -123,15 +123,50 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     shelf: { ar: "رف", en: "Shelf" },
     bin: { ar: "شوكة / Bin", en: "Bin" },
     purchase_in: { ar: "وارد شراء", en: "Purchase in" },
+    purchase_return: { ar: "مرتجع شراء", en: "Purchase return" },
+    purchase_void: { ar: "إلغاء شراء", en: "Purchase void" },
+    transfer: { ar: "تحويل مخزون", en: "Transfer" },
     transfer_out: { ar: "صرف تحويل", en: "Transfer out" },
     transfer_in: { ar: "وارد تحويل", en: "Transfer in" },
     stocktake_adjust: { ar: "تسوية جرد", en: "Stocktake" },
     adjust: { ar: "تسوية", en: "Adjustment" },
     sale_out: { ar: "صرف بيع", en: "Sale out" },
-    return_in: { ar: "مرتجع", en: "Return in" },
+    return_in: { ar: "مرتجع بيع", en: "Sale return" },
+    reserve: { ar: "حجز", en: "Reserve" },
+    damage: { ar: "تالف", en: "Damage" },
+    damage_out: { ar: "صرف تالف", en: "Damage out" },
+    damage_in: { ar: "وارد تالف", en: "Damage in" },
   };
   if (!status) return "-";
   return map[status]?.[lang] || status;
+}
+
+const MOVEMENT_TYPE_ALIAS: Record<string, string> = {
+  in: "purchase_in",
+  out: "sale_out",
+  return: "return_in",
+};
+
+export const STOCK_MOVEMENT_TYPES = [
+  "sale_out",
+  "purchase_in",
+  "purchase_return",
+  "purchase_void",
+  "return_in",
+  "reserve",
+  "adjust",
+  "transfer",
+  "transfer_out",
+  "transfer_in",
+  "stocktake_adjust",
+  "damage",
+  "damage_out",
+  "damage_in",
+] as const;
+
+export function movementTypeLabel(type: string | null | undefined, lang: "ar" | "en") {
+  const raw = String(type || "").trim();
+  return statusLabel(MOVEMENT_TYPE_ALIAS[raw] || raw, lang);
 }
 
 export function invoicePayStatus(row: { status?: string | null; total?: number; paid?: number; remaining?: number }) {

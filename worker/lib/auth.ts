@@ -120,6 +120,15 @@ export function requirePerm(...codes: string[]) {
   };
 }
 
+export function requireAdmin() {
+  return async (c: HonoCtx, next: Next) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "unauthorized" }, 401);
+    if (user.role_slug !== "admin") return c.json({ error: "forbidden" }, 403);
+    await next();
+  };
+}
+
 export function setSessionCookie(c: HonoCtx, token: string, remember = false) {
   const host = requestHost(c);
   const secure = cookieSecure(c);

@@ -20,7 +20,8 @@ import {
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
 import type { Product } from "../hooks/usePOSLogic";
-import { PageSizeControl, parsePageSize } from "../components/PageSizeControl";
+import { parsePageSize } from "../components/PageSizeControl";
+import { TablePager } from "../components/TablePager";
 
 function lookupLabel(row: { name_ar?: string; name_en?: string; name?: string } | undefined, lang: string) {
   if (!row) return "";
@@ -327,7 +328,7 @@ export default function Products() {
       <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
         <Stat label={tr("products")} value={`${num(data.length, lang)} / ${num(totals.count, lang)}`} />
         <Stat label={tr("qty")} value={num(totals.qty, lang)} />
-        <Stat label={tr("stockValue")} value={money(totals.value, lang)} />
+        <Stat label={tr("stockValue")} value={money(totals.actual_value ?? totals.value, lang)} />
         {can("costs.view") && totals.cost_value != null ? <Stat label={tr("lineValue")} value={money(totals.cost_value, lang)} accent="emerald" /> : null}
       </div>
       <SmartFilter
@@ -427,7 +428,14 @@ export default function Products() {
       ) : (
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         <div className="no-print flex flex-wrap items-center justify-end gap-2 border-b border-slate-100 px-3 py-2">
-          <PageSizeControl value={pageSize} onChange={(n) => f.set("pageSize", String(n))} />
+          <TablePager
+            page={f.page}
+            pageSize={pageSize}
+            total={Number(totals.count) || 0}
+            disabled={loading}
+            onPage={(n) => f.set("page", String(n))}
+            onPageSize={(n) => f.setMany({ pageSize: String(n), page: "1" })}
+          />
         </div>
         <div className="table-wrap">
           <table>
@@ -576,12 +584,14 @@ export default function Products() {
         </div>
       </div>
       )}
-      <div className="no-print flex flex-wrap items-center justify-end gap-2 text-sm font-bold">
-        <PageSizeControl value={pageSize} onChange={(n) => f.set("pageSize", String(n))} />
-        <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={f.page <= 1 || loading} onClick={() => f.set("page", String(f.page - 1))}>{tr("prev")}</button>
-        <span>{num(f.page, lang)} / {num(Math.max(1, Math.ceil((Number(totals.count) || 0) / pageSize)), lang)}</span>
-        <button type="button" className="rounded-xl border px-3 py-1 disabled:opacity-40" disabled={loading || f.page >= Math.max(1, Math.ceil((Number(totals.count) || 0) / pageSize))} onClick={() => f.set("page", String(f.page + 1))}>{tr("next")}</button>
-      </div>
+      <TablePager
+        page={f.page}
+        pageSize={pageSize}
+        total={Number(totals.count) || 0}
+        disabled={loading}
+        onPage={(n) => f.set("page", String(n))}
+        onPageSize={(n) => f.setMany({ pageSize: String(n), page: "1" })}
+      />
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
           <div className="mb-2 font-bold">{tr("dailyPurchases")}{daily.date ? ` · ${daily.date}` : ""}</div>

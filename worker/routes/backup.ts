@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { audit, type AppBindings, type AppVars } from "../lib/helpers";
-import { requirePerm } from "../lib/auth";
+import { audit, hashPassword, type AppBindings, type AppVars } from "../lib/helpers";
+import { requireAdmin, requirePerm } from "../lib/auth";
+import { wipeAllBusinessData } from "../lib/factory-wipe";
 import { mysqlDsnLabel } from "../lib/db";
 import { BACKUP_NAME, backupStamp, isBackupBuffer, maybeAutoBackup, recordBackup, restoreSqlDump, writeBackupFile } from "../lib/backup-ops";
 import { clearDemo, demoStatus, seedDemo } from "../lib/demo-seed";
@@ -68,6 +69,29 @@ backupRoutes.post("/demo", requirePerm("backup.manage", "settings.edit"), async 
   } catch (err) {
     return c.json({ error: "seed_failed", detail: err instanceof Error ? err.message : "error" }, 500);
   }
+});
+
+backupRoutes.post("/wipe", requireAdmin(), async (c) => {
+  const body = await c.req.json<{ confirm?: boolean; password?: string }>().catch(() => ({ confirm: false, password: "" }));
+  if (!body.confirm) return c.json({ error: "confirm_required" }, 400);
+  const password = String(body.password || "").trim();
+  if (!password) return c.json({ error: "missing" }, 400);
+  const user = c.get("user");
+  const row = await c.env.DB
+    .prepare("SELECT password_hash, password_salt FROM users WHERE id = ?")
+    .bind(user.id)
+    .first<{ password_hash: string; password_salt: string }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  const hash = await hashPassword(password, row.password_salt);
+  if (hash !== row.password_hash) return c.json({ error: "invalid_password" }, 400);
+  const d = dirs(c);
+  if (d) {
+    const made = await writeBackupFile(c.env.DB, d.dest, 20);
+    await recordBackup(c.env.DB, made.filename, made.size, user.id, made.removed);
+  }
+  const result = await wipeAllBusinessData(c.env.DB, user.id);
+  await audit(c.env.DB, user, "wipe_all", "system", null, "kept_admin");
+  return c.json({ ok: true, ...result });
 });
 
 backupRoutes.post("/demo/clear", requirePerm("backup.manage", "settings.edit"), async (c) => {

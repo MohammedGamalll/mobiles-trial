@@ -9,6 +9,8 @@ import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { useLiveList } from "../hooks/useLiveList";
 import { ActionBtns, useConfirm } from "../components/Confirm";
+import { ListPager } from "../components/TablePager";
+import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
 
 function Page({ title, action, children }: { title: string; action?: any; children: any }) {
   return (
@@ -54,6 +56,7 @@ export function CashAccountsPage() {
     setRows((await get<{ data: any[] }>(`/api/ledger/cash?${f.qs}`)).data || []);
   }
   const list = useLiveList(load, [f.qs]);
+  const pagedCash = usePagedRows(rows, f.page, listPageSize(f.values));
   useEffect(() => {
     get<{ data: any[] }>("/api/ledger/accounts").then((r) => setAccounts(r.data || [])).catch(() => {});
   }, []);
@@ -70,7 +73,7 @@ export function CashAccountsPage() {
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("kind"), tr("name"), tr("accountCode"), tr("opening"), tr("acctBalance"), tr("status"), ""]}
-        rows={rows.map((r) => [
+        rows={pagedCash.rows.map((r) => [
           r.kind === "bank" ? tr("bank") : tr("cashBox"),
           r.name,
           r.account_code,
@@ -88,6 +91,7 @@ export function CashAccountsPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={rows.length} disabled={list.loading} />
       <Modal open={open} title={tr("cashBanks")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("kind")}>
@@ -146,6 +150,7 @@ export function ChartPage() {
   const list = useLiveList(async () => {
     setRows((await get<{ data: any[] }>(`/api/ledger/trial?${f.qs}`)).data || []);
   }, [f.qs]);
+  const pagedTrial = usePagedRows(rows, f.page, listPageSize(f.values));
   return (
     <Page title={tr("chartAccounts")}>
       <SmartFilter f={f} fields={[
@@ -154,7 +159,7 @@ export function ChartPage() {
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
       <Table
         cols={[tr("accountCode"), tr("name"), tr("kind"), tr("debit"), tr("creditAmt"), tr("acctBalance")]}
-        rows={rows.map((r) => {
+        rows={pagedTrial.rows.map((r) => {
           const bal = Number(r.debit || 0) - Number(r.credit || 0);
           return [
             r.code,
@@ -167,6 +172,7 @@ export function ChartPage() {
         })}
       />
       </ListGate>
+      <ListPager f={f} total={rows.length} disabled={list.loading} />
     </Page>
   );
 }
@@ -175,10 +181,15 @@ export function JournalPage() {
   const { tr, lang } = useApp();
   const f = useListQuery("journal");
   const [rows, setRows] = useState<any[]>([]);
+  const [journalTotal, setJournalTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const list = useLiveList(async () => {
-    setRows((await get<{ data: any[] }>(`/api/ledger/journal?${f.qs}&pageSize=80`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/ledger/journal?${p}`);
+    setRows(r.data || []);
+    setJournalTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }, [f.qs]);
   return (
     <Page title={tr("journal")} action={<Btn kind="ghost" onClick={() => setOpen(true)}>{tr("view")}</Btn>}>
@@ -201,6 +212,7 @@ export function JournalPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={journalTotal} disabled={list.loading} />
       <Modal open={!!detail} title={detail?.number || tr("journal")} onClose={() => setDetail(null)} wide>
         {detail ? (
           <Table
@@ -220,12 +232,17 @@ export function VouchersPage() {
   const { tr, lang, can } = useApp();
   const f = useListQuery("vouchers");
   const [rows, setRows] = useState<any[]>([]);
+  const [voucherTotal, setVoucherTotal] = useState(0);
   const [cash, setCash] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ type: "receipt", cash_account_id: 1, party_type: "customer", party_id: "", party_name: "", amount: 0, description: "", date: new Date().toISOString().slice(0, 10) });
   const { confirmDelete, dialog } = useConfirm();
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/ledger/vouchers?${f.qs}&pageSize=80`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/ledger/vouchers?${p}`);
+    setRows(r.data || []);
+    setVoucherTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(async () => {
     await load();
@@ -252,6 +269,7 @@ export function VouchersPage() {
         ])}
       />
       </ListGate>
+      <ListPager f={f} total={voucherTotal} disabled={list.loading} />
       <Modal open={open} title={tr("newVoucher")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("kind")}>

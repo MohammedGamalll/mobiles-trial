@@ -36,20 +36,27 @@ const productSelect = productSelectSql("GREATEST(COALESCE(p.current_stock,0) - C
 
 function scopedStockJoin(stockIds: number[] | null) {
   if (!stockIds) {
-    return { join: "", availSql: "GREATEST(COALESCE(p.current_stock,0) - COALESCE(p.reserved_stock,0), 0)", binds: [] as number[] };
+    return {
+      join: "",
+      availSql: "GREATEST(COALESCE(p.current_stock,0) - COALESCE(p.reserved_stock,0), 0)",
+      actualSql: "COALESCE(p.current_stock,0)",
+      binds: [] as number[],
+    };
   }
   if (!stockIds.length) {
-    return { join: "", availSql: "0", binds: [] as number[] };
+    return { join: "", availSql: "0", actualSql: "0", binds: [] as number[] };
   }
   return {
     join: `LEFT JOIN (
       SELECT product_id,
-             COALESCE(SUM(GREATEST(COALESCE(remaining_qty,0) - COALESCE(reserved_qty,0), 0)),0) as scope_available
+             COALESCE(SUM(GREATEST(COALESCE(remaining_qty,0) - COALESCE(reserved_qty,0), 0)),0) as scope_available,
+             COALESCE(SUM(COALESCE(remaining_qty,0)),0) as scope_current
       FROM inventory_batches
       WHERE location_id IN (${stockIds.map(() => "?").join(",")})
       GROUP BY product_id
     ) sc ON sc.product_id = p.id`,
     availSql: "COALESCE(sc.scope_available,0)",
+    actualSql: "COALESCE(sc.scope_current,0)",
     binds: stockIds,
   };
 }
@@ -415,15 +422,17 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
     .all();
   const countQ = c.env.DB.prepare(`SELECT COUNT(*) as n ${joinSql} ${whereSql}`).bind(...queryBinds).first<{ n: number }>();
   const totalsQ = posMode
-    ? Promise.resolve({ qty: 0, value: 0 } as { qty: number; value: number })
+    ? Promise.resolve({ qty: 0, value: 0, actual_qty: 0, actual_value: 0 })
     : c.env.DB
         .prepare(
           `SELECT COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} END),0) as qty,
-                  COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} * p.selling_price END),0) as value
+                  COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.availSql} * p.selling_price END),0) as value,
+                  COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.actualSql} END),0) as actual_qty,
+                  COALESCE(SUM(CASE WHEN p.kind='service' THEN 0 ELSE ${stockExpr.actualSql} * p.selling_price END),0) as actual_value
            ${joinSql} ${whereSql}`,
         )
         .bind(...queryBinds)
-        .first<{ qty: number; value: number }>();
+        .first<{ qty: number; value: number; actual_qty: number; actual_value: number }>();
   const [{ results }, count, totals] = await Promise.all([listQ, countQ, totalsQ]);
   const light = url.searchParams.get("full") !== "1";
   const withModels = posMode ? (results as { id: number }[]) : await attachModels(c.env.DB, results as { id: number }[]);
@@ -493,6 +502,8 @@ catalogRoutes.get("/products", requirePerm("products.view", "inventory.view", "s
       count: count?.n || 0,
       qty: scopedQty,
       value: scopedValue,
+      actual_qty: Number(totals?.actual_qty) || 0,
+      actual_value: Number(totals?.actual_value) || 0,
       cost_value: showCost ? data.reduce((s, p) => s + (Number(p.cost_value) || 0), 0) : undefined,
     },
   });

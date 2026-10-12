@@ -382,6 +382,9 @@ inventoryRoutes.get("/movements", requirePerm("inventory.view"), async (c) => {
   const moveType = p.type || p.movement_type;
   if (moveType === "sale_out") where.push("sm.type IN ('sale_out','out')");
   else if (moveType === "return_in") where.push("sm.type IN ('return_in','return')");
+  else if (moveType === "purchase_in") where.push("sm.type IN ('purchase_in','in')");
+  else if (moveType === "transfer") where.push("sm.type IN ('transfer','transfer_in','transfer_out')");
+  else if (moveType === "damage") where.push("sm.type IN ('damage','damage_in','damage_out')");
   else applyEq(where, params, "sm.type", moveType);
   applyEq(where, params, "sm.reference_type", p.reference_type);
   applyEq(where, params, "sm.created_by", p.created_by, true);

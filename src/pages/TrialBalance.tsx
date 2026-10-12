@@ -7,6 +7,8 @@ import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { useLiveList } from "../hooks/useLiveList";
+import { ListPager } from "../components/TablePager";
+import { listPageSize, usePagedRows } from "../hooks/usePagedRows";
 
 type TrialRow = {
   id: number;
@@ -112,7 +114,8 @@ export default function TrialBalance() {
     );
   }, [f.qs]);
   const typeOn = Boolean(f.values.type || f.values.account_type);
-  const groups = groupRows(rows);
+  const pagedTrial = usePagedRows(rows, f.page, listPageSize(f.values));
+  const groups = groupRows(pagedTrial.rows);
   const columnTotals = sumColumns(rows);
   return (
     <div className="text-[var(--text)]">
@@ -255,6 +258,7 @@ export default function TrialBalance() {
           </div>
         </div>
       </ListGate>
+      <ListPager f={f} total={rows.length} disabled={list.loading} />
     </div>
   );
 }

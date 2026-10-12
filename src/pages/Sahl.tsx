@@ -11,6 +11,8 @@ import { useListQuery } from "../hooks/useListQuery";
 import { useLiveList } from "../hooks/useLiveList";
 import { useConfirm } from "../components/Confirm";
 import { matchScanned, playSound } from "../lib/sounds";
+import { ListPager } from "../components/TablePager";
+import { applyListPaging, inferredTotal, listPageSize } from "../hooks/usePagedRows";
 
 function Page({ title, action, children }: { title: string; action?: any; children: any }) {
   return (
@@ -29,12 +31,17 @@ export function SerialsPage() {
   const { tr, lang, can } = useApp();
   const f = useListQuery("serials");
   const [rows, setRows] = useState<any[]>([]);
+  const [serialTotal, setSerialTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ product_id: "", serials: "" });
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/serials?${f.qs}&pageSize=80`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/serials?${p}`);
+    setRows(r.data || []);
+    setSerialTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(load, [f.qs]);
   return (
@@ -59,6 +66,7 @@ export function SerialsPage() {
         </tbody>
       </table>
       </ListGate>
+      <ListPager f={f} total={serialTotal} disabled={list.loading} />
       <Modal open={open} title={tr("serials")} onClose={() => { setOpen(false); act.clear(); }}>
         <SerialProductSelect value={form.product_id} onChange={(v) => setForm({ ...form, product_id: v })} />
         <Field label={tr("serials")}><textarea className={inputCls} rows={5} value={form.serials} onChange={(e) => setForm({ ...form, serials: e.target.value })} placeholder="IMEI / serial لكل سطر" /></Field>
@@ -140,11 +148,16 @@ export function ChequesPage() {
   const { tr, lang, can } = useApp();
   const f = useListQuery("cheques");
   const [rows, setRows] = useState<any[]>([]);
+  const [chequeTotal, setChequeTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ number: "", direction: "in", party_type: "customer", party_id: "", party_name: "", bank: "", amount: 0, due_date: "", invoice_id: "", notes: "" });
   const { confirmDelete, dialog } = useConfirm();
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/cheques?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/cheques?${p}`);
+    setRows(r.data || []);
+    setChequeTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(load, [f.qs]);
   return (
@@ -179,6 +192,7 @@ export function ChequesPage() {
         </tbody>
       </table>
       </ListGate>
+      <ListPager f={f} total={chequeTotal} disabled={list.loading} />
       <Modal open={open} title={tr("cheques")} onClose={() => setOpen(false)}>
         <Field label={tr("chequeNo")}><input className={inputCls} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} /></Field>
         <Field label={tr("kind")}>
@@ -220,6 +234,7 @@ export function InstallmentsPage() {
   const { tr, lang, can } = useApp();
   const f = useListQuery("installments");
   const [rows, setRows] = useState<any[]>([]);
+  const [instTotal, setInstTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [payDue, setPayDue] = useState<any>(null);
@@ -228,7 +243,11 @@ export function InstallmentsPage() {
   const { confirmDelete, dialog } = useConfirm();
   const act = useActionError();
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/installments?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/installments?${p}`);
+    setRows(r.data || []);
+    setInstTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(load, [f.qs]);
   async function openPlan(id: number) {
@@ -256,6 +275,7 @@ export function InstallmentsPage() {
         </tbody>
       </table>
       </ListGate>
+      <ListPager f={f} total={instTotal} disabled={list.loading} />
       {detail ? (
         <div className="mt-4 rounded-2xl border p-4">
           <div className="mb-2 font-bold">{tr("installments")} #{detail.id}</div>

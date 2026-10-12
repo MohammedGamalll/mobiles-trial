@@ -10,11 +10,14 @@ import { useLiveList } from "../hooks/useLiveList";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { formatDuration, getGps, haversineMeters } from "../lib/geo";
+import { ListPager } from "../components/TablePager";
+import { applyListPaging, inferredTotal, listPageSize } from "../hooks/usePagedRows";
 
 export function EmployeesPage() {
   const { tr, lang, lookups, can } = useApp();
   const f = useListQuery("employees");
   const [rows, setRows] = useState<any[]>([]);
+  const [empTotal, setEmpTotal] = useState(0);
   const [users, setUsers] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>(emptyEmp());
@@ -25,7 +28,11 @@ export function EmployeesPage() {
   }
   const [shifts, setShifts] = useState<any[]>([]);
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/hr/employees?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/hr/employees?${p}`);
+    setRows(r.data || []);
+    setEmpTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(async () => {
     await load();
@@ -103,6 +110,7 @@ export function EmployeesPage() {
         </div>
       </div>
       </ListGate>
+      <ListPager f={f} total={empTotal} disabled={list.loading} />
       <Modal open={open} title={form.id ? tr("edit") : tr("addEmployee")} onClose={() => setOpen(false)} wide>
         {form.id ? (
           <div className="detail-strip mb-4 grid gap-2 md:grid-cols-5">
@@ -169,6 +177,7 @@ export function AttendancePage() {
   const f = useListQuery("attendance", { period: "today" });
   const [me, setMe] = useState<any>(null);
   const [rows, setRows] = useState<any[]>([]);
+  const [attTotal, setAttTotal] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
   const [msg, setMsg] = useState("");
@@ -179,8 +188,11 @@ export function AttendancePage() {
     setMe(r.data);
   }
   async function loadRows() {
-    const r = await get<{ data: any[] }>(`/api/hr/attendance?${f.qs}`);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/hr/attendance?${p}`);
     setRows(r.data || []);
+    setAttTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   useEffect(() => { loadMe().catch(() => {}); }, []);
   const list = useLiveList(loadRows, [f.qs]);
@@ -319,6 +331,7 @@ export function AttendancePage() {
           </div>
         </div>
       </ListGate>
+      <ListPager f={f} total={attTotal} disabled={list.loading} />
     </div>
   );
 }
@@ -327,6 +340,7 @@ export function PayrollPage() {
   const { tr, lang, can } = useApp();
   const f = useListQuery("payroll");
   const [runs, setRuns] = useState<any[]>([]);
+  const [runTotal, setRunTotal] = useState(0);
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [detail, setDetail] = useState<any>(null);
   const [payouts, setPayouts] = useState<Record<number, string>>({});
@@ -338,7 +352,11 @@ export function PayrollPage() {
   }
 
   async function load() {
-    setRuns((await get<{ data: any[] }>(`/api/hr/payroll?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/hr/payroll?${p}`);
+    setRuns(r.data || []);
+    setRunTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(load, [f.qs]);
 
@@ -435,6 +453,7 @@ export function PayrollPage() {
             </div>
           </div>
         </ListGate>
+        <ListPager f={f} total={runTotal} disabled={list.loading} />
         {detail ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -674,12 +693,17 @@ export function LeavesPage() {
   const { tr, lang, can } = useApp();
   const f = useListQuery("leaves");
   const [rows, setRows] = useState<any[]>([]);
+  const [leaveTotal, setLeaveTotal] = useState(0);
   const [emps, setEmps] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ employee_id: "", type: "annual", date_from: new Date().toISOString().slice(0, 10), date_to: new Date().toISOString().slice(0, 10), reason: "" });
   const { confirmDelete, dialog } = useConfirm();
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/hr/leaves?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/hr/leaves?${p}`);
+    setRows(r.data || []);
+    setLeaveTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(load, [f.qs]);
   useEffect(() => {
@@ -748,6 +772,7 @@ export function LeavesPage() {
         </div>
       </div>
       </ListGate>
+      <ListPager f={f} total={leaveTotal} disabled={list.loading} />
       <Modal open={open} title={tr("newLeave")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           {can("leaves.manage") ? (
@@ -785,6 +810,7 @@ export function AdvancesPage() {
   const { tr, lang, can, lookups } = useApp();
   const f = useListQuery("advances", { month: new Date().toISOString().slice(0, 7) });
   const [rows, setRows] = useState<any[]>([]);
+  const [advTotal, setAdvTotal] = useState(0);
   const [ots, setOts] = useState<any[]>([]);
   const [emps, setEmps] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
@@ -795,7 +821,11 @@ export function AdvancesPage() {
   const month = f.values.month || new Date().toISOString().slice(0, 7);
   const agents = (lookups?.delivery_agents || []).filter((a: any) => a.status !== "inactive");
   async function load() {
-    setRows((await get<{ data: any[] }>(`/api/hr/advances?${f.qs}`)).data || []);
+    const p = new URLSearchParams(f.qs);
+    applyListPaging(p, f.page, listPageSize(f.values));
+    const r = await get<{ data: any[]; total?: number }>(`/api/hr/advances?${p}`);
+    setRows(r.data || []);
+    setAdvTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
     setOts((await get<{ data: any[] }>(`/api/hr/overtime?month=${month}`)).data || []);
   }
   const list = useLiveList(load, [f.qs]);
@@ -892,6 +922,7 @@ export function AdvancesPage() {
         </div>
       </div>
       </ListGate>
+      <ListPager f={f} total={advTotal} disabled={list.loading} />
       <Modal open={open} title={tr("newAdvance")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Field label={tr("employees")}>

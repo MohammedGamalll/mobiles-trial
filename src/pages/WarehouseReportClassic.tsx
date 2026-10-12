@@ -6,6 +6,8 @@ import { money, num } from "../lib/format";
 import { PrintLetterhead } from "../components/ui";
 import { useProductCatalog } from "../hooks/useProductCatalog";
 import { warehouseLocations } from "../lib/warehouses";
+import { TablePager } from "../components/TablePager";
+import { parsePageSize } from "../components/PageSizeControl";
 
 export default function WarehouseReportClassic() {
   const { tr, lang, lookups, can } = useApp();
@@ -19,15 +21,16 @@ export default function WarehouseReportClassic() {
 
   const nameOf = (p: any) => (lang === "ar" ? p.name_ar : p.name_en) || p.name_ar;
   const rows = ready ? cat.rows : [];
+  const pageSize = parsePageSize(cat.filters.pageSize, 50);
   const line = (p: any) => {
-    const qty = Number(p.available ?? p.current_stock ?? 0);
+    const qty = Number(p.current_stock ?? p.available ?? 0);
     const unitCost = mode === "last" ? Number(p.last_purchase_price || p.purchase_price || 0) : Number(p.purchase_price || 0);
     const sell = Number(p.selling_price || 0);
     const costVal = qty * unitCost;
     const sellVal = qty * sell;
     return { qty, unitCost, sell, costVal, sellVal, profit: sellVal - costVal };
   };
-  const totals = rows.reduce((acc, p) => {
+  const pageTotals = rows.reduce((acc, p) => {
     const l = line(p);
     acc.qty += l.qty;
     acc.cost += l.costVal;
@@ -35,6 +38,12 @@ export default function WarehouseReportClassic() {
     acc.profit += l.profit;
     return acc;
   }, { qty: 0, cost: 0, sell: 0, profit: 0 });
+  const totals = {
+    qty: Number(cat.totals.actual_qty ?? pageTotals.qty),
+    cost: pageTotals.cost,
+    sell: Number(cat.totals.actual_value ?? pageTotals.sell),
+    profit: pageTotals.profit,
+  };
 
   async function showMoves() {
     const id = cat.picked;
@@ -144,6 +153,17 @@ export default function WarehouseReportClassic() {
               </tr>
             </tfoot>
           </table>
+          {ready ? (
+            <TablePager
+              className="px-3 py-2"
+              page={cat.filters.page}
+              pageSize={pageSize}
+              total={cat.total}
+              disabled={cat.loading}
+              onPage={(n) => cat.setFilters({ ...cat.filters, page: n })}
+              onPageSize={(n) => cat.setFilters({ ...cat.filters, page: 1, pageSize: n })}
+            />
+          ) : null}
         </div>
       </div>
       {moves ? (

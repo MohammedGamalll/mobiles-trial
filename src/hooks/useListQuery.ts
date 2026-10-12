@@ -86,24 +86,24 @@ export function useListQuery(id: string, defaults: FilterValues = {}) {
 
   const set = useCallback(
     (key: string, value: string) => {
-      const next = { ...values, [key]: value, page: key === "page" ? value : "1" };
+      const next = { ...valuesRef.current, [key]: value, page: key === "page" ? value : "1" };
       if (!value) delete next[key];
       if (key === "q") setDraftQ(value);
       persist(next);
     },
-    [persist, values],
+    [persist],
   );
 
   const setMany = useCallback(
     (patch: FilterValues) => {
-      const next: FilterValues = { ...values, ...patch, page: "1" };
+      const next: FilterValues = { ...valuesRef.current, ...patch, page: patch.page || "1" };
       Object.entries(patch).forEach(([k, v]) => {
         if (!v) delete next[k];
       });
       if (patch.q != null) setDraftQ(patch.q);
       persist(next);
     },
-    [persist, values],
+    [persist],
   );
 
   const clear = useCallback(() => {

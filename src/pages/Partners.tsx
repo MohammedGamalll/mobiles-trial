@@ -3,6 +3,8 @@ import { useApp } from "../context";
 import { del, get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money } from "../lib/format";
+import { TablePager } from "../components/TablePager";
+import { usePagedRows } from "../hooks/usePagedRows";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import {
   Btn,
@@ -105,6 +107,8 @@ export default function Partners() {
   const cashAccounts = lookups?.cash_accounts || [];
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [rows, setRows] = useState<Partner[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -210,6 +214,7 @@ export default function Partners() {
     }
   }
 
+  const pagedPartners = usePagedRows(rows, page, pageSize);
   const usedPct = rows.reduce(
     (s, r) => s + (Number(r.equity_percentage) || 0),
     0,
@@ -319,7 +324,7 @@ export default function Partners() {
                   </td>
                 </tr>
               ) : null}
-              {rows.map((r) => (
+              {pagedPartners.rows.map((r) => (
                 <tr key={r.id}>
                   <td className="truncate font-bold" title={r.name}>
                     {r.name}
@@ -388,6 +393,7 @@ export default function Partners() {
             </tbody>
           </table>
         </div>
+        <TablePager page={page} pageSize={pageSize} total={rows.length} disabled={loading} onPage={setPage} onPageSize={setPageSize} />
       </div>
 
       {dialog}
