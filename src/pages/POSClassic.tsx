@@ -85,6 +85,7 @@ export default function POSClassic() {
     loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
     forceGoods, setForceGoods, setStockTick,
+    refreshLookups,
   } = pos;
   const [railOpen, setRailOpen] = useState(true);
   const [desk, setDesk] = useState<"sale" | "cart" | "held" | "sold" | "control">("sale");
@@ -96,8 +97,10 @@ export default function POSClassic() {
   const [headerFilters, setHeaderFilters] = useState<Record<string, string>>({});
   const [cashOpen, setCashOpen] = useState(false);
   const [courierOpen, setCourierOpen] = useState(false);
+  const [courierFormOpen, setCourierFormOpen] = useState(false);
+  const [courierForm, setCourierForm] = useState({ name: "", phone: "", code: "" });
   const cashAccounts = lookups?.cash_accounts || [];
-  const couriers = (lookups?.delivery_agents || []).filter((a) => !a.role_type || a.role_type === "delivery" || a.role_type === "both");
+  const couriers = (lookups?.delivery_agents || []).filter((a) => String((a as { status?: string }).status || "active") !== "inactive");
   const cashName = cashAccounts.find((a) => a.id === cashAccountId)?.name || tr("posTreasury");
   const courierName = couriers.find((a) => a.id === agentId)?.name || tr("agent");
   const customerName = customer?.name || walkIn || customerQ || tr("walkIn");
@@ -654,9 +657,12 @@ export default function POSClassic() {
                       className={agentId === a.id ? "is-on" : ""}
                       onClick={() => { setAgentId(a.id); setCourierOpen(false); }}
                     >
-                      {a.name}
+                      <b>{a.name}</b>
+                      <small>{[a.code, a.phone].filter(Boolean).join(" · ")}</small>
                     </button>
                   ))}
+                  {!couriers.length ? <button type="button" disabled>{tr("noAgentsHint")}</button> : null}
+                  <button type="button" onClick={() => { setCourierForm({ name: "", phone: "", code: "" }); setCourierFormOpen(true); setCourierOpen(false); }}>+ {tr("addAgent")}</button>
                 </ClassicDropUp>
                 <label>
                   <span>{tr("deliveryFee")}</span>
@@ -921,8 +927,39 @@ export default function POSClassic() {
         onSaved={(kind, row) => {
           setPartyKind(kind);
           applyParty(row, kind);
+          if (kind === "agent") {
+            void refreshLookups().then(() => {
+              if (row?.id) setAgentId(row.id);
+              setType("delivery");
+            });
+          }
         }}
       />
+      <Modal open={courierFormOpen} title={tr("addAgent")} onClose={() => setCourierFormOpen(false)}>
+        <Field label={tr("name")}>
+          <input className={inputCls} value={courierForm.name} onChange={(e) => setCourierForm({ ...courierForm, name: e.target.value })} />
+        </Field>
+        <Field label={tr("phone")}>
+          <input className={inputCls} value={courierForm.phone} onChange={(e) => setCourierForm({ ...courierForm, phone: e.target.value })} />
+        </Field>
+        <Field label={tr("agentCode")}>
+          <input className={inputCls} value={courierForm.code} onChange={(e) => setCourierForm({ ...courierForm, code: e.target.value })} />
+        </Field>
+        <p className="mt-2 text-xs text-slate-500">{tr("noAgentsHint")}</p>
+        <Btn className="mt-3" onClick={async () => {
+          if (!courierForm.name.trim()) return;
+          const r = await post<{ id: number }>("/api/delivery/agents", {
+            name: courierForm.name.trim(),
+            phone: courierForm.phone.trim(),
+            code: courierForm.code.trim(),
+            status: "active",
+            role_type: "delivery",
+          });
+          await refreshLookups();
+          setAgentId(r.id);
+          setCourierFormOpen(false);
+        }}>{tr("save")}</Btn>
+      </Modal>
     </div>
   );
 }

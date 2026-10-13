@@ -96,7 +96,7 @@ function todayIso() {
 }
 
 export function usePOSLogic(variant: "modern" | "classic" = "modern") {
-  const { tr, lang, lookups, can, settings, branchId, warehouseId } = useApp();
+  const { tr, lang, lookups, can, settings, branchId, warehouseId, refreshLookups } = useApp();
   const showCost = can("costs.view");
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -1091,7 +1091,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       : customers;
 
   return {
-    tr, lang, lookups, can, nav, quoteMode, exchangeMode, showCost,
+    tr, lang, lookups, can, refreshLookups, nav, quoteMode, exchangeMode, showCost,
     q, setQ, catalog, typeFilter, setTypeFilter, kindFilter, setKindFilter,
     cart, setCart, sel, setSel, type, setType,
     customerQ, setCustomerQ, customers, custListOpen, setCustListOpen,

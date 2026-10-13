@@ -158,8 +158,21 @@ export default function POS() {
     holdInvoice,
     submitInvoiceReturn,
     beginResumeHeld,
+    refreshLookups,
   } = usePOSLogic("modern");
   const [cartOpen, setCartOpen] = useState(false);
+  const [courierOpen, setCourierOpen] = useState(false);
+  const [courierQ, setCourierQ] = useState("");
+  const [courierFormOpen, setCourierFormOpen] = useState(false);
+  const [courierForm, setCourierForm] = useState({ name: "", phone: "", code: "" });
+  const [courierBusy, setCourierBusy] = useState(false);
+  const couriers = (lookups?.delivery_agents || []).filter((a) => String((a as { status?: string }).status || "active") !== "inactive");
+  const courierHits = couriers.filter((a) => {
+    const qv = courierQ.trim().toLowerCase();
+    if (!qv) return true;
+    return [a.name, a.code, a.phone].some((v) => String(v || "").toLowerCase().includes(qv));
+  });
+  const courierName = couriers.find((a) => a.id === agentId)?.name || "";
   const [headerFilters, setHeaderFilters] = useState<Record<string, string>>(
     {},
   );
@@ -732,44 +745,92 @@ export default function POS() {
                 type="button"
                 tabIndex={-1}
                 className={`w-fit whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-bold ${type === "delivery" ? "bg-[var(--ink)] text-white" : "border border-slate-200 bg-[var(--surface)]"}`}
-                onClick={() =>
-                  setType(type === "delivery" ? "normal" : "delivery")
-                }
+                onClick={() => {
+                  const next = type === "delivery" ? "normal" : "delivery";
+                  setType(next);
+                  setCourierOpen(next === "delivery");
+                }}
               >
                 {tr("deliverySale")}
               </button>
               {type === "delivery" ? (
-                <div className="flex w-full items-center gap-2">
-                  <select
-                    tabIndex={2}
-                    className={`${inputCls} min-w-0 flex-1`}
-                    value={agentId}
-                    onChange={(e) =>
-                      setAgentId(e.target.value ? Number(e.target.value) : "")
-                    }
-                  >
-                    <option value="">{tr("agent")}</option>
-                    {(lookups?.delivery_agents || [])
-                      .filter(
-                        (a) =>
-                          !a.role_type ||
-                          a.role_type === "delivery" ||
-                          a.role_type === "both",
-                      )
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                  </select>
-                  <input
-                    tabIndex={3}
-                    className={`${inputCls} w-24 shrink-0`}
-                    type="number"
-                    placeholder={tr("deliveryFee")}
-                    value={extraAmount}
-                    onChange={(e) => setExtraAmount(Number(e.target.value))}
-                  />
+                <div className="space-y-2 rounded-2xl border border-slate-200 bg-[var(--surface-2)] p-2">
+                  <div className="text-xs font-black text-slate-600">{tr("agent")}</div>
+                  <div className="flex gap-2">
+                    <div className="relative min-w-0 flex-1">
+                      <button
+                        type="button"
+                        className={`${inputCls} flex min-h-11 w-full items-center justify-between gap-2 text-start`}
+                        onClick={() => setCourierOpen((v) => !v)}
+                      >
+                        <span className={courierName ? "font-bold" : "text-slate-400"}>
+                          {courierName || tr("agent")}
+                        </span>
+                        <ChevronDown size={16} />
+                      </button>
+                      {courierOpen ? (
+                        <div className="absolute start-0 end-0 z-50 mt-1 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-[var(--surface)] text-[var(--ink)] shadow-lg">
+                          <input
+                            className={`${inputCls} sticky top-0 rounded-none border-0 border-b`}
+                            placeholder={tr("search")}
+                            value={courierQ}
+                            autoFocus
+                            onChange={(e) => setCourierQ(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="block w-full px-3 py-2.5 text-start text-sm hover:bg-[var(--surface-2)]"
+                            onClick={() => {
+                              setAgentId("");
+                              setCourierOpen(false);
+                            }}
+                          >
+                            {tr("agent")}
+                          </button>
+                          {courierHits.map((a) => (
+                            <button
+                              key={a.id}
+                              type="button"
+                              className={`block w-full px-3 py-2.5 text-start text-sm hover:bg-[var(--surface-2)] ${agentId === a.id ? "bg-slate-100 font-black" : ""}`}
+                              onClick={() => {
+                                setAgentId(a.id);
+                                setCourierQ("");
+                                setCourierOpen(false);
+                              }}
+                            >
+                              <div className="font-bold">{a.name}</div>
+                              <div className="text-[11px] text-slate-500">
+                                {[a.code, a.phone, a.area].filter(Boolean).join(" · ")}
+                              </div>
+                            </button>
+                          ))}
+                          {!courierHits.length ? (
+                            <div className="px-3 py-3 text-sm text-slate-400">{tr("noAgentsHint")}</div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-xl border border-slate-200 px-2 text-xs font-bold"
+                      onClick={() => {
+                        setCourierForm({ name: "", phone: "", code: "" });
+                        setCourierFormOpen(true);
+                      }}
+                    >
+                      + {tr("addAgent")}
+                    </button>
+                  </div>
+                  <label className="block text-xs font-bold">
+                    <span className="mb-1 block text-slate-500">{tr("deliveryFee")}</span>
+                    <input
+                      tabIndex={3}
+                      className={inputCls}
+                      type="number"
+                      value={extraAmount}
+                      onChange={(e) => setExtraAmount(Number(e.target.value))}
+                    />
+                  </label>
                 </div>
               ) : null}
             </div>
@@ -1755,6 +1816,64 @@ export default function POS() {
             <div className="text-xs text-slate-400">{tr("invoiceNo")}</div>
           )}
           {err ? <div className="text-sm text-rose-600">{err}</div> : null}
+        </div>
+      </Modal>
+      <Modal
+        open={courierFormOpen}
+        title={tr("addAgent")}
+        onClose={() => setCourierFormOpen(false)}
+      >
+        <div className="space-y-3">
+          <input
+            className={inputCls}
+            placeholder={tr("name")}
+            value={courierForm.name}
+            onChange={(e) => setCourierForm({ ...courierForm, name: e.target.value })}
+          />
+          <input
+            className={inputCls}
+            placeholder={tr("phone")}
+            value={courierForm.phone}
+            onChange={(e) => setCourierForm({ ...courierForm, phone: e.target.value })}
+          />
+          <input
+            className={inputCls}
+            placeholder={tr("agentCode")}
+            value={courierForm.code}
+            onChange={(e) => setCourierForm({ ...courierForm, code: e.target.value })}
+          />
+          <p className="text-xs leading-5 text-slate-500">{tr("noAgentsHint")}</p>
+          {err ? <div className="text-sm text-rose-600">{err}</div> : null}
+          <Btn
+            disabled={courierBusy}
+            onClick={async () => {
+              if (!courierForm.name.trim()) {
+                setErr(tr("errNameRequired"));
+                return;
+              }
+              setCourierBusy(true);
+              try {
+                const r = await post<{ id: number }>("/api/delivery/agents", {
+                  name: courierForm.name.trim(),
+                  phone: courierForm.phone.trim(),
+                  code: courierForm.code.trim(),
+                  status: "active",
+                  role_type: "delivery",
+                });
+                await refreshLookups();
+                setAgentId(r.id);
+                setCourierFormOpen(false);
+                setCourierOpen(false);
+                setErr("");
+              } catch (e) {
+                setErr(apiMessage(tr, e));
+              } finally {
+                setCourierBusy(false);
+              }
+            }}
+          >
+            {tr("save")}
+          </Btn>
         </div>
       </Modal>
     </div>

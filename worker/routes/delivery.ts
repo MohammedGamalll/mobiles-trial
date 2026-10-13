@@ -316,13 +316,16 @@ deliveryRoutes.get("/agents", requirePerm("delivery.view", "sales.create", "sett
   return c.json({ data: results });
 });
 
-deliveryRoutes.post("/agents", requirePerm("settings.edit", "hr.manage"), async (c) => {
-  const b = await c.req.json<{ name: string; code: string; phone?: string; notes?: string; status?: string; role_type?: string; commission_rate?: number; area?: string }>();
+deliveryRoutes.post("/agents", requirePerm("settings.edit", "hr.manage", "sales.create"), async (c) => {
+  const b = await c.req.json<{ name: string; code?: string; phone?: string; notes?: string; status?: string; role_type?: string; commission_rate?: number; area?: string }>();
+  const name = String(b.name || "").trim();
+  if (!name) return c.json({ error: "missing" }, 400);
+  const code = String(b.code || "").trim() || `T-${Date.now().toString().slice(-6)}`;
   const r = await c.env.DB
     .prepare("INSERT INTO delivery_agents (name, code, phone, status, notes, role_type, commission_rate, area) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(b.name, b.code, b.phone || null, b.status || "active", b.notes || null, b.role_type || "delivery", b.commission_rate || 0, b.area || null)
+    .bind(name, code, b.phone || null, b.status || "active", b.notes || null, b.role_type || "delivery", b.commission_rate || 0, b.area || null)
     .run();
-  return c.json({ id: r.meta.last_row_id }, 201);
+  return c.json({ id: r.meta.last_row_id, name, code }, 201);
 });
 
 deliveryRoutes.put("/agents/:id", requirePerm("settings.edit", "hr.manage"), async (c) => {

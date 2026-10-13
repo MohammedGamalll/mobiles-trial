@@ -3338,19 +3338,20 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-dropup.is-wide {
-  min-width: 140px;
+  min-width: 220px;
+  flex: 1 1 220px;
 }
 
 .pos-classic-dropup-btn {
-  height: 26px;
-  min-width: 110px;
-  max-width: 180px;
+  height: 32px;
+  min-width: 160px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   border: 1px solid #2e7d32;
   background: #fff;
-  padding: 0 6px;
+  padding: 0 8px;
   color: #111;
   text-align: start;
   font-weight: 700;
@@ -3361,8 +3362,8 @@ html[data-ui="modern"] .login-gold {
   bottom: calc(100% + 4px);
   inset-inline-start: 0;
   z-index: 50;
-  min-width: 180px;
-  max-height: 220px;
+  min-width: 260px;
+  max-height: 280px;
   overflow: auto;
   border: 1px solid #2e7d32;
   background: #fff;

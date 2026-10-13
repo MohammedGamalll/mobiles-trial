@@ -16,7 +16,7 @@ export function AccountDialogClassic({
   onClose: () => void;
   onSaved?: (party: AccountParty, row: any) => void;
 }) {
-  const { tr, lookups } = useApp();
+  const { tr } = useApp();
   const [kind, setKind] = useState<AccountParty>("customer");
   const [form, setForm] = useState({ code: "", name: "", email: "", phone: "", address: "" });
   const [busy, setBusy] = useState(false);
@@ -43,9 +43,15 @@ export function AccountDialogClassic({
         playSound("done");
         onSaved?.(kind, { id: r.id, ...form });
       } else if (kind === "agent") {
-        const hit = (lookups?.delivery_agents || []).find((a) => a.name === form.name || a.code === form.code);
+        const r = await post<{ id: number; name?: string; code?: string }>("/api/delivery/agents", {
+          name: form.name.trim(),
+          phone: form.phone.trim(),
+          code: form.code.trim(),
+          status: "active",
+          role_type: "delivery",
+        });
         playSound("done");
-        onSaved?.(kind, hit || { name: form.name, phone: form.phone, code: form.code });
+        onSaved?.(kind, { id: r.id, name: form.name, phone: form.phone, code: r.code || form.code });
       } else {
         const r = await post<{ id: number }>("/api/customers", form);
         playSound("done");
