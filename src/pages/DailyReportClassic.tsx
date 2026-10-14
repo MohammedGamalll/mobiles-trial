@@ -5,6 +5,7 @@ import { get } from "../lib/api";
 import { downloadExport } from "../lib/export";
 import { apiMessage } from "../lib/errors";
 import { money, num } from "../lib/format";
+import { ShiftFilter, ShiftWindowNote, toDatetimeLocalValue, type ShiftPick } from "../components/ShiftFilter";
 import { ErrorNote, PrintLetterhead } from "../components/ui";
 import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
@@ -66,6 +67,9 @@ type Summary = {
 };
 
 type Report = {
+  from?: string;
+  to?: string;
+  shift?: ShiftPick | null;
   summary: Summary;
   matrix?: Matrix;
   sales_lines: SalesLine[];
@@ -96,12 +100,14 @@ function reportQuery(
   to: string,
   treasuryId: string,
   locationId: string,
+  shiftId: string,
 ) {
   const p = new URLSearchParams();
   if (from) p.set("date_from", from);
   if (to) p.set("date_to", to);
   if (treasuryId) p.set("treasury_id", treasuryId);
   if (locationId) p.set("location_id", locationId);
+  if (shiftId) p.set("shift_id", shiftId);
   return p.toString();
 }
 
@@ -172,20 +178,28 @@ export default function DailyReportClassic() {
   const [to, setTo] = useState(defaultTo);
   const [treasuryId, setTreasuryId] = useState("");
   const [locationId, setLocationId] = useState("");
+  const [shiftId, setShiftId] = useState("");
+  const [pickedShift, setPickedShift] = useState<ShiftPick | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
   const [data, setData] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const qs = useMemo(
-    () => reportQuery(from, to, treasuryId, locationId),
-    [from, to, treasuryId, locationId],
+    () => reportQuery(from, to, treasuryId, locationId, shiftId),
+    [from, to, treasuryId, locationId, shiftId],
   );
 
   async function load() {
     setLoading(true);
     setErr("");
     try {
-      setData(await get<Report>(`/api/reports/daily-movement?${qs}`));
+      const r = await get<Report>(`/api/reports/daily-movement?${qs}`);
+      setData(r);
+      if (r.shift) {
+        setPickedShift(r.shift);
+        if (r.from) setFrom(toDatetimeLocalValue(r.from));
+        if (r.to) setTo(toDatetimeLocalValue(r.to));
+      }
     } catch (e) {
       setErr(apiMessage(tr, e));
     } finally {
@@ -268,11 +282,24 @@ export default function DailyReportClassic() {
       <PrintLetterhead title={tr("dailyReportTitle")} />
       <div className="sahl-daily-toolbar no-print">
         <b className="sahl-daily-title">{tr("dailyReportTitle")}</b>
+        <ShiftFilter
+          compact
+          value={shiftId}
+          onChange={({ id, shift }) => {
+            setShiftId(id);
+            setPickedShift(shift);
+            if (shift) {
+              setFrom(toDatetimeLocalValue(shift.opened_at));
+              setTo(toDatetimeLocalValue(shift.closed_at) || defaultTo());
+            }
+          }}
+        />
         <label className="sahl-daily-field">
           <span>{tr("fromDate")}</span>
           <input
             type="datetime-local"
             value={from}
+            disabled={!!shiftId}
             onChange={(e) => setFrom(e.target.value)}
           />
         </label>
@@ -281,6 +308,7 @@ export default function DailyReportClassic() {
           <input
             type="datetime-local"
             value={to}
+            disabled={!!shiftId}
             onChange={(e) => setTo(e.target.value)}
           />
         </label>
@@ -339,6 +367,7 @@ export default function DailyReportClassic() {
           </button>
         ) : null}
       </div>
+      <ShiftWindowNote shift={pickedShift} />
 
       <div className="sahl-daily-tabs no-print">
         {tabs.map((t) => (

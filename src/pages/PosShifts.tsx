@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get } from "../lib/api";
 import { apiMessage } from "../lib/errors";
@@ -23,10 +23,10 @@ type ShiftRow = {
 type Report = {
   shift: ShiftRow & { cash_in?: number; cash_out?: number };
   sales: { id: number; number: string; date: string; customer_name?: string; total: number; paid: number; status: string }[];
-  returns: { id: number; number: string; date: string; total: number; invoice_number?: string }[];
+  returns: { id: number; number: string; date: string; total: number; invoice_id?: number; invoice_number?: string }[];
   vouchers: { id: number; number: string; type: string; date: string; amount: number; party_name?: string }[];
   expenses: { id: number; date: string; amount: number; description?: string; category_ar?: string }[];
-  collections: { id: number; date: string; method: string; amount: number; invoice_number?: string }[];
+  collections: { id: number; date: string; method: string; amount: number; invoice_id?: number; invoice_number?: string }[];
   totals: {
     sales: number;
     sales_paid: number;
@@ -111,36 +111,38 @@ export default function PosShiftsPage() {
             </Field>
           </FilterBar>
           {loading ? <PageLoading /> : (
-            <div className="overflow-auto rounded-2xl border border-[var(--border)]">
-              <table className="min-w-full text-sm">
-                <thead className="bg-[var(--surface-2)] text-xs">
-                  <tr>
-                    <th className="p-3 text-start">#</th>
-                    <th className="p-3 text-start">{tr("user")}</th>
-                    <th className="p-3 text-start">{tr("drawerAccount")}</th>
-                    <th className="p-3 text-start">{tr("openedAt")}</th>
-                    <th className="p-3 text-start">{tr("status")}</th>
-                    <th className="p-3 text-end">{tr("openingDrawer")}</th>
-                    <th className="p-3 text-end">{tr("shiftVariance")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id} className="cursor-pointer border-t border-[var(--border)] hover:bg-[var(--surface-2)]" onClick={() => nav(`/pos/shifts?id=${r.id}`)}>
-                      <td className="p-3">{r.id}</td>
-                      <td className="p-3">{r.user_name}</td>
-                      <td className="p-3">{lang === "ar" ? r.drawer_name : r.drawer_name_en || r.drawer_name}</td>
-                      <td className="p-3 tabular-nums">{r.opened_at}</td>
-                      <td className="p-3">{r.status === "open" ? tr("shiftOpenStatus") : tr("shiftClosedStatus")}</td>
-                      <td className="p-3 text-end tabular-nums">{money(r.opening_cash_balance, lang)}</td>
-                      <td className={`p-3 text-end tabular-nums ${Number(r.variance || 0) < 0 ? "text-rose-600" : ""}`}>
-                        {r.status === "closed" ? money(Number(r.variance || 0), lang) : "—"}
-                      </td>
+            <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+              <div className="table-wrap">
+                <table className="text-sm">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>{tr("user")}</th>
+                      <th className="name">{tr("drawerAccount")}</th>
+                      <th>{tr("openedAt")}</th>
+                      <th>{tr("status")}</th>
+                      <th className="num">{tr("openingDrawer")}</th>
+                      <th className="num">{tr("shiftVariance")}</th>
                     </tr>
-                  ))}
-                  {!rows.length ? <tr><td className="p-6 text-center text-[var(--muted)]" colSpan={7}>{tr("noData")}</td></tr> : null}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id} className="cursor-pointer" onClick={() => nav(`/pos/shifts?id=${r.id}`)}>
+                        <td>{r.id}</td>
+                        <td>{r.user_name}</td>
+                        <td className="name">{lang === "ar" ? r.drawer_name : r.drawer_name_en || r.drawer_name}</td>
+                        <td className="tabular-nums">{r.opened_at}</td>
+                        <td>{r.status === "open" ? tr("shiftOpenStatus") : tr("shiftClosedStatus")}</td>
+                        <td className="num">{money(r.opening_cash_balance, lang)}</td>
+                        <td className={`num ${Number(r.variance || 0) < 0 ? "text-rose-600" : ""}`}>
+                          {r.status === "closed" ? money(Number(r.variance || 0), lang) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                    {!rows.length ? <tr><td className="p-6 text-center text-[var(--muted)]" colSpan={7}>{tr("noData")}</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>
@@ -155,9 +157,9 @@ export default function PosShiftsPage() {
               value={variance == null ? "—" : money(variance, lang)}
             />
           </div>
-          <Section title={tr("sales")} rows={report.sales.map((r) => [r.number, r.customer_name || "", money(r.total, lang)])} />
-          <Section title={tr("salesReturns")} rows={report.returns.map((r) => [r.number, r.invoice_number || "", money(r.total, lang)])} />
-          <Section title={tr("collect")} rows={report.collections.map((r) => [r.invoice_number || "", r.method, money(r.amount, lang)])} />
+          <Section title={tr("sales")} rows={report.sales.map((r) => [<InvoiceLink key={r.id} id={r.id} label={r.number} />, r.customer_name || "", money(r.total, lang)])} />
+          <Section title={tr("salesReturns")} rows={report.returns.map((r) => [r.number, <InvoiceLink key={r.id} id={r.invoice_id} label={r.invoice_number} />, money(r.total, lang)])} />
+          <Section title={tr("collect")} rows={report.collections.map((r) => [<InvoiceLink key={r.id} id={r.invoice_id} label={r.invoice_number} />, r.method, money(r.amount, lang)])} />
           <Section title={tr("vouchersIn")} rows={report.vouchers.filter((v) => v.type === "receipt").map((r) => [r.number, r.party_name || "", money(r.amount, lang)])} />
           <Section title={tr("vouchersOut")} rows={report.vouchers.filter((v) => v.type !== "receipt").map((r) => [r.number, r.party_name || "", money(r.amount, lang)])} />
           <Section title={tr("expenses")} rows={report.expenses.map((r) => [r.date, r.category_ar || r.description || "", money(r.amount, lang)])} />
@@ -176,22 +178,33 @@ function Kpi({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Section({ title, rows }: { title: string; rows: string[][] }) {
+function InvoiceLink({ id, label }: { id?: number | null; label?: string }) {
+  if (!id) return <>{label || ""}</>;
+  return (
+    <Link className="font-extrabold text-cyan-800 underline underline-offset-2" to={`/sales/${id}`} onClick={(e) => e.stopPropagation()}>
+      {label || id}
+    </Link>
+  );
+}
+
+function Section({ title, rows }: { title: string; rows: ReactNode[][] }) {
   const { tr } = useApp();
   return (
     <div>
       <h2 className="mb-2 text-lg font-black">{title}</h2>
-      <div className="overflow-auto rounded-2xl border border-[var(--border)]">
-        <table className="min-w-full text-sm">
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-t border-[var(--border)] first:border-0">
-                {r.map((c, j) => <td key={j} className={`p-3 ${j === r.length - 1 ? "text-end tabular-nums font-bold" : ""}`}>{c}</td>)}
-              </tr>
-            ))}
-            {!rows.length ? <tr><td className="p-4 text-[var(--muted)]">{tr("noData")}</td></tr> : null}
-          </tbody>
-        </table>
+      <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+        <div className="table-wrap">
+          <table className="text-sm">
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  {r.map((c, j) => <td key={j} className={j === r.length - 1 ? "num font-bold" : j === 0 ? "name" : ""}>{c}</td>)}
+                </tr>
+              ))}
+              {!rows.length ? <tr><td className="p-4 text-[var(--muted)]">{tr("noData")}</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

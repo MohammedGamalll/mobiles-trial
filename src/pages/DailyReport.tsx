@@ -3,7 +3,23 @@ import { useApp } from "../context";
 import { get } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money, num } from "../lib/format";
-import { Btn, ErrorNote, ExportBtn, Field, FilterBar, PageLoading, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import {
+  ShiftFilter,
+  ShiftWindowNote,
+  toDatetimeLocalValue,
+  type ShiftPick,
+} from "../components/ShiftFilter";
+import {
+  Btn,
+  ErrorNote,
+  ExportBtn,
+  Field,
+  FilterBar,
+  PageLoading,
+  PrintBtn,
+  PrintLetterhead,
+  inputCls,
+} from "../components/ui";
 import type { Msg } from "../i18n";
 import { TablePager } from "../components/TablePager";
 import { usePagedRows } from "../hooks/usePagedRows";
@@ -48,12 +64,27 @@ type Summary = {
 type Report = {
   from: string;
   to: string;
+  shift?: ShiftPick | null;
   users: { id: number; full_name: string }[];
   summary: Summary;
   sales_lines: SalesLine[];
   return_lines: ReturnLine[];
-  sales_totals: { qty: number; total: number; discount: number; net: number; cost: number; profit: number };
-  return_totals: { qty: number; total: number; discount: number; net: number; cost?: number; profit?: number };
+  sales_totals: {
+    qty: number;
+    total: number;
+    discount: number;
+    net: number;
+    cost: number;
+    profit: number;
+  };
+  return_totals: {
+    qty: number;
+    total: number;
+    discount: number;
+    net: number;
+    cost?: number;
+    profit?: number;
+  };
 };
 
 type Tab = "summary" | "sales" | "returns";
@@ -73,27 +104,54 @@ function defaultTo() {
   return `${localDay()}T23:59`;
 }
 
-function reportQuery(from: string, to: string, userId: string, treasuryId: string) {
+function reportQuery(
+  from: string,
+  to: string,
+  userId: string,
+  treasuryId: string,
+  shiftId: string,
+) {
   const p = new URLSearchParams();
   if (from) p.set("date_from", from);
   if (to) p.set("date_to", to);
   if (userId) p.set("user_id", userId);
   if (treasuryId) p.set("treasury_id", treasuryId);
+  if (shiftId) p.set("shift_id", shiftId);
   return p.toString();
 }
 
-function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Kpi({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
   return (
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-4 shadow-sm">
       <div className="text-xs font-bold text-[var(--muted)]">{label}</div>
-      <div className="mt-1 text-2xl font-extrabold tabular-nums tracking-tight text-[var(--text)]">{value}</div>
-      {hint ? <div className="mt-1 text-xs tabular-nums text-[var(--muted)]" dir="ltr">{hint}</div> : null}
+      <div className="mt-1 text-2xl font-extrabold tabular-nums tracking-tight text-[var(--text)]">
+        {value}
+      </div>
+      {hint ? (
+        <div
+          className="mt-1 text-xs tabular-nums text-[var(--muted)]"
+          dir="ltr"
+        >
+          {hint}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function auditNum(n: number) {
-  return Number(n || 0).toLocaleString("en-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return Number(n || 0).toLocaleString("en-EG", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function signedMoney(n: number, lang: "ar" | "en") {
@@ -110,12 +168,17 @@ export default function DailyReport() {
   const [to, setTo] = useState(defaultTo);
   const [userId, setUserId] = useState("");
   const [treasuryId, setTreasuryId] = useState("");
+  const [shiftId, setShiftId] = useState("");
+  const [pickedShift, setPickedShift] = useState<ShiftPick | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
   const [data, setData] = useState<Report | null>(null);
   const [users, setUsers] = useState<{ id: number; full_name: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const qs = useMemo(() => reportQuery(from, to, userId, treasuryId), [from, to, userId, treasuryId]);
+  const qs = useMemo(
+    () => reportQuery(from, to, userId, treasuryId, shiftId),
+    [from, to, userId, treasuryId, shiftId],
+  );
 
   async function load() {
     setLoading(true);
@@ -124,6 +187,11 @@ export default function DailyReport() {
       const r = await get<Report>(`/api/reports/daily-movement?${qs}`);
       setData(r);
       if (r.users?.length) setUsers(r.users);
+      if (r.shift) {
+        setPickedShift(r.shift);
+        setFrom(toDatetimeLocalValue(r.from) || from);
+        setTo(toDatetimeLocalValue(r.to) || to);
+      }
     } catch (e) {
       setErr(apiMessage(tr, e));
     } finally {
@@ -155,8 +223,13 @@ export default function DailyReport() {
         { key: "otherTreasury", signed: s.other_movement },
       ]
     : [];
-  const cashIdentity = cashRows.reduce((n, r) => Math.round((n + r.signed) * 100) / 100, 0);
-  const identityOk = s ? Math.abs(cashIdentity - (s.net_movement || 0)) < 0.005 : false;
+  const cashIdentity = cashRows.reduce(
+    (n, r) => Math.round((n + r.signed) * 100) / 100,
+    0,
+  );
+  const identityOk = s
+    ? Math.abs(cashIdentity - (s.net_movement || 0)) < 0.005
+    : false;
   const infoRows: { key: Msg; value: number }[] = s
     ? [
         { key: "creditSales", value: s.credit_sales },
@@ -183,14 +256,41 @@ export default function DailyReport() {
       </div>
 
       <FilterBar>
+        <ShiftFilter
+          value={shiftId}
+          onChange={({ id, shift }) => {
+            setShiftId(id);
+            setPickedShift(shift);
+            if (shift) {
+              setFrom(toDatetimeLocalValue(shift.opened_at));
+              setTo(toDatetimeLocalValue(shift.closed_at) || defaultTo());
+            }
+          }}
+        />
         <Field label="fromDate">
-          <input className={`${inputCls} tabular-nums`} type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input
+            className={`${inputCls} tabular-nums`}
+            type="datetime-local"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            disabled={!!shiftId}
+          />
         </Field>
         <Field label="toDateFull">
-          <input className={`${inputCls} tabular-nums`} type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input
+            className={`${inputCls} tabular-nums`}
+            type="datetime-local"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            disabled={!!shiftId}
+          />
         </Field>
         <Field label="cashBox">
-          <select className={inputCls} value={treasuryId} onChange={(e) => setTreasuryId(e.target.value)}>
+          <select
+            className={inputCls}
+            value={treasuryId}
+            onChange={(e) => setTreasuryId(e.target.value)}
+          >
             <option value="">{tr("all")}</option>
             {cashAccounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -200,7 +300,11 @@ export default function DailyReport() {
           </select>
         </Field>
         <Field label="user">
-          <select className={inputCls} value={userId} onChange={(e) => setUserId(e.target.value)}>
+          <select
+            className={inputCls}
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+          >
             <option value="">{tr("all")}</option>
             {users.map((u) => (
               <option key={u.id} value={u.id}>
@@ -218,6 +322,7 @@ export default function DailyReport() {
         </div>
       </FilterBar>
 
+      <ShiftWindowNote shift={pickedShift} />
       {err ? <ErrorNote message={err} /> : null}
 
       <div className="page-tabs no-print mb-4 flex flex-wrap gap-2">
@@ -226,7 +331,9 @@ export default function DailyReport() {
             key={t.id}
             type="button"
             className={`rounded-xl px-3 py-1.5 text-sm font-bold ${
-              tab === t.id ? "bg-[var(--ink)] text-white" : "border border-[var(--border)] bg-[var(--surface)] text-[var(--text)]"
+              tab === t.id
+                ? "bg-[var(--ink)] text-white"
+                : "border border-[var(--border)] bg-[var(--surface)] text-[var(--text)]"
             }`}
             onClick={() => setTab(t.id)}
           >
@@ -242,14 +349,30 @@ export default function DailyReport() {
           {tab === "summary" ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <Kpi label={tr("totalSales")} value={money(salesTotal, lang)} hint={auditNum(salesTotal)} />
-                <Kpi label={tr("totalReturns")} value={money(s?.sales_returns, lang)} hint={auditNum(s?.sales_returns || 0)} />
-                <Kpi label={tr("treasuryNet")} value={money(s?.net_movement, lang)} hint={auditNum(s?.net_movement || 0)} />
-                <Kpi label={tr("finalBalance")} value={money(s?.final_balance, lang)} hint={auditNum(s?.final_balance || 0)} />
+                <Kpi
+                  label={tr("totalSales")}
+                  value={money(salesTotal, lang)}
+                  hint={auditNum(salesTotal)}
+                />
+                <Kpi
+                  label={tr("totalReturns")}
+                  value={money(s?.sales_returns, lang)}
+                  hint={auditNum(s?.sales_returns || 0)}
+                />
+                <Kpi
+                  label={tr("treasuryNet")}
+                  value={money(s?.net_movement, lang)}
+                  hint={auditNum(s?.net_movement || 0)}
+                />
+                <Kpi
+                  label={tr("finalBalance")}
+                  value={money(s?.final_balance, lang)}
+                  hint={auditNum(s?.final_balance || 0)}
+                />
               </div>
               <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm">
                 <div className="table-wrap overflow-x-auto">
-                  <table className="min-w-[420px]">
+                  <table className="w-full">
                     <thead>
                       <tr>
                         <th>{tr("dailySummaryTab")}</th>
@@ -258,38 +381,69 @@ export default function DailyReport() {
                     </thead>
                     <tbody>
                       <tr className="bg-[var(--surface-2)]">
-                        <td colSpan={2} className="text-xs font-black text-[var(--muted)]">{tr("cashDrawerSection")}</td>
+                        <td
+                          colSpan={2}
+                          className="text-xs font-black text-[var(--muted)]"
+                        >
+                          {tr("cashDrawerSection")}
+                        </td>
                       </tr>
                       {cashRows.map((row) => (
                         <tr key={row.key}>
                           <td>{tr(row.key)}</td>
                           <td className="tabular-nums text-end font-bold">
                             <div>{signedMoney(row.signed, lang)}</div>
-                            <div className="text-xs font-semibold text-[var(--muted)]" dir="ltr">{auditNum(row.signed)}</div>
+                            <div
+                              className="text-xs font-semibold text-[var(--muted)]"
+                              dir="ltr"
+                            >
+                              {auditNum(row.signed)}
+                            </div>
                           </td>
                         </tr>
                       ))}
                       <tr className="border-t-2 border-[var(--border)] bg-[var(--surface-2)]">
                         <td className="font-black">
                           {tr("cashIdentity")}
-                          <div className={`text-xs font-bold ${identityOk ? "text-emerald-700" : "text-rose-700"}`}>
-                            {tr(identityOk ? "identityMatches" : "identityMismatch")}
+                          <div
+                            className={`text-xs font-bold ${identityOk ? "text-emerald-700" : "text-rose-700"}`}
+                          >
+                            {tr(
+                              identityOk
+                                ? "identityMatches"
+                                : "identityMismatch",
+                            )}
                           </div>
                         </td>
                         <td className="tabular-nums text-end font-black">
                           <div>{signedMoney(cashIdentity, lang)}</div>
-                          <div className="text-xs font-semibold text-[var(--muted)]" dir="ltr">{auditNum(cashIdentity)}</div>
+                          <div
+                            className="text-xs font-semibold text-[var(--muted)]"
+                            dir="ltr"
+                          >
+                            {auditNum(cashIdentity)}
+                          </div>
                         </td>
                       </tr>
                       <tr className="bg-[var(--surface-2)]">
-                        <td colSpan={2} className="text-xs font-black text-[var(--muted)]">{tr("creditInfoSection")}</td>
+                        <td
+                          colSpan={2}
+                          className="text-xs font-black text-[var(--muted)]"
+                        >
+                          {tr("creditInfoSection")}
+                        </td>
                       </tr>
                       {infoRows.map((row) => (
                         <tr key={row.key}>
                           <td>{tr(row.key)}</td>
                           <td className="tabular-nums text-end font-bold">
                             <div>{money(row.value, lang)}</div>
-                            <div className="text-xs font-semibold text-[var(--muted)]" dir="ltr">{auditNum(row.value)}</div>
+                            <div
+                              className="text-xs font-semibold text-[var(--muted)]"
+                              dir="ltr"
+                            >
+                              {auditNum(row.value)}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -298,7 +452,12 @@ export default function DailyReport() {
                           <td>{tr(row.key)}</td>
                           <td className="tabular-nums text-end font-bold">
                             <div>{money(row.value, lang)}</div>
-                            <div className="text-xs font-semibold text-[var(--muted)]" dir="ltr">{auditNum(row.value)}</div>
+                            <div
+                              className="text-xs font-semibold text-[var(--muted)]"
+                              dir="ltr"
+                            >
+                              {auditNum(row.value)}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -338,7 +497,9 @@ export default function DailyReport() {
                 money(r.discount, lang),
                 money(r.addition, lang),
                 money(r.net, lang),
-                ...(showCost ? [money(r.cost, lang), money(r.profit, lang)] : []),
+                ...(showCost
+                  ? [money(r.cost, lang), money(r.profit, lang)]
+                  : []),
                 r.customer || "—",
               ])}
               footer={[
@@ -353,10 +514,15 @@ export default function DailyReport() {
                 money(data.sales_totals.discount, lang),
                 "",
                 money(data.sales_totals.net, lang),
-                ...(showCost ? [money(data.sales_totals.cost, lang), money(data.sales_totals.profit, lang)] : []),
+                ...(showCost
+                  ? [
+                      money(data.sales_totals.cost, lang),
+                      money(data.sales_totals.profit, lang),
+                    ]
+                  : []),
                 "",
               ]}
-              minWidth={showCost ? "1280px" : "1080px"}
+              minWidth={showCost ? "1400px" : "1080px"}
             />
           ) : null}
 
@@ -389,7 +555,9 @@ export default function DailyReport() {
                 money(r.discount, lang),
                 money(r.addition, lang),
                 money(r.net, lang),
-                ...(showCost ? [money(r.cost, lang), money(r.profit, lang)] : []),
+                ...(showCost
+                  ? [money(r.cost, lang), money(r.profit, lang)]
+                  : []),
                 r.customer || "—",
               ])}
               footer={[
@@ -404,10 +572,15 @@ export default function DailyReport() {
                 money(data.return_totals.discount, lang),
                 "",
                 money(data.return_totals.net, lang),
-                ...(showCost ? [money(data.return_totals.cost, lang), money(data.return_totals.profit, lang)] : []),
+                ...(showCost
+                  ? [
+                      money(data.return_totals.cost, lang),
+                      money(data.return_totals.profit, lang),
+                    ]
+                  : []),
                 "",
               ]}
-              minWidth={showCost ? "1280px" : "1080px"}
+              minWidth={showCost ? "1400px" : "1080px"}
             />
           ) : null}
         </>
@@ -445,7 +618,12 @@ function LineTable({
             {paged.rows.map((r, i) => (
               <tr key={i}>
                 {r.map((cell, j) => (
-                  <td key={j} className={j >= 5 && j < r.length - 1 ? "tabular-nums text-end" : undefined}>
+                  <td
+                    key={j}
+                    className={
+                      j >= 5 && j < r.length - 1 ? "tabular-nums " : undefined
+                    }
+                  >
                     {cell}
                   </td>
                 ))}
@@ -455,7 +633,14 @@ function LineTable({
           <tfoot className="sticky bottom-0 bg-[var(--surface-2)]">
             <tr className="border-t-2 border-[var(--border)] font-black">
               {footer.map((cell, j) => (
-                <td key={j} className={j >= 5 && j < footer.length - 1 ? "tabular-nums text-end" : undefined}>
+                <td
+                  key={j}
+                  className={
+                    j >= 5 && j < footer.length - 1
+                      ? "tabular-nums "
+                      : undefined
+                  }
+                >
                   {cell}
                 </td>
               ))}
@@ -463,7 +648,13 @@ function LineTable({
           </tfoot>
         </table>
       </div>
-      <TablePager page={page} pageSize={pageSize} total={rows.length} onPage={setPage} onPageSize={setPageSize} />
+      <TablePager
+        page={page}
+        pageSize={pageSize}
+        total={rows.length}
+        onPage={setPage}
+        onPageSize={setPageSize}
+      />
     </div>
   );
 }

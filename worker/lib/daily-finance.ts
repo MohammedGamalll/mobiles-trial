@@ -1,6 +1,7 @@
 import type { AppDb } from "./db";
 import type { ListQ } from "./filters";
-import { dailyMovementRange } from "./daily-movement";
+import { reportShiftMeta, reportStamp, resolveMovementScope, shiftTaggedJournalBinds, shiftTaggedJournalSql } from "./daily-movement";
+import { SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE } from "./pos-shifts";
 import { round2 } from "./helpers";
 
 function n(v: unknown) {
@@ -8,15 +9,30 @@ function n(v: unknown) {
 }
 
 export async function loadDailyFinance(db: AppDb, p: ListQ) {
-  const range = dailyMovementRange(p);
+  const { range, shift, shiftId } = await resolveMovementScope(db, p);
   const { fromDt, toDt } = range;
   const treasuryId = p.treasury_id ? Number(p.treasury_id) : 0;
-  const cashFilter = treasuryId ? " AND c.id = ?" : "";
-  const cashBinds = treasuryId ? [treasuryId] : [];
+  const cashAccountId = treasuryId || (shift ? Number(shift.cash_account_id) : 0);
+  const cashFilter = cashAccountId ? " AND c.id = ?" : "";
+  const cashBinds = cashAccountId ? [cashAccountId] : [];
+  const jStamp = shiftId ? reportStamp("j") : "CONCAT(LEFT(j.date, 10), ' 00:00:00')";
+  const eStamp = shiftId ? reportStamp("e") : "CONCAT(LEFT(e.date, 10), ' 00:00:00')";
+  const rStamp = shiftId ? reportStamp("r") : "CONCAT(LEFT(r.date, 10), ' 00:00:00')";
+  const siStamp = shiftId ? reportStamp("si") : "CONCAT(LEFT(si.date, 10), ' 00:00:00')";
+  const shiftExp = shiftId ? " AND e.shift_id = ?" : "";
+  const shiftRev = shiftId ? " AND r.shift_id = ?" : "";
+  const shiftSale = shiftId ? " AND si.shift_id = ?" : "";
+  const shiftBinds = shiftId ? [shiftId] : [];
+  const periodJoin = shiftId
+    ? `j.status = 'posted' AND j.source NOT IN (?, ?) AND (${shiftTaggedJournalSql("j")} OR (${jStamp} >= ? AND ${jStamp} <= ?))`
+    : `j.status = 'posted' AND ${jStamp} >= ? AND ${jStamp} <= ?`;
+  const periodBinds = shiftId
+    ? [SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE, ...shiftTaggedJournalBinds(shiftId), fromDt, toDt, ...cashBinds]
+    : [fromDt, toDt, ...cashBinds];
 
   const [accounts, opening, period, expenses, otherRev, extras, overage] = await db.batch([
     db.prepare(
-      `SELECT id, name, name_en, kind, current_balance FROM cash_accounts WHERE active = 1 ${treasuryId ? "AND id = ?" : ""} ORDER BY kind, id`,
+      `SELECT id, name, name_en, kind, current_balance FROM cash_accounts WHERE active = 1 ${cashAccountId ? "AND id = ?" : ""} ORDER BY kind, id`,
     ).bind(...cashBinds),
     db.prepare(
       `SELECT c.id, c.name, c.name_en, c.kind,
@@ -24,7 +40,7 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
        FROM cash_accounts c
        LEFT JOIN journal_lines l ON l.account_id = c.account_id
        LEFT JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
-         AND CONCAT(LEFT(j.date, 10), ' 00:00:00') < ?
+         AND ${jStamp} < ?
        WHERE c.active = 1${cashFilter}
        GROUP BY c.id, c.name, c.name_en, c.kind`,
     ).bind(fromDt, ...cashBinds),
@@ -32,46 +48,45 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
       `SELECT c.id, c.name, c.name_en, c.kind, j.source,
               COALESCE(SUM(CASE WHEN (l.debit - l.credit) > 0 THEN l.debit - l.credit ELSE 0 END), 0) as inflow,
               COALESCE(SUM(CASE WHEN (l.debit - l.credit) < 0 THEN l.credit - l.debit ELSE 0 END), 0) as outflow
-       FROM cash_accounts c
-       LEFT JOIN journal_lines l ON l.account_id = c.account_id
-       LEFT JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
-         AND CONCAT(LEFT(j.date, 10), ' 00:00:00') >= ? AND CONCAT(LEFT(j.date, 10), ' 00:00:00') <= ?
+       FROM journal_lines l
+       JOIN journal_entries j ON j.id = l.entry_id AND ${periodJoin}
+       JOIN cash_accounts c ON c.account_id = l.account_id
        WHERE c.active = 1${cashFilter}
        GROUP BY c.id, c.name, c.name_en, c.kind, j.source`,
-    ).bind(fromDt, toDt, ...cashBinds),
+    ).bind(...periodBinds),
     db.prepare(
       `SELECT COALESCE(ec.name_ar, 'أخرى') as name_ar, COALESCE(ec.name_en, 'Other') as name_en,
               COALESCE(SUM(e.amount),0) as total, COUNT(*) as c
        FROM expenses e
        LEFT JOIN expense_categories ec ON ec.id = e.category_id
-       WHERE e.voided_at IS NULL AND CONCAT(LEFT(e.date, 10), ' 00:00:00') >= ? AND CONCAT(LEFT(e.date, 10), ' 00:00:00') <= ?
+       WHERE e.voided_at IS NULL ${shiftId ? shiftExp : `AND ${eStamp} >= ? AND ${eStamp} <= ?`}
        ${treasuryId ? "AND e.cash_account_id = ?" : ""}
        GROUP BY ec.id, ec.name_ar, ec.name_en
        ORDER BY total DESC`,
-    ).bind(fromDt, toDt, ...cashBinds),
+    ).bind(...(shiftId ? shiftBinds : [fromDt, toDt]), ...(treasuryId ? [treasuryId] : [])),
     db.prepare(
       `SELECT COALESCE(r.category, rc.name_ar, 'أخرى') as name_ar,
               COALESCE(rc.name_en, r.category, 'Other') as name_en,
               COALESCE(SUM(r.amount),0) as total, COUNT(*) as c
        FROM other_revenues r
        LEFT JOIN revenue_categories rc ON rc.id = r.category_id
-       WHERE r.voided_at IS NULL AND CONCAT(LEFT(r.date, 10), ' 00:00:00') >= ? AND CONCAT(LEFT(r.date, 10), ' 00:00:00') <= ?
+       WHERE r.voided_at IS NULL ${shiftId ? shiftRev : `AND ${rStamp} >= ? AND ${rStamp} <= ?`}
        ${treasuryId ? "AND r.cash_account_id = ?" : ""}
        GROUP BY r.category, rc.name_ar, rc.name_en
        ORDER BY total DESC`,
-    ).bind(fromDt, toDt, ...cashBinds),
+    ).bind(...(shiftId ? shiftBinds : [fromDt, toDt]), ...(treasuryId ? [treasuryId] : [])),
     db.prepare(
       `SELECT COALESCE(SUM(si.extra_amount),0) as n
        FROM sales_invoices si
        WHERE si.deleted_at IS NULL AND si.status NOT IN ('cancelled','void','draft','held','quote','order')
-         AND CONCAT(LEFT(si.date, 10), ' 00:00:00') >= ? AND CONCAT(LEFT(si.date, 10), ' 00:00:00') <= ?`,
-    ).bind(fromDt, toDt),
+         ${shiftId ? shiftSale : `AND ${siStamp} >= ? AND ${siStamp} <= ?`}`,
+    ).bind(...(shiftId ? shiftBinds : [fromDt, toDt])),
     db.prepare(
       `SELECT COALESCE(SUM(l.credit),0) as n
        FROM journal_lines l
        JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
        JOIN ledger_accounts a ON a.id = l.account_id AND a.code = '4210'
-       WHERE CONCAT(LEFT(j.date, 10), ' 00:00:00') >= ? AND CONCAT(LEFT(j.date, 10), ' 00:00:00') <= ?`,
+       WHERE ${jStamp} >= ? AND ${jStamp} <= ?`,
     ).bind(fromDt, toDt),
   ]);
 
@@ -89,10 +104,16 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
   for (const row of (accounts.results || []) as Array<{ id: number; name: string; name_en: string; kind: string }>) {
     byId.set(row.id, { id: row.id, name: row.name, name_en: row.name_en, kind: row.kind, opening: 0, inflow: 0, outflow: 0, closing: 0, sources: [] });
   }
+  const shiftDrawerId = shift ? Number(shift.cash_account_id) : 0;
+  const useShiftOpening = Boolean(shift && (!treasuryId || treasuryId === shiftDrawerId));
   for (const row of (opening.results || []) as Array<{ id: number; name: string; name_en: string; kind: string; opening: number }>) {
     const cur = byId.get(row.id) || { id: row.id, name: row.name, name_en: row.name_en, kind: row.kind, opening: 0, inflow: 0, outflow: 0, closing: 0, sources: [] };
-    cur.opening = n(row.opening);
+    cur.opening = useShiftOpening && row.id === shiftDrawerId ? n(shift?.opening_cash_balance) : n(row.opening);
     byId.set(row.id, cur);
+  }
+  if (useShiftOpening && shiftDrawerId) {
+    const cur = byId.get(shiftDrawerId);
+    if (cur) cur.opening = n(shift?.opening_cash_balance);
   }
   const inflowBySource: Record<string, number> = {};
   const outflowBySource: Record<string, number> = {};
@@ -123,6 +144,8 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
   return {
     from: range.fromDt,
     to: range.toDt,
+    shift_id: shiftId || null,
+    shift: reportShiftMeta(shift),
     treasuries,
     totals: {
       opening: round2(treasuries.reduce((s, t) => s + t.opening, 0)),

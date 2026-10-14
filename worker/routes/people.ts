@@ -4,6 +4,7 @@ import { requirePerm } from "../lib/auth";
 import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql, sqlText } from "../lib/filters";
 import { postCollectionJournal, postOpeningPartyJournal } from "../lib/ledger";
 import { applyStandaloneReceipt, customerOpeningSigned, fxCurrency, fxRate, openingCreditAbs, supplierPayableEgp } from "../lib/party-money";
+import { attachOpenShift } from "../lib/pos-shifts";
 import { createStaff, type StaffInput } from "../lib/staff";
 
 export const peopleRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
@@ -268,11 +269,12 @@ peopleRoutes.post("/customers/:id/payments", requirePerm("payments.create", "vou
   });
   if (plan.take <= 0) return c.json({ error: "invalid_amount" }, 400);
   const user = c.get("user");
+  const shift = await attachOpenShift(c.env.DB, user.id);
   let paymentId = 0;
   await c.env.DB.transaction(async (tx) => {
     const payIns = await tx
-      .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(null, id, b.method || "cash", plan.take, todayIso(), b.notes || "دفعة حساب", user.id)
+      .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(null, id, b.method || "cash", plan.take, todayIso(), b.notes || "دفعة حساب", user.id, shift?.id || null)
       .run();
     paymentId = payIns.meta.last_row_id;
     for (const line of plan.applied) {
@@ -303,65 +305,6 @@ peopleRoutes.delete("/customers/:id", requirePerm("customers.edit"), async (c) =
   await c.env.DB.prepare("UPDATE customers SET deleted_at = datetime('now'), active = 0 WHERE id = ?").bind(id).run();
   await audit(c.env.DB, c.get("user"), "delete_customer", "customer", id, "Soft delete customer");
   return c.json({ ok: true });
-});
-
-peopleRoutes.post("/customers/:id/payments", requirePerm("payments.create", "vouchers.create"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string; cash_account_id?: number }>();
-  const cust = await c.env.DB.prepare("SELECT id, name, current_balance FROM customers WHERE id = ? AND deleted_at IS NULL").bind(id).first<{
-    id: number;
-    name: string;
-    current_balance: number;
-  }>();
-  if (!cust) return c.json({ error: "not_found" }, 404);
-  const requested = round2(Number(b.amount || 0));
-  if (requested <= 0) return c.json({ error: "invalid_amount" }, 400);
-  const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
-  const dues = await c.env.DB
-    .prepare(
-      `SELECT id, remaining, paid FROM sales_invoices
-       WHERE customer_id = ? AND deleted_at IS NULL AND remaining > 0
-         AND status NOT IN ('cancelled','draft','held','quote','order')
-       ORDER BY date, id`,
-    )
-    .bind(id)
-    .all<{ id: number; remaining: number; paid: number }>();
-  const plan = applyStandaloneReceipt({
-    requested,
-    arBalance: Number(cust.current_balance || 0),
-    invoiceRemainings: (dues.results || []).map((r) => ({ id: r.id, remaining: Number(r.remaining || 0) })),
-    surplusMode,
-  });
-  if (plan.take <= 0) return c.json({ error: "invalid_amount" }, 400);
-  const user = c.get("user");
-  let paymentId = 0;
-  await c.env.DB.transaction(async (tx) => {
-    const payIns = await tx
-      .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(null, id, b.method || "cash", plan.take, todayIso(), b.notes || "account receipt", user.id)
-      .run();
-    paymentId = payIns.meta.last_row_id;
-    for (const line of plan.applied) {
-      const inv = (dues.results || []).find((r) => r.id === line.id);
-      if (!inv) continue;
-      const paid = round2(Number(inv.paid || 0) + line.amount);
-      const remaining = round2(Math.max(0, Number(inv.remaining || 0) - line.amount));
-      await tx.prepare("UPDATE sales_invoices SET paid = ?, remaining = ?, status = CASE WHEN ? <= 0 THEN 'completed' ELSE status END WHERE id = ?").bind(paid, remaining, remaining, line.id).run();
-    }
-    await tx.prepare("UPDATE customers SET current_balance = ?, updated_at = datetime('now') WHERE id = ?").bind(plan.nextBalance, id).run();
-    await postCollectionJournal(tx, {
-      paymentId,
-      invoiceNumber: cust.name,
-      amount: plan.take,
-      method: b.method || "cash",
-      date: todayIso(),
-      cashAccountId: b.cash_account_id || null,
-      userId: user.id,
-    });
-  });
-  await audit(c.env.DB, user, "customer_receipt", "customer", id, `${plan.take}`);
-  const row = await c.env.DB.prepare("SELECT current_balance FROM customers WHERE id = ?").bind(id).first<{ current_balance: number }>();
-  return c.json({ payment_id: paymentId, current_balance: row?.current_balance ?? plan.nextBalance, applied: plan.applied, surplus: plan.surplus, take: plan.take }, 201);
 });
 
 peopleRoutes.get("/suppliers", requirePerm("suppliers.view", "purchases.view"), async (c) => {

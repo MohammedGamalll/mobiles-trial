@@ -736,8 +736,10 @@ html[dir="rtl"] .sidebar-mobile-panel {
 }
 
 .table-wrap table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
   font-size: 13.5px;
 }
 
@@ -746,15 +748,29 @@ html[dir="rtl"] .sidebar-mobile-panel {
   background: var(--head);
   color: #dbeafe;
   font-weight: 700;
-  padding: 11px 12px;
+  padding: 8px 10px;
   border-bottom: 0;
   white-space: nowrap;
 }
 
 .table-wrap td {
-  padding: 11px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+  white-space: nowrap;
+}
+
+.table-wrap th.num,
+.table-wrap td.num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-wrap td.name,
+.table-wrap th.name {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .table-wrap tbody tr:nth-child(odd) td {

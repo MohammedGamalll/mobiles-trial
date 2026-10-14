@@ -46,9 +46,12 @@ export function PaymentModal({
   onSubmit: (r: PaymentModalResult) => void | Promise<void>;
 }) {
   const { tr, lang, lookups } = useApp();
-  const cashAccounts = lookups?.cash_accounts || [];
+  const cashAccounts = (lookups?.cash_accounts || []).filter((a: { kind?: string }) => !a.kind || a.kind === "cash");
   const cap = Number(due > 0 ? due : debt || 0);
-  const fallbackCashId = Number(defaultCashAccountId || cashAccounts[0]?.id || 0) || 0;
+  const preferred = cashAccounts.some((a: { id: number }) => a.id === Number(defaultCashAccountId || 0))
+    ? Number(defaultCashAccountId)
+    : 0;
+  const fallbackCashId = Number(preferred || cashAccounts[0]?.id || 0) || 0;
   const [unpaid, setUnpaid] = useState(false);
   const [paid, setPaid] = useState(String(cap || 0));
   const [surplusMode, setSurplusMode] = useState<"wallet" | "ignore">("wallet");
@@ -115,7 +118,6 @@ export function PaymentModal({
       {showTreasury ? (
         <Field label={tr("cashBox")}>
           <select className={inputCls} value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value)}>
-            <option value="">{tr("cashBox")}</option>
             {cashAccounts.map((a: { id: number; name: string }) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}

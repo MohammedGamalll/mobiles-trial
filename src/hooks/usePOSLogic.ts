@@ -752,7 +752,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
 
   async function submitCredit(opts?: { print?: boolean }) {
     setMethod("credit");
-    setPaid(0);
+    const downPayment = paid;
     let party = customer;
     try {
       party = await ensureCustomerForCredit();
@@ -768,7 +768,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       setCustListOpen(true);
       return;
     }
-    await submit({ method: "credit", paid: 0, customer: party, print: opts?.print });
+    await submit({ method: "credit", paid: downPayment, customer: party, print: opts?.print });
   }
 
   async function submit(opts?: { paid?: number; method?: string; hold?: boolean; quote?: boolean; order?: boolean; print?: boolean; customer?: any }) {

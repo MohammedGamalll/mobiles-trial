@@ -219,7 +219,7 @@ export async function ensureAppSchema(db: AppDb) {
     ('price_4_name', 'سعر 4'),
     ('auto_backup_on_login', '1'),
     ('usd_egp_rate', '50'),
-    ('main_safe_id', '1'),
+    ('main_safe_id', ''),
     ('pos_require_shift', '1')`);
   await run(`CREATE TABLE IF NOT EXISTS demo_seed_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -367,6 +367,19 @@ export async function ensureAppSchema(db: AppDb) {
         WHERE c.name IN ('الخزنه', 'الخزنة') OR c.name_en IN ('Safe', 'The Safe')
       )
     LIMIT 1`);
+  await run(`UPDATE settings SET value = (
+      SELECT CAST(c.id AS CHAR)
+      FROM cash_accounts c
+      JOIN ledger_accounts la ON la.id = c.account_id
+      WHERE la.code = '1101'
+      LIMIT 1
+    )
+    WHERE \`key\` = 'main_safe_id'
+      AND EXISTS (
+        SELECT 1 FROM cash_accounts c
+        JOIN ledger_accounts la ON la.id = c.account_id
+        WHERE la.code = '1101'
+      )`);
   await run(`CREATE TABLE IF NOT EXISTS revenue_categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name_ar TEXT NOT NULL,

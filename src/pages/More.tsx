@@ -2023,13 +2023,13 @@ function Table({ cols, rows }: { cols: any[]; rows: any[][] }) {
       <div className="table-wrap">
         <table>
           <thead>
-            <tr>{cols.map((c, i) => <th key={i}>{c}</th>)}</tr>
+            <tr>{cols.map((c, i) => <th key={i} className={i === 0 ? "name" : ""}>{c}</th>)}</tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr><td colSpan={cols.length} className="py-8 text-center text-slate-400">{tr("noData")}</td></tr>
             ) : rows.map((r, i) => (
-              <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
+              <tr key={i}>{r.map((c, j) => <td key={j} className={j === 0 ? "name" : ""}>{c}</td>)}</tr>
             ))}
           </tbody>
         </table>

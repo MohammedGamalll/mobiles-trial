@@ -121,12 +121,28 @@ async function restoreFactorySkeleton(db: AppDb) {
     ["tax_enabled", "0"],
     ["whatsapp_enabled", "0"],
     ["allow_negative_stock", "0"],
-    ["main_safe_id", "1"],
+    ["main_safe_id", ""],
     ["pos_require_shift", "1"],
   ];
   for (const [key, value] of settings) {
     await tryExec(db, "INSERT INTO settings (`key`, value) VALUES (?, ?)", key, value);
   }
+  await tryExec(
+    db,
+    `UPDATE settings SET value = (
+       SELECT CAST(c.id AS CHAR)
+       FROM cash_accounts c
+       JOIN ledger_accounts la ON la.id = c.account_id
+       WHERE la.code = '1101'
+       LIMIT 1
+     )
+     WHERE \`key\` = 'main_safe_id'
+       AND EXISTS (
+         SELECT 1 FROM cash_accounts c
+         JOIN ledger_accounts la ON la.id = c.account_id
+         WHERE la.code = '1101'
+       )`,
+  );
 }
 
 export async function wipeAllBusinessData(db: AppDb, keepUserId: number) {

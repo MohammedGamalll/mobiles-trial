@@ -3,6 +3,7 @@ import { useApp } from "../context";
 import { get } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money } from "../lib/format";
+import { ShiftFilter, ShiftWindowNote, toDatetimeLocalValue, type ShiftPick } from "../components/ShiftFilter";
 import { Btn, ErrorNote, Field, PageLoading, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import { useLiveList } from "../hooks/useLiveList";
 
@@ -20,6 +21,7 @@ type TreasuryRow = {
 type Report = {
   from: string;
   to: string;
+  shift?: ShiftPick | null;
   treasuries: TreasuryRow[];
   totals: { opening: number; inflow: number; outflow: number; closing: number };
   inflow: Record<string, number>;
@@ -56,6 +58,8 @@ export default function DailyFinance() {
   const [from, setFrom] = useState(`${localDay()}T00:00`);
   const [to, setTo] = useState(`${localDay()}T23:59`);
   const [treasuryId, setTreasuryId] = useState("");
+  const [shiftId, setShiftId] = useState("");
+  const [pickedShift, setPickedShift] = useState<ShiftPick | null>(null);
   const [data, setData] = useState<Report | null>(null);
   const [err, setErr] = useState("");
   const qs = useMemo(() => {
@@ -63,13 +67,16 @@ export default function DailyFinance() {
     if (from) p.set("date_from", from);
     if (to) p.set("date_to", to);
     if (treasuryId) p.set("treasury_id", treasuryId);
+    if (shiftId) p.set("shift_id", shiftId);
     return p.toString();
-  }, [from, to, treasuryId]);
+  }, [from, to, treasuryId, shiftId]);
 
   const list = useLiveList(async () => {
     setErr("");
     try {
-      setData(await get<Report>(`/api/reports/daily-finance?${qs}`));
+      const r = await get<Report>(`/api/reports/daily-finance?${qs}`);
+      setData(r);
+      if (r.shift) setPickedShift(r.shift);
     } catch (e) {
       setErr(apiMessage(tr, e));
     }
@@ -106,8 +113,19 @@ export default function DailyFinance() {
         </div>
       </div>
       <div className="no-print mb-4 grid gap-3 md:grid-cols-4">
-        <Field label={tr("fromDate")}><input className={inputCls} type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-        <Field label={tr("toDate")}><input className={inputCls} type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        <ShiftFilter
+          value={shiftId}
+          onChange={({ id, shift }) => {
+            setShiftId(id);
+            setPickedShift(shift);
+            if (shift) {
+              setFrom(toDatetimeLocalValue(shift.opened_at));
+              setTo(toDatetimeLocalValue(shift.closed_at) || `${localDay()}T23:59`);
+            }
+          }}
+        />
+        <Field label={tr("fromDate")}><input className={inputCls} type="datetime-local" value={from} disabled={!!shiftId} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label={tr("toDate")}><input className={inputCls} type="datetime-local" value={to} disabled={!!shiftId} onChange={(e) => setTo(e.target.value)} /></Field>
         <Field label={tr("cashBox")}>
           <select className={inputCls} value={treasuryId} onChange={(e) => setTreasuryId(e.target.value)}>
             <option value="">{tr("all")}</option>
@@ -115,6 +133,7 @@ export default function DailyFinance() {
           </select>
         </Field>
       </div>
+      <ShiftWindowNote shift={pickedShift} />
       {err ? <ErrorNote message={err} /> : null}
       {list.loading && !data ? <PageLoading /> : null}
       {data ? (
@@ -129,24 +148,24 @@ export default function DailyFinance() {
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
             <h2 className="mb-3 text-lg font-black">{tr("cashBanks")}</h2>
             <div className="table-wrap overflow-x-auto">
-              <table className="min-w-full">
+              <table>
                 <thead>
                   <tr>
-                    <th>{tr("cashBox")}</th>
-                    <th className="text-end">{tr("openingBalance")}</th>
-                    <th className="text-end">{tr("totalIn")}</th>
-                    <th className="text-end">{tr("totalOut")}</th>
-                    <th className="text-end">{tr("finalBalance")}</th>
+                    <th className="name">{tr("cashBox")}</th>
+                    <th className="num">{tr("openingBalance")}</th>
+                    <th className="num">{tr("totalIn")}</th>
+                    <th className="num">{tr("totalOut")}</th>
+                    <th className="num">{tr("finalBalance")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.treasuries.map((t) => (
                     <tr key={t.id}>
-                      <td className="font-bold">{lang === "ar" ? t.name : (t.name_en || t.name)}</td>
-                      <td className="text-end tabular-nums">{money(t.opening, lang)}</td>
-                      <td className="text-end tabular-nums text-emerald-700">{money(t.inflow, lang)}</td>
-                      <td className="text-end tabular-nums text-rose-700">{money(t.outflow, lang)}</td>
-                      <td className="text-end tabular-nums font-black">{money(t.closing, lang)}</td>
+                      <td className="name font-bold">{lang === "ar" ? t.name : (t.name_en || t.name)}</td>
+                      <td className="num">{money(t.opening, lang)}</td>
+                      <td className="num text-emerald-700">{money(t.inflow, lang)}</td>
+                      <td className="num text-rose-700">{money(t.outflow, lang)}</td>
+                      <td className="num font-black">{money(t.closing, lang)}</td>
                     </tr>
                   ))}
                 </tbody>

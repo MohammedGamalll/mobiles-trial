@@ -23,7 +23,7 @@ export type PosShift = {
   cash_out?: number;
 };
 
-type Ctx = { shift: PosShift; reload: () => Promise<void> };
+type Ctx = { shift: PosShift; reload: () => Promise<PosShift | null> };
 
 const PosShiftCtx = createContext<Ctx | null>(null);
 
@@ -37,9 +37,12 @@ export function PosShiftGuard({ children }: { children: ReactNode }) {
   async function reload() {
     try {
       const r = await get<{ shift: PosShift | null }>("/api/shifts/current");
-      setShift(r.shift || null);
+      const next = r.shift || null;
+      setShift(next);
+      return next;
     } catch {
       setShift(null);
+      return null;
     }
   }
 
@@ -124,9 +127,35 @@ export function CloseShiftModal({
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const expected = Number(ctx?.shift.expected_cash_balance || 0);
+  const [expected, setExpected] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setActual("");
+    setRevealed(false);
+    setBusy(false);
+    setErr("");
+    setExpected(null);
+  }, [open]);
+
   const counted = Number(actual);
-  const variance = revealed && Number.isFinite(counted) ? counted - expected : null;
+  const shownExpected = expected ?? Number(ctx?.shift.expected_cash_balance || 0);
+  const variance = revealed && Number.isFinite(counted) ? counted - shownExpected : null;
+
+  async function revealExpected() {
+    if (!ctx) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const fresh = await ctx.reload();
+      setExpected(Number(fresh?.expected_cash_balance || 0));
+      setRevealed(true);
+    } catch (e) {
+      setErr(apiMessage(tr, e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   if (!open || !ctx) return null;
 
@@ -145,7 +174,7 @@ export function CloseShiftModal({
           </Field>
           {revealed ? (
             <div className="space-y-2 rounded-2xl bg-[var(--surface-2)] p-4 text-sm">
-              <div className="flex justify-between"><span>{tr("expectedCash")}</span><b className="tabular-nums">{money(expected, lang)}</b></div>
+              <div className="flex justify-between"><span>{tr("expectedCash")}</span><b className="tabular-nums">{money(shownExpected, lang)}</b></div>
               <div className="flex justify-between"><span>{tr("shiftVariance")}</span>
                 <b className={`tabular-nums ${variance != null && variance < 0 ? "text-rose-600" : "text-emerald-700"}`}>
                   {variance == null ? "—" : money(variance, lang)} {variance != null && variance < 0 ? tr("shiftShortage") : variance != null && variance > 0 ? tr("shiftOverage") : ""}
@@ -159,7 +188,8 @@ export function CloseShiftModal({
               <Btn
                 className="flex-1"
                 disabled={!actual}
-                onClick={() => setRevealed(true)}
+                loading={busy}
+                onClick={() => void revealExpected()}
               >
                 {tr("revealExpected")}
               </Btn>
@@ -199,7 +229,7 @@ export function EndShiftButton({ className = "" }: { className?: string }) {
   return (
     <>
       <button type="button" className={className} onClick={() => setOpen(true)}>{tr("endShift")}</button>
-      <CloseShiftModal open={open} onClose={() => setOpen(false)} />
+      {open ? <CloseShiftModal open onClose={() => setOpen(false)} /> : null}
     </>
   );
 }

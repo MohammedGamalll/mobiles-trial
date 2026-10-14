@@ -1,6 +1,7 @@
 import type { AppDb } from "./db";
 import type { ListQ } from "./filters";
-import { round2, todayIso } from "./helpers";
+import { nowIso, round2, todayIso } from "./helpers";
+import { loadShift, SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE, type PosShiftRow } from "./pos-shifts";
 
 const DT_RE = /^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/;
 const LIVE_SALES = "si.status NOT IN ('cancelled','void','draft','held','quote','order')";
@@ -144,6 +145,7 @@ export function foldCashJournals(rows: Array<{ source?: string | null; n?: numbe
         else acc.other_movement = round2(acc.other_movement + n);
         break;
       case "payment":
+      case "collection":
         acc.collections = round2(acc.collections + n);
         break;
       case "purchase":
@@ -202,6 +204,64 @@ export function dailyMovementRange(p: Record<string, string | undefined>): Daily
     fromDate: fromDt.slice(0, 10),
     toDate: toDt.slice(0, 10),
   };
+}
+
+export function shiftWindowRange(openedAt: string, closedAt?: string | null, now?: string): DailyRange {
+  return dailyMovementRange({
+    date_from: openedAt,
+    date_to: closedAt || now || nowIso(),
+  });
+}
+
+export function reportStamp(alias: string, dateCol = "date", createdCol = "created_at") {
+  return `COALESCE(${alias}.${createdCol}, CONCAT(LEFT(${alias}.${dateCol}, 10), ' 23:59:59'))`;
+}
+
+/** Journals posted for documents tagged to a POS shift — not the tight opened/closed clock. */
+export function shiftTaggedJournalSql(alias = "j") {
+  return `(
+    (${alias}.source = 'sale' AND ${alias}.source_id IN (SELECT id FROM sales_invoices WHERE shift_id = ? AND deleted_at IS NULL))
+    OR (${alias}.source IN ('payment','collection') AND ${alias}.source_id IN (SELECT id FROM payments WHERE shift_id = ? AND IFNULL(voided_at,'') = ''))
+    OR (${alias}.source = 'return' AND ${alias}.source_id IN (SELECT id FROM sales_returns WHERE shift_id = ?))
+    OR (${alias}.source = 'expense' AND ${alias}.source_id IN (SELECT id FROM expenses WHERE shift_id = ? AND IFNULL(voided_at,'') = ''))
+    OR (${alias}.source = 'voucher' AND ${alias}.source_id IN (SELECT id FROM vouchers WHERE shift_id = ? AND IFNULL(voided_at,'') = ''))
+  )`;
+}
+
+export function shiftTaggedJournalBinds(shiftId: number) {
+  return [shiftId, shiftId, shiftId, shiftId, shiftId];
+}
+
+export type ReportShift = {
+  id: number;
+  opened_at: string;
+  closed_at: string | null;
+  status: string;
+  user_name: string;
+  drawer_name: string;
+  drawer_name_en: string;
+  cash_account_id: number;
+};
+
+export function reportShiftMeta(shift: PosShiftRow | null | undefined): ReportShift | null {
+  if (!shift) return null;
+  return {
+    id: shift.id,
+    opened_at: shift.opened_at,
+    closed_at: shift.closed_at,
+    status: shift.status,
+    user_name: shift.user_name || "",
+    drawer_name: shift.drawer_name || "",
+    drawer_name_en: shift.drawer_name_en || "",
+    cash_account_id: shift.cash_account_id,
+  };
+}
+
+export async function resolveMovementScope(db: AppDb, p: ListQ) {
+  const shiftId = Number(p.shift_id || 0);
+  const shift = shiftId ? await loadShift(db, shiftId) : null;
+  const range = shift ? shiftWindowRange(shift.opened_at, shift.closed_at) : dailyMovementRange(p);
+  return { range, shift, shiftId: shift ? shift.id : 0 };
 }
 
 export function splitDateTime(value: string | null | undefined, fallbackDate = ""): { date: string; time: string } {
@@ -398,15 +458,25 @@ function n(v: number | null | undefined) {
 }
 
 export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?: boolean }) {
-  const range = dailyMovementRange(p);
+  const { range, shift, shiftId } = await resolveMovementScope(db, p);
   const userId = p.user_id ? Number(p.user_id) : 0;
   const treasuryId = p.treasury_id ? Number(p.treasury_id) : 0;
+  const cashAccountId = treasuryId || (shift ? Number(shift.cash_account_id) : 0);
   const locationId = p.location_id ? Number(p.location_id) : 0;
-  const shiftId = p.shift_id ? Number(p.shift_id) : 0;
   const { fromDt, toDt } = range;
+  const cashStamp = shiftId ? reportStamp("j") : dateMidnight("j");
+  const purStamp = shiftId ? reportStamp("pi") : dateMidnight("pi");
+  const prStamp = shiftId ? reportStamp("pr") : dateMidnight("pr");
 
-  const salesWhere = ["si.deleted_at IS NULL", LIVE_SALES, `${dtExpr("si")} >= ?`, `${dtExpr("si")} <= ?`];
-  const salesBinds: (string | number)[] = [fromDt, toDt];
+  const salesWhere = ["si.deleted_at IS NULL", LIVE_SALES];
+  const salesBinds: (string | number)[] = [];
+  if (shiftId) {
+    salesWhere.push("si.shift_id = ?");
+    salesBinds.push(shiftId);
+  } else {
+    salesWhere.push(`${dtExpr("si")} >= ?`, `${dtExpr("si")} <= ?`);
+    salesBinds.push(fromDt, toDt);
+  }
   if (userId) {
     salesWhere.push("si.created_by = ?");
     salesBinds.push(userId);
@@ -419,13 +489,16 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     salesWhere.push("si.location_id = ?");
     salesBinds.push(locationId);
   }
-  if (shiftId) {
-    salesWhere.push("si.shift_id = ?");
-    salesBinds.push(shiftId);
-  }
 
-  const retWhere = [`${dtExpr("sr")} >= ?`, `${dtExpr("sr")} <= ?`];
-  const retBinds: (string | number)[] = [fromDt, toDt];
+  const retWhere: string[] = [];
+  const retBinds: (string | number)[] = [];
+  if (shiftId) {
+    retWhere.push("sr.shift_id = ?");
+    retBinds.push(shiftId);
+  } else {
+    retWhere.push(`${dtExpr("sr")} >= ?`, `${dtExpr("sr")} <= ?`);
+    retBinds.push(fromDt, toDt);
+  }
   if (userId) {
     retWhere.push("sr.created_by = ?");
     retBinds.push(userId);
@@ -438,27 +511,36 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     retWhere.push("si.location_id = ?");
     retBinds.push(locationId);
   }
-  if (shiftId) {
-    retWhere.push("sr.shift_id = ?");
-    retBinds.push(shiftId);
-  }
 
-  const purWhere = ["pi.deleted_at IS NULL", "pi.status IN ('approved','partially_returned')", `${dateMidnight("pi")} >= ?`, `${dateMidnight("pi")} <= ?`];
+  const purWhere = ["pi.deleted_at IS NULL", "pi.status IN ('approved','partially_returned')", `${purStamp} >= ?`, `${purStamp} <= ?`];
   const purBinds: (string | number)[] = [fromDt, toDt];
   if (userId) {
     purWhere.push("pi.created_by = ?");
     purBinds.push(userId);
+  } else if (shiftId && shift?.user_id) {
+    purWhere.push("pi.created_by = ?");
+    purBinds.push(shift.user_id);
   }
 
-  const prWhere = [`${dateMidnight("pr")} >= ?`, `${dateMidnight("pr")} <= ?`];
+  const prWhere = [`${prStamp} >= ?`, `${prStamp} <= ?`];
   const prBinds: (string | number)[] = [fromDt, toDt];
   if (userId) {
     prWhere.push("pr.created_by = ?");
     prBinds.push(userId);
+  } else if (shiftId && shift?.user_id) {
+    prWhere.push("pr.created_by = ?");
+    prBinds.push(shift.user_id);
   }
 
-  const vWhere = ["v.voided_at IS NULL", `${dateMidnight("v")} >= ?`, `${dateMidnight("v")} <= ?`];
-  const vBinds: (string | number)[] = [fromDt, toDt];
+  const vWhere = ["v.voided_at IS NULL"];
+  const vBinds: (string | number)[] = [];
+  if (shiftId) {
+    vWhere.push("v.shift_id = ?");
+    vBinds.push(shiftId);
+  } else {
+    vWhere.push(`${dateMidnight("v")} >= ?`, `${dateMidnight("v")} <= ?`);
+    vBinds.push(fromDt, toDt);
+  }
   if (userId) {
     vWhere.push("v.created_by = ?");
     vBinds.push(userId);
@@ -467,31 +549,39 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     vWhere.push("v.cash_account_id = ?");
     vBinds.push(treasuryId);
   }
-  if (shiftId) {
-    vWhere.push("v.shift_id = ?");
-    vBinds.push(shiftId);
-  }
 
-  const payWhere = ["p.voided_at IS NULL", `${dateMidnight("p")} >= ?`, `${dateMidnight("p")} <= ?`];
-  const payBinds: (string | number)[] = [fromDt, toDt];
+  const payWhere = ["p.voided_at IS NULL"];
+  const payBinds: (string | number)[] = [];
+  if (shiftId) {
+    payWhere.push("p.shift_id = ?");
+    payBinds.push(shiftId);
+  } else {
+    payWhere.push(`${dateMidnight("p")} >= ?`, `${dateMidnight("p")} <= ?`);
+    payBinds.push(fromDt, toDt);
+  }
   if (userId) {
     payWhere.push("p.created_by = ?");
     payBinds.push(userId);
   }
-  if (shiftId) {
-    payWhere.push("p.shift_id = ?");
-    payBinds.push(shiftId);
-  }
 
-  const cashWhere = ["c.active = 1", `${dateMidnight("j")} < ?`];
+  const cashWhere = ["c.active = 1", `${cashStamp} < ?`];
   const cashOpenBinds: (string | number)[] = [fromDt];
-  const cashPeriodWhere = ["c.active = 1", `${dateMidnight("j")} >= ?`, `${dateMidnight("j")} <= ?`];
-  const cashPeriodBinds: (string | number)[] = [fromDt, toDt];
-  if (treasuryId) {
+  const cashPeriodWhere = ["c.active = 1"];
+  const cashPeriodBinds: (string | number)[] = [];
+  if (shiftId) {
+    cashPeriodWhere.push(`j.source NOT IN (?, ?)`);
+    cashPeriodBinds.push(SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE);
+    cashPeriodWhere.push(`(${shiftTaggedJournalSql("j")} OR (${cashStamp} >= ? AND ${cashStamp} <= ?))`);
+    cashPeriodBinds.push(...shiftTaggedJournalBinds(shiftId), fromDt, toDt);
+  } else {
+    cashPeriodWhere.push(`${cashStamp} >= ?`, `${cashStamp} <= ?`);
+    cashPeriodBinds.push(fromDt, toDt);
+  }
+  if (cashAccountId) {
     cashWhere.push("c.id = ?");
-    cashOpenBinds.push(treasuryId);
+    cashOpenBinds.push(cashAccountId);
     cashPeriodWhere.push("c.id = ?");
-    cashPeriodBinds.push(treasuryId);
+    cashPeriodBinds.push(cashAccountId);
   }
 
   const [
@@ -605,7 +695,11 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     const row = (r.results?.[0] as { invoice_count?: number; c?: number; count?: number; cash?: number; credit?: number } | undefined) || {};
     return signed ? signedActivityCell(rowCount(row), n(row.cash), n(row.credit)) : activityCell(rowCount(row), n(row.cash), n(row.credit));
   };
-  const treasury = treasuryClosing(firstN(openingAgg), firstN(periodAgg));
+  const useShiftOpening = Boolean(shift && (!treasuryId || treasuryId === Number(shift.cash_account_id)));
+  const treasury = treasuryClosing(
+    useShiftOpening ? Number(shift?.opening_cash_balance || 0) : firstN(openingAgg),
+    firstN(periodAgg),
+  );
   const cashLines = foldCashJournals(
     ((cashBySource.results || []) as Array<{ source?: string | null; inflow?: number | null; outflow?: number | null }>).flatMap((row) => [
       { source: row.source, n: row.inflow },
@@ -682,8 +776,10 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     from: range.fromDt,
     to: range.toDt,
     user_id: userId || null,
-    treasury_id: treasuryId || null,
+    treasury_id: cashAccountId || treasuryId || null,
     location_id: locationId || null,
+    shift_id: shiftId || null,
+    shift: reportShiftMeta(shift),
     users: (users.results || []) as { id: number; full_name: string }[],
     summary,
     matrix,

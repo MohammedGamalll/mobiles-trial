@@ -11,6 +11,10 @@ import {
   foldCashJournals,
   omitCostProfit,
   receiptCell,
+  reportStamp,
+  shiftTaggedJournalBinds,
+  shiftTaggedJournalSql,
+  shiftWindowRange,
   signedActivityCell,
   splitDateTime,
   sumReturnTotals,
@@ -33,6 +37,26 @@ test("dailyMovementRange accepts date_from / date_to aliases", () => {
   assert.equal(r.toDt, "2026-10-07 18:00:00");
   assert.equal(r.fromDate, "2026-10-01");
   assert.equal(r.toDate, "2026-10-07");
+});
+
+test("shift cash journals follow tagged documents not the one-minute close clock", () => {
+  const sql = shiftTaggedJournalSql("j");
+  assert.match(sql, /sales_invoices WHERE shift_id/);
+  assert.match(sql, /payments WHERE shift_id/);
+  assert.match(sql, /sales_returns WHERE shift_id/);
+  assert.match(sql, /expenses WHERE shift_id/);
+  assert.match(sql, /vouchers WHERE shift_id/);
+  assert.equal(shiftTaggedJournalBinds(7).length, 5);
+  assert.deepEqual(shiftTaggedJournalBinds(7), [7, 7, 7, 7, 7]);
+});
+
+test("shift window is opened_at to closed_at and not the whole day", () => {
+  const r = shiftWindowRange("2026-10-14 09:15:00", "2026-10-14 17:40:22");
+  assert.equal(r.fromDt, "2026-10-14 09:15:00");
+  assert.equal(r.toDt, "2026-10-14 17:40:22");
+  const open = shiftWindowRange("2026-10-14 09:15:00", null, "2026-10-14 11:00:00");
+  assert.equal(open.toDt, "2026-10-14 11:00:00");
+  assert.match(reportStamp("j"), /COALESCE\(j\.created_at/);
 });
 
 test("splitDateTime pulls date and HH:mm from created_at", () => {

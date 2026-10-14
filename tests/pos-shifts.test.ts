@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   drawerCashForSale,
+  drawerFlowSinceSql,
   isDrawerPayMethod,
   planShiftClose,
   shiftExpected,
@@ -13,6 +14,15 @@ import {
 test("expected cash is opening plus in minus out", () => {
   assert.equal(shiftExpected(1000, 400, 150), 1250);
   assert.equal(shiftExpected(0, 0, 0), 0);
+  assert.equal(shiftExpected(100, 250, 0), 350);
+});
+
+test("shift-tagged drawer flow includes same-day journals and shift documents", () => {
+  const sql = drawerFlowSinceSql(12);
+  assert.match(sql, /CONCAT\(LEFT\(j\.date, 10\), ' 23:59:59'\)/);
+  assert.match(sql, /sales_invoices WHERE shift_id/);
+  assert.match(sql, /payments WHERE shift_id/);
+  assert.match(sql, /sales_returns WHERE shift_id/);
 });
 
 test("variance is actual minus expected", () => {
@@ -91,6 +101,22 @@ test("leave float stays in a separate drawer", () => {
   assert.deepEqual(plan.transfer, { amount: 700 });
   assert.equal(plan.varianceEntry, null);
   assert.equal(plan.drawerEnd, 100);
+});
+
+test("close transfers counted cash from drawer 1 to safe 3 and zeros the drawer", () => {
+  const plan = planShiftClose({
+    opening: 100,
+    cashIn: 250,
+    cashOut: 0,
+    actual: 350,
+    drawerId: 1,
+    mainSafeId: 3,
+  });
+  assert.equal(plan.expected, 350);
+  assert.equal(plan.variance, 0);
+  assert.deepEqual(plan.transfer, { amount: 350 });
+  assert.equal(plan.skippedTransfer, false);
+  assert.equal(plan.drawerEnd, 0);
 });
 
 test("cash methods bind the shift drawer", () => {

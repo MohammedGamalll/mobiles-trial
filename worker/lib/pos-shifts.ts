@@ -1,6 +1,6 @@
 import { accountByCode, cashByKind, postJournal } from "./ledger";
 import type { AppDb } from "./db";
-import { getSettings, nowIso, round2, type AuthUser } from "./helpers";
+import { getSettings, nowIso, round2, setSetting, type AuthUser } from "./helpers";
 
 export const SHIFT_CLOSE_SOURCE = "shift_close";
 export const SHIFT_VARIANCE_SOURCE = "shift_variance";
@@ -116,20 +116,37 @@ export async function drawerJournalBalance(db: AppDb, cashAccountId: number) {
   return round2(Number(row?.n || 0));
 }
 
-export async function drawerPeriodFlow(db: AppDb, cashAccountId: number, openedAt: string) {
-  const row = await db
-    .prepare(
-      `SELECT
+export function drawerFlowSinceSql(shiftId?: number) {
+  const tagged = shiftId
+    ? ` OR (
+        (j.source = 'sale' AND j.source_id IN (SELECT id FROM sales_invoices WHERE shift_id = ? AND deleted_at IS NULL))
+        OR (j.source IN ('payment','collection') AND j.source_id IN (SELECT id FROM payments WHERE shift_id = ? AND IFNULL(voided_at,'') = ''))
+        OR (j.source = 'return' AND j.source_id IN (SELECT id FROM sales_returns WHERE shift_id = ?))
+        OR (j.source = 'expense' AND j.source_id IN (SELECT id FROM expenses WHERE shift_id = ? AND IFNULL(voided_at,'') = ''))
+        OR (j.source = 'voucher' AND j.source_id IN (SELECT id FROM vouchers WHERE shift_id = ? AND IFNULL(voided_at,'') = ''))
+      )`
+    : "";
+  return `SELECT
          COALESCE(SUM(CASE WHEN l.debit > 0 THEN l.debit ELSE 0 END), 0) as cash_in,
          COALESCE(SUM(CASE WHEN l.credit > 0 THEN l.credit ELSE 0 END), 0) as cash_out
        FROM journal_lines l
        JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
        JOIN cash_accounts c ON c.account_id = l.account_id
        WHERE c.id = ?
-         AND COALESCE(j.created_at, j.date) >= ?
-         AND j.source NOT IN (?, ?)`,
-    )
-    .bind(cashAccountId, openedAt, SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE)
+         AND j.source NOT IN (?, ?)
+         AND (
+           COALESCE(j.created_at, CONCAT(LEFT(j.date, 10), ' 23:59:59')) >= ?
+           ${tagged}
+         )`;
+}
+
+export async function drawerPeriodFlow(db: AppDb, cashAccountId: number, openedAt: string, shiftId?: number) {
+  const id = Number(shiftId || 0) || undefined;
+  const binds: (string | number)[] = [cashAccountId, SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE, openedAt];
+  if (id) binds.push(id, id, id, id, id);
+  const row = await db
+    .prepare(drawerFlowSinceSql(id))
+    .bind(...binds)
     .first<{ cash_in: number; cash_out: number }>();
   return { cashIn: round2(Number(row?.cash_in || 0)), cashOut: round2(Number(row?.cash_out || 0)) };
 }
@@ -180,24 +197,63 @@ export async function requirePosShift(db: AppDb, user: AuthUser) {
   throw new ShiftError("shift_required");
 }
 
+export async function findSafeCashAccountId(db: AppDb) {
+  const row = await db
+    .prepare(
+      `SELECT c.id
+       FROM cash_accounts c
+       JOIN ledger_accounts la ON la.id = c.account_id
+       WHERE c.active = 1 AND (
+         la.code = '1101'
+         OR c.name IN ('الخزنه', 'الخزنة')
+         OR c.name_en IN ('Safe', 'The Safe')
+       )
+       ORDER BY CASE WHEN la.code = '1101' THEN 0 ELSE 1 END, c.id
+       LIMIT 1`,
+    )
+    .first<{ id: number }>();
+  return row?.id || 0;
+}
+
+async function cashAccountCode(db: AppDb, id: number) {
+  const row = await db
+    .prepare(
+      `SELECT la.code
+       FROM cash_accounts c
+       JOIN ledger_accounts la ON la.id = c.account_id
+       WHERE c.id = ? AND c.active = 1`,
+    )
+    .bind(id)
+    .first<{ code: string }>();
+  return row?.code || "";
+}
+
 export async function resolveMainSafeId(db: AppDb, requested?: number | null) {
   const id = Number(requested || 0);
   if (id) {
-    const row = await db.prepare("SELECT id FROM cash_accounts WHERE id = ? AND active = 1").bind(id).first<{ id: number }>();
-    if (row) return row.id;
+    const code = await cashAccountCode(db, id);
+    if (code && code !== "1100") return id;
+  }
+  const safe = await findSafeCashAccountId(db);
+  if (safe) {
+    try { await setSetting(db, "main_safe_id", String(safe)); } catch { /* remap is best-effort */ }
+    return safe;
   }
   const settings = await getSettings(db);
   const fromSettings = Number(settings.main_safe_id || 0);
   if (fromSettings) {
-    const row = await db.prepare("SELECT id FROM cash_accounts WHERE id = ? AND active = 1").bind(fromSettings).first<{ id: number }>();
-    if (row) return row.id;
+    const code = await cashAccountCode(db, fromSettings);
+    if (code && code !== "1100") return fromSettings;
   }
   const fallback = await cashByKind(db, "cash");
   return fallback?.id || 0;
 }
 
-export async function liveShiftTotals(db: AppDb, shift: Pick<PosShiftRow, "opening_cash_balance" | "cash_account_id" | "opened_at">) {
-  const flow = await drawerPeriodFlow(db, shift.cash_account_id, shift.opened_at);
+export async function liveShiftTotals(
+  db: AppDb,
+  shift: Pick<PosShiftRow, "opening_cash_balance" | "cash_account_id" | "opened_at"> & { id?: number },
+) {
+  const flow = await drawerPeriodFlow(db, shift.cash_account_id, shift.opened_at, shift.id);
   const expected = shiftExpected(shift.opening_cash_balance, flow.cashIn, flow.cashOut);
   return { ...flow, expected };
 }
@@ -239,7 +295,7 @@ export async function closePosShift(
     const leaveFloat = round2(Math.max(0, Number(opts.leave_float || 0)));
     const mainSafeId = await resolveMainSafeId(tx, opts.main_safe_id);
     if (!mainSafeId) throw new ShiftError("cash_missing");
-    const flow = await drawerPeriodFlow(tx, shift.cash_account_id, shift.opened_at);
+    const flow = await drawerPeriodFlow(tx, shift.cash_account_id, shift.opened_at, shift.id);
     const plan = planShiftClose({
       opening: shift.opening_cash_balance,
       cashIn: flow.cashIn,
@@ -264,7 +320,7 @@ export async function closePosShift(
     if (plan.transfer) {
       closeJournalId = await postJournal(tx, {
         date,
-        description: `إقفال وردية #${shift.id} — تحويل للصندوق الرئيسي`,
+        description: `إقفال وردية #${shift.id} — تحويل للخزنة`,
         source: SHIFT_CLOSE_SOURCE,
         sourceId: shift.id,
         userId: actor.id,
@@ -333,7 +389,7 @@ export async function shiftReport(db: AppDb, id: number) {
     .all();
   const returns = await db
     .prepare(
-      `SELECT sr.id, sr.number, sr.date, sr.total, sr.reason, si.number as invoice_number
+      `SELECT sr.id, sr.number, sr.date, sr.total, sr.reason, si.id as invoice_id, si.number as invoice_number
        FROM sales_returns sr LEFT JOIN sales_invoices si ON si.id = sr.invoice_id
        WHERE sr.shift_id = ? ORDER BY sr.id`,
     )
@@ -353,7 +409,7 @@ export async function shiftReport(db: AppDb, id: number) {
     .all();
   const collections = await db
     .prepare(
-      `SELECT p.id, p.date, p.method, p.amount, p.notes, si.number as invoice_number
+      `SELECT p.id, p.date, p.method, p.amount, p.notes, si.id as invoice_id, si.number as invoice_number
        FROM payments p LEFT JOIN sales_invoices si ON si.id = p.invoice_id
        WHERE p.shift_id = ? AND p.voided_at IS NULL ORDER BY p.id`,
     )
