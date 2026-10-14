@@ -4,6 +4,7 @@ import {
   accountSignedBalance,
   assertEquityCap,
   companyValuation,
+  companyValuationFromTrial,
   partnerDepositLines,
   partnerDrawLines,
   partnerLiveShares,
@@ -55,6 +56,38 @@ test("company valuation deducts wastage from profit and equity is assets minus A
   assert.equal(v.revenues, 51000);
   assert.equal(v.total_wastage, 2000);
   assert.equal(v.net_profit, 22000);
+  assert.equal(v.net_profit, v.revenues - v.cogs - v.expenses - v.total_wastage);
+});
+
+test("valuation includes safe, cash overage, and cash shortage", () => {
+  const v = companyValuation({
+    "1100": 1000,
+    "1101": 800,
+    "2100": 0,
+    "4100": -2000,
+    "4210": -400,
+    "5100": 0,
+    "5215": 100,
+  });
+  assert.equal(v.total_assets, 1800);
+  assert.equal(v.net_equity, 1800);
+  assert.equal(v.revenues, 2400);
+  assert.equal(v.expenses, 100);
+  assert.equal(v.net_profit, 2300);
+});
+
+test("trial rows match equity A-L and profit Rev-Exp residuals", () => {
+  const v = companyValuationFromTrial([
+    { type: "asset", code: "1100", closing_balance: 1500, net_balance: 1500 },
+    { type: "asset", code: "1101", closing_balance: 800, net_balance: 800 },
+    { type: "liability", code: "2100", closing_balance: 0, net_balance: 0 },
+    { type: "revenue", code: "4100", closing_balance: -1900, net_balance: -1900 },
+    { type: "revenue", code: "4210", closing_balance: -400, net_balance: -400 },
+    { type: "expense", code: "5215", closing_balance: 0, net_balance: 0 },
+  ]);
+  assert.equal(v.net_equity, 2300);
+  assert.equal(v.net_profit, 2300);
+  assert.equal(v.net_equity, v.total_assets - v.total_liabilities);
   assert.equal(v.net_profit, v.revenues - v.cogs - v.expenses - v.total_wastage);
 });
 

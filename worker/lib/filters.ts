@@ -19,6 +19,21 @@ export function isoDate(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
+/** Calendar day from `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `YYYY-MM-DD HH:mm:ss`. */
+export function asIsoDay(s?: string) {
+  const m = String(s || "").trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : "";
+}
+
+function orderedRange(from?: string, to?: string) {
+  const a = asIsoDay(from);
+  const b = asIsoDay(to);
+  if (!a && !b) return {};
+  if (!a) return { from: b, to: b };
+  if (!b) return { from: a, to: a };
+  return a <= b ? { from: a, to: b } : { from: b, to: a };
+}
+
 function parseIso(s: string) {
   return new Date(`${s.slice(0, 10)}T12:00:00`);
 }
@@ -41,9 +56,10 @@ function lastDayOfMonth(year: number, month: number) {
 }
 
 export function resolveDates(p: ListQ): { from?: string; to?: string } {
-  if (p.day && /^\d{4}-\d{2}-\d{2}$/.test(p.day)) return { from: p.day, to: p.day };
+  const pickedDay = asIsoDay(p.day);
+  if (pickedDay) return { from: pickedDay, to: pickedDay };
   if (p.week && /^\d{4}-\d{2}-\d{2}$/.test(p.week)) {
-    const from = startOfWeek(p.week);
+    const from = startOfWeek(asIsoDay(p.week) || p.week);
     return { from, to: addDays(from, 6) };
   }
   if (p.month && /^\d{4}-\d{2}$/.test(p.month)) {
@@ -54,9 +70,11 @@ export function resolveDates(p: ListQ): { from?: string; to?: string } {
 
   const today = todayIso();
   const period = p.period || "";
-  if (period === "custom" || (!period && (p.from || p.to))) {
-    return { from: p.from, to: p.to };
-  }
+  if (period === "all") return {};
+  const explicit = orderedRange(p.from || p.date_from, p.to || p.date_to);
+  if (explicit.from) return explicit;
+  if (period === "day") return { from: today, to: today };
+  if (period === "custom") return {};
   switch (period) {
     case "today":
       return { from: today, to: today };
@@ -104,14 +122,18 @@ export function resolveDates(p: ListQ): { from?: string; to?: string } {
   }
 }
 
+export function journalDayExpr(col: string) {
+  return `LEFT(CAST(${col} AS CHAR), 10)`;
+}
+
 export function applyDate(where: string[], params: Bind[], col: string, p: ListQ) {
   const { from, to } = resolveDates(p);
   if (from) {
-    where.push(`date(${col}) >= date(?)`);
+    where.push(`${journalDayExpr(col)} >= ?`);
     params.push(from);
   }
   if (to) {
-    where.push(`date(${col}) <= date(?)`);
+    where.push(`${journalDayExpr(col)} <= ?`);
     params.push(to);
   }
   return { from, to };

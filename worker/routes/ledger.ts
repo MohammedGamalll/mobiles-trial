@@ -3,7 +3,7 @@ import { audit, nextNumber, paginate, round2, todayIso, type AppBindings, type A
 import { requirePerm } from "../lib/auth";
 import { cashByKind, postJournal, reverseJournal } from "../lib/ledger";
 import { attachOpenShift } from "../lib/pos-shifts";
-import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
+import { applyDate, applyEq, applyRange, applySearch, journalDayExpr, listParams, resolveDates } from "../lib/filters";
 
 export const ledgerRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -141,12 +141,13 @@ ledgerRoutes.get("/trial", requirePerm("ledger.view", "reports.view"), async (c)
   const { from, to } = resolveDates(p);
   const extra: string[] = [];
   const params: (string | number)[] = [];
+  const day = journalDayExpr("j.date");
   if (from) {
-    extra.push("AND date(j.date) >= date(?)");
+    extra.push(`AND ${day} >= ?`);
     params.push(from);
   }
   if (to) {
-    extra.push("AND date(j.date) <= date(?)");
+    extra.push(`AND ${day} <= ?`);
     params.push(to);
   }
   const search = ["1=1"];

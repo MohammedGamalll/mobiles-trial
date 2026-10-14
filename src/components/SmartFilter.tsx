@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { useApp } from "../context";
-import { DATE_PRESETS } from "../lib/filter-engine";
+import { DATE_PRESETS, isoToday } from "../lib/filter-engine";
 import { loadViews, removeView, saveView } from "../lib/shortcuts";
 import { loadDefaultView, saveDefaultView, type ListQuery } from "../hooks/useListQuery";
 import { Drawer, Field, SearchPick, inputCls } from "./ui";
@@ -25,7 +25,18 @@ export type FilterField = {
   brandKey?: string;
 };
 
-const CHIP_PRESETS = ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "last_3_months", "this_quarter", "this_year", "custom"] as const;
+const CHIP_PRESETS = ["today", "yesterday", "day", "this_week", "last_week", "this_month", "last_month", "last_3_months", "this_quarter", "this_year", "custom"] as const;
+
+function periodPatch(period: string, current: { day?: string; from?: string; to?: string }) {
+  const today = isoToday();
+  if (period === "day") {
+    return { period, day: current.day || today, week: "", month: "", year: "", from: "", to: "" };
+  }
+  if (period === "custom") {
+    return { period, day: "", week: "", month: "", year: "", from: current.from || today, to: current.to || current.from || today };
+  }
+  return { period, day: "", week: "", month: "", year: "", from: "", to: "" };
+}
 
 const PRESET_LABEL: Record<string, Msg> = {
   today: "today",
@@ -309,8 +320,7 @@ export function SmartFilter({
       {search ? searchBox("min-w-[220px] flex-1") : null}
       {date ? (
         <select className={`${inputCls} w-auto min-w-[140px]`} value={period} onChange={(e) => {
-          const p = e.target.value;
-          f.setMany({ period: p, day: "", week: "", month: "", year: "", from: "", to: "" });
+          f.setMany(periodPatch(e.target.value, f.values));
         }}>
           <option value="">{tr("period")}</option>
           {DATE_PRESETS.map((p) => (
@@ -361,7 +371,7 @@ export function SmartFilter({
               key={p}
               type="button"
               className={`period-chip ${period === p ? "is-on" : ""}`}
-              onClick={() => f.setMany({ period: p, day: "", week: "", month: "", year: "", from: "", to: "" })}
+              onClick={() => f.setMany(periodPatch(p, f.values))}
             >
               {tr(PRESET_LABEL[p])}
             </button>
@@ -413,7 +423,7 @@ export function SmartFilter({
         <div className="grid gap-3 md:grid-cols-2">
           {date ? (
             <Field label={tr("period")}>
-              <select className={inputCls} value={period} onChange={(e) => f.setMany({ period: e.target.value, day: "", week: "", month: "", year: "", from: "", to: "" })}>
+              <select className={inputCls} value={period} onChange={(e) => f.setMany(periodPatch(e.target.value, f.values))}>
                 <option value="">{tr("period")}</option>
                 {DATE_PRESETS.map((p) => <option key={p} value={p}>{tr(PRESET_LABEL[p])}</option>)}
               </select>

@@ -1,5 +1,5 @@
 import type { AppDb } from "./db";
-import { applyEq, applySearch, resolveDates, type ListQ } from "./filters";
+import { applyEq, applySearch, journalDayExpr, resolveDates, type ListQ } from "./filters";
 import { round2, todayIso } from "./helpers";
 
 export type TrialAccountRow = {
@@ -82,12 +82,13 @@ export async function loadTrialBalance(db: AppDb, p: ListQ) {
   applyEq(search, params, "a.type", mapped.type);
   if (mapped.level === "1") search.push("a.parent_id IS NULL");
   if (mapped.level === "2") search.push("a.parent_id IS NOT NULL");
+  const day = journalDayExpr("j.date");
   const { results } = await db
     .prepare(
       `SELECT a.id, a.code, a.name_ar, a.name_en, a.type,
-        COALESCE(SUM(CASE WHEN j.id IS NOT NULL AND date(j.date) < date(?) THEN l.debit - l.credit ELSE 0 END), 0) as opening_balance,
-        COALESCE(SUM(CASE WHEN j.id IS NOT NULL AND date(j.date) >= date(?) AND date(j.date) <= date(?) THEN l.debit ELSE 0 END), 0) as total_debit,
-        COALESCE(SUM(CASE WHEN j.id IS NOT NULL AND date(j.date) >= date(?) AND date(j.date) <= date(?) THEN l.credit ELSE 0 END), 0) as total_credit
+        COALESCE(SUM(CASE WHEN j.id IS NOT NULL AND ${day} < ? THEN l.debit - l.credit ELSE 0 END), 0) as opening_balance,
+        COALESCE(SUM(CASE WHEN j.id IS NOT NULL AND ${day} >= ? AND ${day} <= ? THEN l.debit ELSE 0 END), 0) as total_debit,
+        COALESCE(SUM(CASE WHEN j.id IS NOT NULL AND ${day} >= ? AND ${day} <= ? THEN l.credit ELSE 0 END), 0) as total_credit
        FROM ledger_accounts a
        LEFT JOIN journal_lines l ON l.account_id = a.id
        LEFT JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
@@ -111,7 +112,7 @@ export async function loadTrialBalance(db: AppDb, p: ListQ) {
       `SELECT COALESCE(SUM(l.debit),0) as debit, COALESCE(SUM(l.credit),0) as credit
        FROM journal_lines l
        JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
-       WHERE date(j.date) >= date(?) AND date(j.date) <= date(?)`,
+       WHERE ${day} >= ? AND ${day} <= ?`,
     )
     .bind(from, to)
     .first<{ debit: number; credit: number }>();

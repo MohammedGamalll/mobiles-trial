@@ -19,10 +19,21 @@ export type PartnerShares = {
   net_due: number;
 };
 
-const ASSET_CODES = ["1100", "1110", "1200", "1300"] as const;
-const LIABILITY_CODES = ["2100"] as const;
-const REVENUE_CODES = ["4100", "4200"] as const;
-const EXPENSE_CODES = ["5100", "5200", "5300", "5400"] as const;
+export type TrialValuationRow = {
+  type: string;
+  code: string;
+  closing_balance: number;
+  net_balance: number;
+};
+
+export function typeForCode(code: string): LedgerType {
+  const head = String(code || "").trim().slice(0, 1);
+  if (head === "1") return "asset";
+  if (head === "2") return "liability";
+  if (head === "3") return "equity";
+  if (head === "4") return "revenue";
+  return "expense";
+}
 
 export function accountSignedBalance(type: LedgerType, debitMinusCredit: number) {
   const raw = round2(Number(debitMinusCredit) || 0);
@@ -54,25 +65,50 @@ export function partnerDepositLines(equityAccountId: number, cashAccountId: numb
   ];
 }
 
-export function companyValuation(balancesByCode: Record<string, number>): CompanyValuation {
-  const signed = (code: string, type: LedgerType) => accountSignedBalance(type, balancesByCode[code] || 0);
-  const total_assets = round2(ASSET_CODES.reduce((s, code) => s + signed(code, "asset"), 0));
-  const total_liabilities = round2(LIABILITY_CODES.reduce((s, code) => s + signed(code, "liability"), 0));
-  const revenues = round2(REVENUE_CODES.reduce((s, code) => s + signed(code, "revenue"), 0));
-  const cogs = signed("5100", "expense");
-  const expenses = round2(signed("5200", "expense") + signed("5300", "expense"));
-  const total_wastage = signed("5400", "expense");
-  const costTotal = round2(EXPENSE_CODES.reduce((s, code) => s + signed(code, "expense"), 0));
+export function companyValuationFromTrial(rows: TrialValuationRow[]): CompanyValuation {
+  let assets = 0;
+  let liabilities = 0;
+  let revenues = 0;
+  let expensesAll = 0;
+  let cogs = 0;
+  let opex = 0;
+  let wastage = 0;
+  for (const r of rows) {
+    const type = (r.type || typeForCode(r.code)) as LedgerType;
+    const closing = accountSignedBalance(type, r.closing_balance);
+    const period = accountSignedBalance(type, r.net_balance);
+    if (type === "asset") assets += closing;
+    else if (type === "liability") liabilities += closing;
+    else if (type === "revenue") revenues += period;
+    else if (type === "expense") {
+      expensesAll += period;
+      const code = String(r.code || "");
+      if (code === "5100" || code.startsWith("51")) cogs += period;
+      else if (code === "5400" || code.startsWith("54")) wastage += period;
+      else opex += period;
+    }
+  }
   return {
-    total_assets,
-    total_liabilities,
-    net_equity: round2(total_assets - total_liabilities),
-    net_profit: round2(revenues - costTotal),
-    total_wastage,
-    revenues,
-    cogs,
-    expenses,
+    total_assets: round2(assets),
+    total_liabilities: round2(liabilities),
+    net_equity: round2(assets - liabilities),
+    net_profit: round2(revenues - expensesAll),
+    total_wastage: round2(wastage),
+    revenues: round2(revenues),
+    cogs: round2(cogs),
+    expenses: round2(opex),
   };
+}
+
+export function companyValuation(balancesByCode: Record<string, number>): CompanyValuation {
+  return companyValuationFromTrial(
+    Object.entries(balancesByCode).map(([code, raw]) => ({
+      code,
+      type: typeForCode(code),
+      closing_balance: Number(raw) || 0,
+      net_balance: Number(raw) || 0,
+    })),
+  );
 }
 
 export function partnerLiveShares(opts: {

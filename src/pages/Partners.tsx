@@ -6,6 +6,8 @@ import { money } from "../lib/format";
 import { TablePager } from "../components/TablePager";
 import { usePagedRows } from "../hooks/usePagedRows";
 import { ActionBtns, useConfirm } from "../components/Confirm";
+import { SmartFilter } from "../components/SmartFilter";
+import { useListQuery } from "../hooks/useListQuery";
 import {
   Btn,
   ErrorNote,
@@ -24,6 +26,8 @@ type Dashboard = {
   total_wastage: number;
   revenues: number;
   expenses: number;
+  from?: string;
+  to?: string;
 };
 
 type Partner = {
@@ -104,6 +108,7 @@ function Kpi({
 
 export default function Partners() {
   const { tr, lang, can, lookups } = useApp();
+  const f = useListQuery("partners", { period: "this_month" });
   const cashAccounts = lookups?.cash_accounts || [];
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [rows, setRows] = useState<Partner[]>([]);
@@ -134,7 +139,7 @@ export default function Partners() {
     setErr("");
     try {
       const r = await get<{ data: Partner[]; dashboard: Dashboard }>(
-        "/api/partners",
+        `/api/partners?${f.qs}`,
       );
       setRows(r.data || []);
       setDash(r.dashboard || null);
@@ -147,7 +152,7 @@ export default function Partners() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [f.qs]);
 
   async function createPartner() {
     setSaving(true);
@@ -233,6 +238,12 @@ export default function Partners() {
             })}
             %
           </div>
+          {dash?.from ? (
+            <div className="mt-1 text-sm font-bold text-[var(--muted)]">
+              {tr("fromDate")} {dash.from}
+              {dash.to && dash.to !== dash.from ? ` · ${tr("toDate")} ${dash.to}` : ""}
+            </div>
+          ) : null}
         </div>
         <div className="no-print flex flex-wrap gap-2">
           {can("partners.manage") ? (
@@ -255,6 +266,7 @@ export default function Partners() {
         </div>
       </div>
 
+      <SmartFilter f={f} fields={[]} />
       {err ? <ErrorNote message={err} /> : null}
 
       {dash ? (

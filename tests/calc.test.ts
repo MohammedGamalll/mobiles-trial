@@ -3,7 +3,8 @@ import test from "node:test";
 import { availableQty, applyAdvanceDeduction, creditLimitBlocked, fifoUnitCost, grossProfit, invoiceTotals, netPay, returnLineNet, settleReturn } from "../worker/lib/invoice-math.ts";
 import { planAllocation } from "../worker/lib/stock.ts";
 import { applyTransferQtys, applyTransferQtysAtomic, stocktakeAbsVarianceValue, stocktakeLineValue, stocktakeUnitCost, wastageFromVariance } from "../worker/lib/stock-transfer.ts";
-import { finalizeTrialRow, splitClosingSides, trialBalanceTotals } from "../worker/lib/trial-balance.ts";
+import { asIsoDay, resolveDates } from "../worker/lib/filters.ts";
+import { finalizeTrialRow, splitClosingSides, trialBalanceTotals, trialDateRange } from "../worker/lib/trial-balance.ts";
 
 test("invoice total applies percent-style fixed discount once", () => {
   const subtotal = 1000;
@@ -249,6 +250,20 @@ test("wastage loss uses fallback cost when line cost is zero", () => {
   const cost = stocktakeUnitCost(0, null, 100, 80);
   assert.equal(cost, 100);
   assert.deepEqual(wastageFromVariance(-9, cost), { qty: 9, unit_cost: 100, loss_value: 900 });
+});
+
+test("trial date filter uses the calendar day even when time is attached", () => {
+  assert.equal(asIsoDay("2026-10-14T21:00"), "2026-10-14");
+  assert.equal(asIsoDay("2026-10-13 08:15:00"), "2026-10-13");
+  const custom = resolveDates({ period: "custom", from: "2026-10-12", to: "2026-10-14" });
+  assert.deepEqual(custom, { from: "2026-10-12", to: "2026-10-14" });
+  const one = resolveDates({ period: "day", day: "2026-10-13" });
+  assert.deepEqual(one, { from: "2026-10-13", to: "2026-10-13" });
+  const leftover = resolveDates({ period: "this_month", from: "2026-10-08", to: "2026-10-08" });
+  assert.deepEqual(leftover, { from: "2026-10-08", to: "2026-10-08" });
+  const swapped = trialDateRange({ from: "2026-10-14", to: "2026-10-10" });
+  assert.equal(swapped.from, "2026-10-10");
+  assert.equal(swapped.to, "2026-10-14");
 });
 
 test("trial closing splits to debit or credit columns without a minus", () => {

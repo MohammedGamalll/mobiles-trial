@@ -97,11 +97,13 @@ export default function TrialBalance() {
     closing: 0,
     balanced: true,
   });
+  const [range, setRange] = useState({ from: "", to: "" });
   const list = useLiveList(async () => {
-    const r = await get<{ data: TrialRow[]; totals: TrialTotals }>(
+    const r = await get<{ data: TrialRow[]; totals: TrialTotals; from?: string; to?: string }>(
       `/api/reports/trial-balance?${f.qs}`,
     );
     setRows(r.data || []);
+    setRange({ from: r.from || "", to: r.to || "" });
     setTotals(
       r.totals || {
         opening: 0,
@@ -121,7 +123,15 @@ export default function TrialBalance() {
     <div className="text-[var(--text)]">
       <PrintLetterhead title={tr("trialBalance")} />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-black">{tr("trialBalance")}</h1>
+        <div>
+          <h1 className="text-2xl font-black">{tr("trialBalance")}</h1>
+          {range.from ? (
+            <div className="mt-1 text-sm font-bold text-[var(--muted)]">
+              {tr("fromDate")} {range.from}
+              {range.to && range.to !== range.from ? ` · ${tr("toDate")} ${range.to}` : ""}
+            </div>
+          ) : null}
+        </div>
         <div className="no-print flex flex-wrap items-center justify-end gap-2">
           <ExportBtn kind="trial-balance" query={f.qs} />
           <PrintBtn />

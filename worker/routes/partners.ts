@@ -2,38 +2,28 @@ import { Hono } from "hono";
 import { audit, round2, todayIso, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { postPartnerDepositJournal, postPartnerDrawJournal } from "../lib/ledger";
-import { assertEquityCap, companyValuation, partnerLiveShares } from "../lib/partners";
+import { listParams } from "../lib/filters";
+import { loadTrialBalance } from "../lib/trial-balance";
+import { assertEquityCap, companyValuationFromTrial, partnerLiveShares } from "../lib/partners";
 
 export const partnerRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
-const VALUATION_CODES = ["1100", "1110", "1200", "1300", "2100", "4100", "4200", "5100", "5200", "5300", "5400"];
-
-type CodeBal = { code: string; n: number };
-
-async function loadBalances(db: AppBindings["DB"]) {
-  const { results } = await db
-    .prepare(
-      `SELECT a.code, COALESCE(SUM(CASE WHEN j.status = 'posted' THEN l.debit - l.credit ELSE 0 END), 0) as n
-       FROM ledger_accounts a
-       LEFT JOIN journal_lines l ON l.account_id = a.id
-       LEFT JOIN journal_entries j ON j.id = l.entry_id
-       WHERE a.code IN (${VALUATION_CODES.map(() => "?").join(",")})
-       GROUP BY a.code`,
-    )
-    .bind(...VALUATION_CODES)
-    .all<CodeBal>();
-  const map: Record<string, number> = {};
-  for (const row of results || []) map[String(row.code)] = Number(row.n) || 0;
-  return companyValuation(map);
+async function loadDashboard(db: AppBindings["DB"], url: URL) {
+  const trial = await loadTrialBalance(db, listParams(url));
+  return {
+    ...companyValuationFromTrial(trial.data),
+    from: trial.from,
+    to: trial.to,
+  };
 }
 
 partnerRoutes.get("/dashboard", requirePerm("partners.view"), async (c) => {
-  const dash = await loadBalances(c.env.DB);
+  const dash = await loadDashboard(c.env.DB, new URL(c.req.url));
   return c.json(dash);
 });
 
 partnerRoutes.get("/", requirePerm("partners.view"), async (c) => {
-  const dash = await loadBalances(c.env.DB);
+  const dash = await loadDashboard(c.env.DB, new URL(c.req.url));
   const { results } = await c.env.DB
     .prepare(
       `SELECT p.id, p.name, p.equity_percentage, p.starting_balance, p.active, p.created_at,
