@@ -25,6 +25,7 @@ import { rememberResumeInvoice, type Product } from "../hooks/usePOSLogic";
 import { ReturnForm } from "./Invoice";
 import { ListPager, TablePager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
+import { StaffForm } from "../components/StaffForm";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId, settings } = useApp();
@@ -128,7 +129,7 @@ export function SalesList() {
         rows={rows.map((r) => {
           const payStatus = invoicePayStatus(r);
           const canReturn = can("returns.create") && !["cancelled", "fully_returned", "held", "quote", "order"].includes(r.status);
-          const canPay = can("payments.create") && Number(r.remaining) > 0;
+          const canPay = can("payments.create") && Number(r.remaining) > 0 && !["cancelled", "void", "held", "quote", "order", "draft"].includes(r.status);
           const canResume = parked(r.status) && can("sales.create");
           const canFinalize = parked(r.status) && can("sales.create");
           const canWa = waEnabled && can("whatsapp.send");
@@ -143,7 +144,7 @@ export function SalesList() {
           <span className={statusClass(payStatus)}>{statusLabel(payStatus, lang)}</span>,
           <div className="flex flex-wrap items-center gap-1.5">
             {canReturn ? <Btn kind="ghost" className="!px-2.5 !py-1 text-xs" onClick={() => openReturn(r.id)}>{tr("returnCreate")}</Btn> : null}
-            {canPay ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => setPayRow(r)}>{tr("payments")}</Btn> : null}
+            {canPay ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => setPayRow(r)}>{tr("payInstallment")}</Btn> : null}
             {canResume ? <Btn kind="primary" className="!px-2.5 !py-1 text-xs" onClick={() => { rememberResumeInvoice(r.id); window.location.href = `/pos?held=${r.id}`; }}>{tr("resumeHeld")}</Btn> : null}
             {canFinalize ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={async () => {
               if (r.status === "quote") { setFinalizeRow(r); return; }
@@ -162,7 +163,7 @@ export function SalesList() {
       </Modal>
       <PaymentModal
         open={!!payRow}
-        title={tr("paymentModal")}
+        title={tr("payInstallment")}
         due={Number(payRow?.remaining) || 0}
         summary={payRow ? {
           number: payRow.number,
@@ -184,7 +185,7 @@ export function SalesList() {
               setPayRow(null);
               return;
             }
-            await post(`/api/invoices/${payRow.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            await post(`/api/invoices/${payRow.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode, cash_account_id: r.cash_account_id });
             setPayRow(null);
             list.reload();
           } catch (e) {
@@ -211,6 +212,7 @@ export function SalesList() {
         onSubmit={async (r) => {
           try {
             await post(`/api/invoices/${finalizeRow.id}/finalize`, {
+              cash_account_id: r.cash_account_id,
               paid: r.paid,
               unpaid: r.unpaid,
               payment_method: r.unpaid ? "credit" : "cash",
@@ -648,7 +650,7 @@ export function PurchasesPage() {
               setPayRow(null);
               return;
             }
-            await post(`/api/inventory/purchases/${payRow.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            await post(`/api/inventory/purchases/${payRow.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode, cash_account_id: r.cash_account_id });
             setPayRow(null);
             list.reload();
           } catch (e) {
@@ -801,7 +803,7 @@ export function PurchaseDetail() {
               setPayOpen(false);
               return;
             }
-            await post(`/api/inventory/purchases/${d.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            await post(`/api/inventory/purchases/${d.id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode, cash_account_id: r.cash_account_id });
             setPayOpen(false);
             load();
           } catch (e) {
@@ -891,8 +893,9 @@ export function CustomersPage() {
   return (
     <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm(emptyCust()); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
-      <div className="mb-3 grid gap-3 md:grid-cols-2">
+      <div className="mb-3 grid gap-3 md:grid-cols-3">
         <Stat label={tr("customers")} value={String(totals.count || rows.length)} />
+        <Stat label={tr("creditOutstanding")} value={money(totals.credit_total ?? totals.balance, lang)} accent="rose" />
         <Stat label={tr("balance")} value={money(totals.balance, lang)} />
       </div>
       <SmartFilter f={f} date={false} fields={[
@@ -990,7 +993,7 @@ export function CustomersPage() {
         onSubmit={async (r) => {
           if (!payOpen) return;
           try {
-            await post(`/api/customers/${payOpen.id}/payments`, { amount: r.paid, surplus_mode: r.surplus_mode });
+            await post(`/api/customers/${payOpen.id}/payments`, { amount: r.paid, surplus_mode: r.surplus_mode, cash_account_id: r.cash_account_id });
             setPayOpen(null);
             act.clear();
             list.reload();
@@ -1059,7 +1062,7 @@ export function CustomerDetail() {
         return [<Link to={`/sales/${i.id}`}>{i.number}</Link>, i.date, money(i.total, lang), money(i.remaining, lang), statusLabel(payStatus, lang)];
       })} /> : null}
       {tab === "payments" ? <Table cols={[tr("date"), tr("amount"), tr("payMethod")]} rows={(d.payments||[]).map((p: any) => [p.date, money(p.amount, lang), p.method || p.payment_method])} /> : null}
-      {tab === "returns" ? <Table cols={[tr("invoiceNo"), tr("date"), tr("total")]} rows={(d.returns||[]).map((r: any) => [r.number, r.date, money(r.total, lang)])} /> : null}
+      {tab === "returns" ? <Table cols={[tr("invoiceNo"), tr("itemName"), tr("sku"), tr("unit"), tr("qty"), tr("sellingPrice"), tr("total")]} rows={(d.return_items || d.returns || []).map((r: any) => [r.invoice_number || r.number, r.product_name || "—", r.sku || "—", r.unit_name || "—", r.qty || r.quantity || "—", r.unit_price != null ? money(r.unit_price, lang) : "—", money(r.total ?? r.return_total, lang)])} /> : null}
       {tab === "statement" ? <Table cols={[tr("date"), tr("kind"), tr("invoiceNo"), tr("total")]} rows={[
         ...(d.invoices || []).map((i: any) => [i.date, tr("sales"), i.number, money(i.total, lang)]),
         ...(d.payments || []).map((p: any) => [p.date, tr("payments"), p.invoice_id || "-", money(p.amount, lang)]),
@@ -1653,6 +1656,7 @@ export function ReportsPage() {
         ))}
         <Link className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold" to="/reports/trial-balance">{tr("trialBalance")}</Link>
         <Link className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold" to="/reports/daily-movement">{tr("dailyReport")}</Link>
+        <Link className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold" to="/reports/daily-finance">{tr("dailyFinance")}</Link>
       </div>
       {tab === "sales" ? (
         <Table cols={["", tr("invoicesCount"), tr("total"), ...(showCost ? [tr("profit")] : [])]} rows={(sales.data || []).map((r: any) => [r.label, num(r.invoices || r.qty, lang), money(r.total, lang), ...(showCost ? [money(r.profit, lang)] : [])])} />
@@ -1733,6 +1737,7 @@ export function UsersPage() {
   const [permMsg, setPermMsg] = useState("");
   const [permErr, setPermErr] = useState("");
   const [open, setOpen] = useState(false);
+  const [staffOpen, setStaffOpen] = useState(false);
   const [form, setForm] = useState({ id: 0, username: "", full_name: "", phone: "", role_id: 2, active: 1, password: "" });
   const { confirmDelete, dialog } = useConfirm();
   async function loadUsers() {
@@ -1772,7 +1777,7 @@ export function UsersPage() {
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
   return (
-    <Page title={tr("users")}>
+    <Page title={tr("users")} action={can("users.manage") ? <Btn onClick={() => setStaffOpen(true)}>{tr("addEmployee")}</Btn> : null}>
       <SmartFilter f={f} date={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [{ value: "active", label: tr("active") }, { value: "inactive", label: tr("inactive") }] },
       ]} />
@@ -1812,6 +1817,9 @@ export function UsersPage() {
             list.reload();
           }}>{tr("save")}</Btn>
         </div>
+      </Modal>
+      <Modal open={staffOpen} title={tr("addEmployee")} onClose={() => setStaffOpen(false)} wide>
+        <StaffForm onSaved={() => { setStaffOpen(false); list.reload(); }} onCancel={() => setStaffOpen(false)} />
       </Modal>
       {roles ? (
         <div className="mt-6">

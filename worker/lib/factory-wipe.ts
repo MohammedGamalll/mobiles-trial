@@ -35,6 +35,14 @@ const FACTORY_LEDGER: [number, string, string, string, string][] = [
   [9, "5100", "تكلفة البضاعة", "Cost of goods", "expense"],
   [10, "5200", "المصروفات", "Expenses", "expense"],
   [11, "5300", "المرتبات", "Salaries", "expense"],
+  [12, "4210", "زيادة صندوق", "Cash overage", "revenue"],
+  [13, "5215", "عجز صندوق", "Cash shortage", "expense"],
+  [14, "1101", "الخزنة", "Safe cash", "asset"],
+];
+
+export const FACTORY_CASH_ACCOUNTS: [string, string, string, string][] = [
+  ["cash", "الصندوق الرئيسي", "Main cash", "1100"],
+  ["cash", "الخزنه", "Safe", "1101"],
 ];
 
 export function shouldWipeTable(name: string) {
@@ -78,9 +86,24 @@ async function restoreFactorySkeleton(db: AppDb) {
       type,
     );
   }
+  for (const [kind, name, nameEn, code] of FACTORY_CASH_ACCOUNTS) {
+    await tryExec(
+      db,
+      `INSERT INTO cash_accounts (kind, name, name_en, account_id, opening_balance, current_balance, active)
+       SELECT ?, ?, ?, id, 0, 0, 1 FROM ledger_accounts WHERE code = ? LIMIT 1`,
+      kind,
+      name,
+      nameEn,
+      code,
+    );
+  }
   await tryExec(
     db,
-    "INSERT INTO cash_accounts (id, kind, name, name_en, account_id, opening_balance, current_balance, active) VALUES (1, 'cash', 'الصندوق الرئيسي', 'Main cash', 1, 0, 0, 1)",
+    `INSERT OR IGNORE INTO revenue_categories (id, name_ar, name_en, active) VALUES
+      (1, 'إيجار معرّض', 'Display rent', 1),
+      (2, 'رسوم خدمات', 'Service fees', 1),
+      (3, 'تسوية', 'Settlement', 1),
+      (4, 'أخرى', 'Other', 1)`,
   );
   await tryExec(
     db,
@@ -98,6 +121,8 @@ async function restoreFactorySkeleton(db: AppDb) {
     ["tax_enabled", "0"],
     ["whatsapp_enabled", "0"],
     ["allow_negative_stock", "0"],
+    ["main_safe_id", "1"],
+    ["pos_require_shift", "1"],
   ];
   for (const [key, value] of settings) {
     await tryExec(db, "INSERT INTO settings (`key`, value) VALUES (?, ?)", key, value);

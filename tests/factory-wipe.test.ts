@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { shouldWipeTable } from "../worker/lib/factory-wipe.ts";
+import { FACTORY_CASH_ACCOUNTS, shouldWipeTable } from "../worker/lib/factory-wipe.ts";
 
 test("wipe keeps only admin auth and migrations", () => {
   for (const keep of ["users", "sessions", "roles", "permissions", "role_permissions", "schema_migrations"]) {
     assert.equal(shouldWipeTable(keep), false);
   }
+});
+
+test("factory restore seeds main fund and safe treasuries", () => {
+  const names = FACTORY_CASH_ACCOUNTS.map((r) => r[1]);
+  assert.ok(names.includes("الصندوق الرئيسي"));
+  assert.ok(names.includes("الخزنه"));
 });
 
 test("wipe clears finance and every other business table", () => {
@@ -23,6 +29,7 @@ test("wipe clears finance and every other business table", () => {
     "cash_accounts",
     "journal_entries",
     "vouchers",
+    "pos_shifts",
     "branches",
     "backups",
   ]) {

@@ -692,7 +692,7 @@ inventoryRoutes.post("/purchases/:id/reject", requirePerm("purchases.approve"), 
 
 inventoryRoutes.post("/purchases/:id/pay", requirePerm("payments.create", "purchases.approve"), async (c) => {
   const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string }>();
+  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string; cash_account_id?: number }>();
   const inv = await c.env.DB.prepare("SELECT * FROM purchase_invoices WHERE id = ? AND deleted_at IS NULL").bind(id).first<{
     id: number;
     number: string;
@@ -736,6 +736,7 @@ inventoryRoutes.post("/purchases/:id/pay", requirePerm("payments.create", "purch
         amount: take,
         method: b.method || inv.payment_method || "cash",
         date: todayIso(),
+        cashAccountId: Number(b.cash_account_id || 0) || null,
         userId: user.id,
       });
     });

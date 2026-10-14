@@ -53,6 +53,7 @@ export const modernNav: NavGroup[] = [
     label: "dashboard",
     items: [
       { to: "/reports/daily-movement", key: "dailyReport", icon: CalendarDays, perm: "reports.view" },
+      { to: "/reports/daily-finance", key: "dailyFinance", icon: Landmark, perm: "reports.view" },
       { to: "/", key: "dashboard", icon: LayoutDashboard, perm: "dashboard.view" },
     ],
   },
@@ -60,6 +61,7 @@ export const modernNav: NavGroup[] = [
     label: "sales",
     items: [
       { to: "/pos", key: "pos", icon: ShoppingCart, perm: "sales.create" },
+      { to: "/pos/shifts", key: "posShift", icon: Clock3, perm: "sales.view" },
       { to: "/sales", key: "sales", icon: FileText, perm: "sales.view" },
       { to: "/customers", key: "customers", icon: Users, perm: "customers.view" },
       { to: "/price-lists", key: "priceLists", icon: Tags, perm: "prices.view" },
@@ -122,6 +124,7 @@ export const modernNav: NavGroup[] = [
     label: "financeOps",
     items: [
       { to: "/expenses", key: "expenses", icon: Wallet, perm: "expenses.view" },
+      { to: "/revenues", key: "otherRevenues", icon: Banknote, perm: "payments.create" },
       { to: "/cheques", key: "cheques", icon: Receipt, perm: "cheques.manage" },
       { to: "/installments", key: "installments", icon: CalendarRange, perm: "installments.manage" },
       { to: "/payments", key: "payments", icon: Banknote, perm: "payments.view" },

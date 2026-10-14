@@ -28,6 +28,10 @@ function peekResumeInvoice() {
   try { return Number(sessionStorage.getItem(POS_RESUME_KEY) || 0) || 0; } catch { return 0; }
 }
 
+function newClientToken() {
+  return globalThis.crypto?.randomUUID?.() || `t-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export type Unit = { id?: number; name: string; factor: number; barcode?: string; selling_price: number; is_base?: number };
 
 export type Product = {
@@ -185,6 +189,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [resumeInvoiceId, setResumeInvoiceId] = useState<number | null>(heldFromUrl || null);
   const resumeRef = useRef<number | null>(heldFromUrl || null);
   const resumeReadyRef = useRef(false);
+  const clientTokenRef = useRef(newClientToken());
   const [resuming, setResuming] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const customerRef = useRef<HTMLInputElement>(null);
@@ -611,7 +616,10 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       expenses_today?: number;
       expected_cash?: number;
       invoices: any[];
-    }>("/api/pos/today");
+    }>(await (async () => {
+      const cur = await get<{ shift?: { id: number } | null }>("/api/shifts/current").catch(() => ({ shift: null }));
+      return cur.shift?.id ? `/api/pos/today?shift_id=${cur.shift.id}` : "/api/pos/today";
+    })());
     setTodayStats({
       sales_today: Number(r.sales_today) || 0,
       collected_today: Number(r.collected_today) || 0,
@@ -631,7 +639,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       get<{ data: any[] }>(`/api/invoices?status=order&${qs}`),
       get<{ data: any[] }>("/api/invoices?period=today&pageSize=200"),
     ]);
-    const skip = new Set(["cancelled", "draft"]);
+    const skip = new Set(["cancelled", "void", "draft"]);
     const byId = new Map<number, any>();
     for (const row of [...(heldInv.data || []), ...(quoteInv.data || []), ...(orderInv.data || []), ...(todayInvRes.data || [])]) {
       if (!row?.id || skip.has(String(row.status || ""))) continue;
@@ -671,8 +679,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     setErr("");
     try {
       await post(`/api/invoices/${id}/finalize`, mode === "credit"
-        ? { payment_method: "credit", unpaid: true, paid: 0 }
-        : { payment_method: "cash" });
+        ? { payment_method: "credit", unpaid: true, paid: 0, cash_account_id: cashAccountId || null }
+        : { payment_method: "cash", cash_account_id: cashAccountId || null });
       playSound("done");
       setStockTick((n) => n + 1);
       await loadHeldList();
@@ -813,8 +821,10 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         notes,
         items: cartItems(),
         resume_id: resumeId || null,
+        client_token: clientTokenRef.current,
       };
       const res = await post<{ data: any }>("/api/invoices", body);
+      clientTokenRef.current = newClientToken();
       if (opts?.hold) {
         playSound("ok");
         clearCart();
@@ -862,7 +872,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   }
 
   async function holdInvoice() {
-    if (!cart.length || resuming) return;
+    if (!cart.length || resuming || busy) return;
     await submit({ hold: true });
   }
 

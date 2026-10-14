@@ -4,6 +4,7 @@ import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, Stat, inputCls } from "../components/ui";
+import { StaffForm } from "../components/StaffForm";
 import { binText, lastSupplierName } from "../lib/place";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { Barcode } from "../components/Barcode";
@@ -17,6 +18,7 @@ import {
 import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PageSizeControl } from "../components/PageSizeControl";
 import { useApp } from "../context";
+import { EndShiftButton } from "../components/PosShiftGuard";
 
 export default function POS() {
   const {
@@ -158,14 +160,11 @@ export default function POS() {
     holdInvoice,
     submitInvoiceReturn,
     beginResumeHeld,
-    refreshLookups,
   } = usePOSLogic("modern");
   const [cartOpen, setCartOpen] = useState(false);
   const [courierOpen, setCourierOpen] = useState(false);
   const [courierQ, setCourierQ] = useState("");
   const [courierFormOpen, setCourierFormOpen] = useState(false);
-  const [courierForm, setCourierForm] = useState({ name: "", phone: "", code: "" });
-  const [courierBusy, setCourierBusy] = useState(false);
   const couriers = (lookups?.delivery_agents || []).filter((a) => String((a as { status?: string }).status || "active") !== "inactive");
   const courierHits = couriers.filter((a) => {
     const qv = courierQ.trim().toLowerCase();
@@ -313,6 +312,7 @@ export default function POS() {
                 {tr("view")}
               </kbd>
             </button>
+            <EndShiftButton className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700" />
             <div className="ms-auto text-xs text-slate-500" tabIndex={-1}>
               <b>
                 {clock.toLocaleTimeString(lang === "ar" ? "ar-EG" : "en-GB", {
@@ -813,10 +813,7 @@ export default function POS() {
                     <button
                       type="button"
                       className="shrink-0 rounded-xl border border-slate-200 px-2 text-xs font-bold"
-                      onClick={() => {
-                        setCourierForm({ name: "", phone: "", code: "" });
-                        setCourierFormOpen(true);
-                      }}
+                      onClick={() => setCourierFormOpen(true)}
                     >
                       + {tr("addAgent")}
                     </button>
@@ -1822,59 +1819,19 @@ export default function POS() {
         open={courierFormOpen}
         title={tr("addAgent")}
         onClose={() => setCourierFormOpen(false)}
+        wide
       >
-        <div className="space-y-3">
-          <input
-            className={inputCls}
-            placeholder={tr("name")}
-            value={courierForm.name}
-            onChange={(e) => setCourierForm({ ...courierForm, name: e.target.value })}
-          />
-          <input
-            className={inputCls}
-            placeholder={tr("phone")}
-            value={courierForm.phone}
-            onChange={(e) => setCourierForm({ ...courierForm, phone: e.target.value })}
-          />
-          <input
-            className={inputCls}
-            placeholder={tr("agentCode")}
-            value={courierForm.code}
-            onChange={(e) => setCourierForm({ ...courierForm, code: e.target.value })}
-          />
-          <p className="text-xs leading-5 text-slate-500">{tr("noAgentsHint")}</p>
-          {err ? <div className="text-sm text-rose-600">{err}</div> : null}
-          <Btn
-            disabled={courierBusy}
-            onClick={async () => {
-              if (!courierForm.name.trim()) {
-                setErr(tr("errNameRequired"));
-                return;
-              }
-              setCourierBusy(true);
-              try {
-                const r = await post<{ id: number }>("/api/delivery/agents", {
-                  name: courierForm.name.trim(),
-                  phone: courierForm.phone.trim(),
-                  code: courierForm.code.trim(),
-                  status: "active",
-                  role_type: "delivery",
-                });
-                await refreshLookups();
-                setAgentId(r.id);
-                setCourierFormOpen(false);
-                setCourierOpen(false);
-                setErr("");
-              } catch (e) {
-                setErr(apiMessage(tr, e));
-              } finally {
-                setCourierBusy(false);
-              }
-            }}
-          >
-            {tr("save")}
-          </Btn>
-        </div>
+        <StaffForm
+          defaultKind="courier"
+          lockKind
+          onSaved={(row) => {
+            if (row.agent_id) setAgentId(row.agent_id);
+            setCourierFormOpen(false);
+            setCourierOpen(false);
+            setErr("");
+          }}
+          onCancel={() => setCourierFormOpen(false)}
+        />
       </Modal>
     </div>
   );

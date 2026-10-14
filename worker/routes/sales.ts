@@ -17,7 +17,8 @@ import { safeNotify, sendNotification, userIdForAgent } from "../lib/notificatio
 import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
-import { postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
+import { insertLinkedReceiptVoucher, postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
+import { attachOpenShift, drawerCashForSale, isShiftErr, requirePosShift } from "../lib/pos-shifts";
 import { creditLimitBlocked, invoiceTotals, returnLineNet, settleReturn } from "../lib/invoice-math";
 import { splitInvoiceCash } from "../lib/party-money";
 import {
@@ -84,8 +85,14 @@ function creditError(customer: { credit_limit: number; current_balance: number }
   return null;
 }
 
+export function reusedClientTokenId(row: { id: number } | null | undefined) {
+  const id = Number(row?.id || 0);
+  return id > 0 ? id : null;
+}
+
 salesRoutes.get("/pos/today", requirePerm("sales.create", "sales.view", "expenses.view"), async (c) => {
-  const data = await loadPosToday(c.env.DB);
+  const shiftId = Number(new URL(c.req.url).searchParams.get("shift_id") || 0) || undefined;
+  const data = await loadPosToday(c.env.DB, undefined, 40, shiftId);
   return c.json(data);
 });
 
@@ -116,9 +123,10 @@ salesRoutes.get("/invoices", requirePerm("sales.view"), async (c) => {
   const params: (string | number)[] = [];
   await applyInvoiceListFilters(c.env.DB, where, params, p, user);
   const whereSql = where.join(" AND ");
+  const kpiWhere = `${whereSql} AND si.status NOT IN ('cancelled','void','held','quote','order','draft')`;
   const count = await c.env.DB.prepare(`SELECT COUNT(*) as n FROM sales_invoices si WHERE ${whereSql}`).bind(...params).first<{ n: number }>();
   const sums = await c.env.DB
-    .prepare(`SELECT COALESCE(SUM(si.total),0) as total, COALESCE(SUM(si.paid),0) as paid, COALESCE(SUM(si.remaining),0) as remaining FROM sales_invoices si WHERE ${whereSql}`)
+    .prepare(`SELECT COALESCE(SUM(si.total),0) as total, COALESCE(SUM(si.paid),0) as paid, COALESCE(SUM(si.remaining),0) as remaining FROM sales_invoices si WHERE ${kpiWhere}`)
     .bind(...params)
     .first<{ total: number; paid: number; remaining: number }>();
   const { results } = await c.env.DB
@@ -238,7 +246,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   if (!b.items?.length) return c.json({ error: "no_items" }, 400);
   if (b.client_token) {
     const dup = await c.env.DB.prepare("SELECT id FROM sales_invoices WHERE client_token = ?").bind(b.client_token).first<{ id: number }>();
-    if (dup) return c.json({ data: await loadInvoice(c.env.DB, dup.id), duplicate: true }, 200);
+    const reusedId = reusedClientTokenId(dup);
+    if (reusedId) return c.json({ data: await loadInvoice(c.env.DB, reusedId), duplicate: true }, 200);
   }
   const user = c.get("user");
   const type = b.type === "delivery" ? "delivery" : "normal";
@@ -338,6 +347,15 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   const costTotal = round2(planned.reduce((s, p) => s + p.unitCost * p.stockQty, 0));
   const profit = round2(total - costTotal);
   const hold = asHold;
+  let posShift = null as Awaited<ReturnType<typeof requirePosShift>>;
+  try {
+    posShift = !hold && type !== "delivery" ? await requirePosShift(c.env.DB, user) : await attachOpenShift(c.env.DB, user.id);
+  } catch (e) {
+    if (isShiftErr(e)) return c.json({ error: (e as Error).message }, 403);
+    throw e;
+  }
+  const shiftId = posShift?.id || null;
+  const saleCashId = drawerCashForSale(posShift, b.payment_method, b.cash_account_id);
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
   const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
   const requestedPaid = hold
@@ -490,10 +508,10 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
         .run();
       id = ins.meta.last_row_id;
       }
-      if (resume || extra || b.cash_account_id || saleLocationId) {
+      if (resume || extra || saleCashId || saleLocationId || shiftId) {
         await tx
-          .prepare("UPDATE sales_invoices SET extra_amount = ?, cash_account_id = ?, location_id = COALESCE(?, location_id) WHERE id = ?")
-          .bind(extra, b.cash_account_id || null, saleLocationId, id)
+          .prepare("UPDATE sales_invoices SET extra_amount = ?, cash_account_id = ?, location_id = COALESCE(?, location_id), shift_id = ? WHERE id = ?")
+          .bind(extra, saleCashId, saleLocationId, shiftId, id)
           .run();
       }
       for (const p of planned) {
@@ -585,8 +603,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
           if (left <= 0) break;
           const amt = round2(Math.min(pay.amount, left));
           await tx
-            .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, created_by) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(id, customer?.id || null, pay.method, amt, todayIso(), user.id)
+            .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(id, customer?.id || null, pay.method, amt, todayIso(), user.id, shiftId)
             .run();
           left = round2(left - amt);
         }
@@ -596,8 +614,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
       }
       if (!hold && customer && surplus > 0 && !escrow) {
         const extraPay = await tx
-          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(null, customer.id, b.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id)
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(null, customer.id, b.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id, shiftId)
           .run();
         await tx.prepare("UPDATE customers SET current_balance = current_balance - ?, updated_at = datetime('now') WHERE id = ?").bind(surplus, customer.id).run();
         await postCollectionJournal(tx, {
@@ -606,7 +624,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
           amount: surplus,
           method: b.payment_method || "cash",
           date: todayIso(),
-          cashAccountId: b.cash_account_id || null,
+          cashAccountId: saleCashId,
           userId: user.id,
         });
       }
@@ -616,7 +634,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
       if (!hold && !escrow) {
         await postSaleJournal(
           tx,
-          { id, number: invNumber, date: todayIso(), total, paid, remaining, payment_method: b.payment_method, cost_total: costTotal, cash_account_id: b.cash_account_id || null },
+          { id, number: invNumber, date: todayIso(), total, paid, remaining, payment_method: b.payment_method, cost_total: costTotal, cash_account_id: saleCashId },
           user.id,
         );
       }
@@ -682,7 +700,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number }[];
   };
   if (row.status !== "held" && row.status !== "quote" && row.status !== "order") return c.json({ error: "not_held" }, 400);
-  const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string }));
+  const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }));
   const user = c.get("user");
   const wasReserved = row.status === "quote" || row.status === "order";
   let costTotal = 0;
@@ -706,6 +724,15 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     if (cred) return c.json({ error: cred }, 400);
   }
   if (surplus > 0 && !row.customer_id) return c.json({ error: "customer_required" }, 400);
+  let posShift = null as Awaited<ReturnType<typeof requirePosShift>>;
+  try {
+    posShift = await requirePosShift(c.env.DB, user);
+  } catch (e) {
+    if (isShiftErr(e)) return c.json({ error: (e as Error).message }, 403);
+    throw e;
+  }
+  const shiftId = posShift?.id || null;
+  const saleCashId = Number(b.cash_account_id || 0) || drawerCashForSale(posShift, b.payment_method || row.payment_method, row.cash_account_id);
   try {
     await c.env.DB.transaction(async (tx) => {
       costTotal = 0;
@@ -734,8 +761,8 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
         await maybeStockAlerts(tx, item.product_id);
       }
       await tx
-        .prepare("UPDATE sales_invoices SET status=?, delivery_status=?, paid=?, remaining=?, payment_method=?, cost_total=?, profit=?, held_at=NULL, completed_at=? WHERE id=?")
-        .bind(status, null, paid, remaining, b.payment_method || row.payment_method, costTotal, round2(row.total - costTotal), remaining <= 0 ? todayIso() : null, id)
+        .prepare("UPDATE sales_invoices SET status=?, delivery_status=?, paid=?, remaining=?, payment_method=?, cost_total=?, profit=?, held_at=NULL, completed_at=?, cash_account_id=COALESCE(?, cash_account_id), shift_id=COALESCE(?, shift_id) WHERE id=?")
+        .bind(status, null, paid, remaining, b.payment_method || row.payment_method, costTotal, round2(row.total - costTotal), remaining <= 0 ? todayIso() : null, saleCashId, shiftId, id)
         .run();
       if (paid > 0) {
         const pays = splitPays.length ? splitPays : [{ method: b.payment_method || row.payment_method || "cash", amount: paid }];
@@ -744,8 +771,8 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           if (left <= 0) break;
           const amt = round2(Math.min(pay.amount, left));
           await tx
-            .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, created_by) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(id, row.customer_id, pay.method, amt, todayIso(), user.id)
+            .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(id, row.customer_id, pay.method, amt, todayIso(), user.id, shiftId)
             .run();
           left = round2(left - amt);
         }
@@ -755,8 +782,8 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
       }
       if (row.customer_id && surplus > 0) {
         const extra = await tx
-          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(null, row.customer_id, b.payment_method || row.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id)
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(null, row.customer_id, b.payment_method || row.payment_method || "cash", surplus, todayIso(), "surplus wallet", user.id, shiftId)
           .run();
         await tx.prepare("UPDATE customers SET current_balance = current_balance - ?, updated_at = datetime('now') WHERE id = ?").bind(surplus, row.customer_id).run();
         await postCollectionJournal(tx, {
@@ -765,13 +792,13 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
           amount: surplus,
           method: b.payment_method || row.payment_method || "cash",
           date: todayIso(),
-          cashAccountId: row.cash_account_id || null,
+          cashAccountId: saleCashId,
           userId: user.id,
         });
       }
       await postSaleJournal(
         tx,
-        { id, number: row.number, date: todayIso(), total: row.total, paid, remaining, payment_method: b.payment_method || row.payment_method, cost_total: costTotal, cash_account_id: row.cash_account_id || null },
+        { id, number: row.number, date: todayIso(), total: row.total, paid, remaining, payment_method: b.payment_method || row.payment_method, cost_total: costTotal, cash_account_id: saleCashId },
         user.id,
       );
     });
@@ -876,15 +903,20 @@ salesRoutes.delete("/invoices/:id", requirePerm("sales.cancel"), async (c) => {
 
 salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) => {
   const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string }>();
+  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string; cash_account_id?: number }>();
   const inv = await c.env.DB.prepare("SELECT * FROM sales_invoices WHERE id = ?").bind(id).first<{
     remaining: number;
     paid: number;
     customer_id: number | null;
+    customer_name?: string | null;
     number: string;
+    status?: string | null;
     cash_account_id?: number | null;
   }>();
   if (!inv) return c.json({ error: "not_found" }, 404);
+  if (["cancelled", "void", "held", "quote", "order", "draft"].includes(String(inv.status || ""))) {
+    return c.json({ error: "cannot_pay" }, 400);
+  }
   let amount = round2(b.amount);
   if (amount <= 0) return c.json({ error: "invalid_amount" }, 400);
   const due = round2(inv.remaining);
@@ -895,16 +927,20 @@ salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) 
   amount = round2(invoiceTake + surplus);
   if (amount <= 0) return c.json({ error: "invalid_amount" }, 400);
   if (surplus > 0 && !inv.customer_id) return c.json({ error: "customer_required" }, 400);
+  const user = c.get("user");
+  const posShift = await attachOpenShift(c.env.DB, user.id);
+  const shiftId = posShift?.id || null;
+  const requestedCash = Number(b.cash_account_id || 0) || null;
+  const saleCashId = requestedCash || drawerCashForSale(posShift, b.method, inv.cash_account_id);
   const paid = round2(inv.paid + invoiceTake);
   const remaining = split.remaining;
-  const user = c.get("user");
   let payId = 0;
   try {
     await c.env.DB.transaction(async (tx) => {
       if (invoiceTake > 0) {
         const payIns = await tx
-          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(id, inv.customer_id, b.method || "cash", invoiceTake, todayIso(), b.notes || null, user.id)
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, inv.customer_id, b.method || "cash", invoiceTake, todayIso(), b.notes || null, user.id, shiftId)
           .run();
         payId = payIns.meta.last_row_id;
       }
@@ -914,8 +950,8 @@ salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) 
       }
       if (surplus > 0 && inv.customer_id) {
         const extra = await tx
-          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(null, inv.customer_id, b.method || "cash", surplus, todayIso(), "surplus wallet", user.id)
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(null, inv.customer_id, b.method || "cash", surplus, todayIso(), "surplus wallet", user.id, shiftId)
           .run();
         if (!payId) payId = extra.meta.last_row_id;
       }
@@ -924,7 +960,30 @@ salesRoutes.post("/invoices/:id/pay", requirePerm("payments.create"), async (c) 
         .prepare("UPDATE sales_invoices SET status = ?, completed_at = CASE WHEN ? = 'completed' THEN COALESCE(completed_at, datetime('now')) ELSE completed_at END WHERE id = ? AND type = 'normal' AND status NOT IN ('cancelled','fully_returned')")
         .bind(nextStatus, nextStatus, id)
         .run();
-      await postCollectionJournal(tx, { paymentId: payId, invoiceNumber: inv.number, amount, method: b.method, date: todayIso(), cashAccountId: inv.cash_account_id, userId: user.id });
+      const journalId = await postCollectionJournal(tx, {
+        paymentId: payId,
+        invoiceNumber: inv.number,
+        amount,
+        method: b.method,
+        date: todayIso(),
+        cashAccountId: saleCashId,
+        userId: user.id,
+      });
+      if (invoiceTake > 0 && saleCashId) {
+        await insertLinkedReceiptVoucher(tx, {
+          cashAccountId: saleCashId,
+          amount: invoiceTake,
+          date: todayIso(),
+          partyType: inv.customer_id ? "customer" : "other",
+          partyId: inv.customer_id,
+          partyName: inv.customer_name || null,
+          description: `تحصيل دفعة ${inv.number}`,
+          journalId,
+          invoiceId: id,
+          userId: user.id,
+          shiftId,
+        });
+      }
     });
   } catch (err) {
     if (isLedgerErr(err)) return ledgerFail(c);
@@ -963,13 +1022,21 @@ salesRoutes.post("/invoices/:id/returns", requirePerm("returns.create"), async (
   };
   if (!RETURNABLE_STATUSES.has(row.status)) return c.json({ error: "cannot_return" }, 400);
   const user = c.get("user");
+  let posShift = null as Awaited<ReturnType<typeof requirePosShift>>;
+  try {
+    posShift = await requirePosShift(c.env.DB, user);
+  } catch (e) {
+    if (isShiftErr(e)) return c.json({ error: (e as Error).message }, 403);
+    throw e;
+  }
+  const shiftId = posShift?.id || null;
   let result: { retId: number; number: string; retTotal: number };
   try {
     result = await c.env.DB.transaction(async (tx) => {
       const number = await nextNumber(tx, "return");
       const ret = await tx
-        .prepare("INSERT INTO sales_returns (number, invoice_id, customer_id, date, reason, status, total, created_by) VALUES (?, ?, ?, ?, ?, 'completed', 0, ?)")
-        .bind(number, id, row.customer_id, todayIso(), b.reason || null, user.id)
+        .prepare("INSERT INTO sales_returns (number, invoice_id, customer_id, date, reason, status, total, created_by, shift_id) VALUES (?, ?, ?, ?, ?, 'completed', 0, ?, ?)")
+        .bind(number, id, row.customer_id, todayIso(), b.reason || null, user.id, shiftId)
         .run();
       const retId = ret.meta.last_row_id;
       let retTotal = 0;
@@ -1050,8 +1117,8 @@ salesRoutes.post("/invoices/:id/returns", requirePerm("returns.create"), async (
       }
       if (settled.refund > 0) {
         await tx
-          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(id, row.customer_id, "refund", -settled.refund, todayIso(), `Refund ${number}`, user.id)
+          .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, row.customer_id, "refund", -settled.refund, todayIso(), `Refund ${number}`, user.id, shiftId)
           .run();
       }
       await postReturnJournal(tx, {

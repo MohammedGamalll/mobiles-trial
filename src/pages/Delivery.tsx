@@ -12,6 +12,7 @@ import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { ListPager, TablePager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
+import { StaffForm } from "../components/StaffForm";
 
 export function DeliveryBoard() {
   const { tr, lang, can, user, settings } = useApp();
@@ -264,7 +265,10 @@ export function DeliveryBoard() {
             </div>
           </ListGate>
           <TablePager page={agentPage} pageSize={agentSize} total={agents.length} disabled={agentsList.loading} onPage={setAgentPage} onPageSize={setAgentSize} />
-          <Modal open={open} title={form.id ? tr("edit") : tr("addCourier")} onClose={() => setOpen(false)}>
+          <Modal open={open} title={form.id ? tr("edit") : tr("addCourier")} onClose={() => setOpen(false)} wide>
+            {!form.id ? (
+              <StaffForm defaultKind="courier" onSaved={() => { setOpen(false); agentsList.reload(); }} onCancel={() => setOpen(false)} />
+            ) : (
             <div className="space-y-3">
               <Field label={tr("name")}><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
               <Field label={tr("code")}><input className={inputCls} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
@@ -286,12 +290,12 @@ export function DeliveryBoard() {
               <Field label={tr("area")}><input className={inputCls} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} /></Field>
               <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
               <Btn onClick={async () => {
-                if (form.id) await put(`/api/delivery/agents/${form.id}`, form);
-                else await post("/api/delivery/agents", form);
+                await put(`/api/delivery/agents/${form.id}`, form);
                 setOpen(false);
                 agentsList.reload();
               }}>{tr("save")}</Btn>
             </div>
+            )}
           </Modal>
           {dialog}
         </div>

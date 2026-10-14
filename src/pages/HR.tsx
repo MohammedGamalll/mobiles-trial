@@ -12,6 +12,7 @@ import { ActionBtns, useConfirm } from "../components/Confirm";
 import { formatDuration, getGps, haversineMeters } from "../lib/geo";
 import { ListPager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize } from "../hooks/usePagedRows";
+import { StaffForm } from "../components/StaffForm";
 
 export function EmployeesPage() {
   const { tr, lang, lookups, can } = useApp();
@@ -112,60 +113,63 @@ export function EmployeesPage() {
       </ListGate>
       <ListPager f={f} total={empTotal} disabled={list.loading} />
       <Modal open={open} title={form.id ? tr("edit") : tr("addEmployee")} onClose={() => setOpen(false)} wide>
-        {form.id ? (
-          <div className="detail-strip mb-4 grid gap-2 md:grid-cols-5">
-            <Stat label={tr("name")} value={form.name || "-"} />
-            <Stat label={tr("code")} value={form.code || "-"} />
-            <Stat label={tr("phone")} value={form.phone || "-"} />
-            <Stat label={tr("jobTitle")} value={form.job_title || "-"} />
-            <Stat label={tr("department")} value={form.department || "-"} />
-          </div>
-        ) : null}
-        <div className="grid gap-3 md:grid-cols-2">
-          {["code", "name", "phone", "job_title", "department", "national_id"].map((k) => (
-            <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>
-          ))}
-          <Field label={tr("hireDate")}><input className={inputCls} type="date" value={form.hire_date || ""} onChange={(e) => setForm({ ...form, hire_date: e.target.value })} /></Field>
-          <Field label={tr("workType")}>
-            <select className={inputCls} value={form.work_type} onChange={(e) => setForm({ ...form, work_type: e.target.value })}>
-              <option value="office">{tr("workOffice")}</option>
-              <option value="delivery">{tr("workDelivery")}</option>
-            </select>
-          </Field>
-          <Field label={tr("basicSalary")}><input className={inputCls} type="number" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: Number(e.target.value) })} /></Field>
-          <Field label={tr("allowances")}><input className={inputCls} type="number" value={form.allowances} onChange={(e) => setForm({ ...form, allowances: Number(e.target.value) })} /></Field>
-          <Field label={tr("status")}>
-            <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-              <option value="active">{tr("active")}</option>
-              <option value="inactive">{tr("inactive")}</option>
-            </select>
-          </Field>
-          <Field label={tr("linkedUser")}>
-            <select className={inputCls} value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value ? Number(e.target.value) : "" })}>
-              <option value="">-</option>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.username})</option>)}
-            </select>
-          </Field>
-          <Field label={tr("agent")}>
-            <select className={inputCls} value={form.delivery_agent_id} onChange={(e) => setForm({ ...form, delivery_agent_id: e.target.value ? Number(e.target.value) : "" })}>
-              <option value="">-</option>
-              {(lookups?.delivery_agents || []).map((a) => <option key={a.id} value={a.id}>{a.name} ({a.code})</option>)}
-            </select>
-          </Field>
-          <Field label={tr("shift")}>
-            <select className={inputCls} value={form.shift_id} onChange={(e) => setForm({ ...form, shift_id: e.target.value ? Number(e.target.value) : "" })}>
-              <option value="">-</option>
-              {shifts.map((s) => <option key={s.id} value={s.id}>{lang === "ar" ? s.name : (s.name_en || s.name)} {s.start_time}-{s.end_time}</option>)}
-            </select>
-          </Field>
-        </div>
-        <Btn className="mt-4" onClick={async () => {
-          const body = { ...form, user_id: form.user_id || null, delivery_agent_id: form.delivery_agent_id || null, shift_id: form.shift_id || null };
-          if (form.id) await put(`/api/hr/employees/${form.id}`, body);
-          else await post("/api/hr/employees", body);
-          setOpen(false);
-          list.reload();
-        }}>{tr("save")}</Btn>
+        {!form.id ? (
+          <StaffForm onSaved={() => { setOpen(false); list.reload(); }} onCancel={() => setOpen(false)} />
+        ) : (
+          <>
+            <div className="detail-strip mb-4 grid gap-2 md:grid-cols-5">
+              <Stat label={tr("name")} value={form.name || "-"} />
+              <Stat label={tr("code")} value={form.code || "-"} />
+              <Stat label={tr("phone")} value={form.phone || "-"} />
+              <Stat label={tr("jobTitle")} value={form.job_title || "-"} />
+              <Stat label={tr("department")} value={form.department || "-"} />
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {["code", "name", "phone", "job_title", "department", "national_id"].map((k) => (
+                <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>
+              ))}
+              <Field label={tr("hireDate")}><input className={inputCls} type="date" value={form.hire_date || ""} onChange={(e) => setForm({ ...form, hire_date: e.target.value })} /></Field>
+              <Field label={tr("workType")}>
+                <select className={inputCls} value={form.work_type} onChange={(e) => setForm({ ...form, work_type: e.target.value })}>
+                  <option value="office">{tr("workOffice")}</option>
+                  <option value="delivery">{tr("workDelivery")}</option>
+                </select>
+              </Field>
+              <Field label={tr("basicSalary")}><input className={inputCls} type="number" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: Number(e.target.value) })} /></Field>
+              <Field label={tr("allowances")}><input className={inputCls} type="number" value={form.allowances} onChange={(e) => setForm({ ...form, allowances: Number(e.target.value) })} /></Field>
+              <Field label={tr("status")}>
+                <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  <option value="active">{tr("active")}</option>
+                  <option value="inactive">{tr("inactive")}</option>
+                </select>
+              </Field>
+              <Field label={tr("linkedUser")}>
+                <select className={inputCls} value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value ? Number(e.target.value) : "" })}>
+                  <option value="">-</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.username})</option>)}
+                </select>
+              </Field>
+              <Field label={tr("agent")}>
+                <select className={inputCls} value={form.delivery_agent_id} onChange={(e) => setForm({ ...form, delivery_agent_id: e.target.value ? Number(e.target.value) : "" })}>
+                  <option value="">-</option>
+                  {(lookups?.delivery_agents || []).map((a) => <option key={a.id} value={a.id}>{a.name} ({a.code})</option>)}
+                </select>
+              </Field>
+              <Field label={tr("shift")}>
+                <select className={inputCls} value={form.shift_id} onChange={(e) => setForm({ ...form, shift_id: e.target.value ? Number(e.target.value) : "" })}>
+                  <option value="">-</option>
+                  {shifts.map((s) => <option key={s.id} value={s.id}>{lang === "ar" ? s.name : (s.name_en || s.name)} {s.start_time}-{s.end_time}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Btn className="mt-4" onClick={async () => {
+              const body = { ...form, user_id: form.user_id || null, delivery_agent_id: form.delivery_agent_id || null, shift_id: form.shift_id || null };
+              await put(`/api/hr/employees/${form.id}`, body);
+              setOpen(false);
+              list.reload();
+            }}>{tr("save")}</Btn>
+          </>
+        )}
       </Modal>
       {dialog}
     </div>
@@ -337,7 +341,8 @@ export function AttendancePage() {
 }
 
 export function PayrollPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
+  const cashAccounts = lookups?.cash_accounts || [];
   const f = useListQuery("payroll");
   const [runs, setRuns] = useState<any[]>([]);
   const [runTotal, setRunTotal] = useState(0);
@@ -345,6 +350,7 @@ export function PayrollPage() {
   const [detail, setDetail] = useState<any>(null);
   const [payouts, setPayouts] = useState<Record<number, string>>({});
   const [deducts, setDeducts] = useState<Record<number, string>>({});
+  const [cashAccountId, setCashAccountId] = useState("");
   const { confirm, dialog } = useConfirm();
 
   function slipDue(s: any) {
@@ -395,7 +401,7 @@ export function PayrollPage() {
 
   async function payRun(oneId?: number) {
     if (!detail?.run) return;
-    const body = { payouts: payoutList(detail.slips || [], oneId) };
+    const body = { payouts: payoutList(detail.slips || [], oneId), cash_account_id: Number(cashAccountId || cashAccounts[0]?.id || 0) || undefined };
     if (!body.payouts.length) return;
     await post(`/api/hr/payroll/${detail.run.id}/pay`, body);
     await list.reload();
@@ -459,7 +465,12 @@ export function PayrollPage() {
             <div className="flex items-center justify-between">
               <h2 className="font-black">{detail.run.month}</h2>
               {can("hr.payroll") && detail.run.status !== "paid" ? (
-                <Btn className="no-print" onClick={() => confirm(tr("paySalaries"), tr("deleteConfirm"), () => payRun())}>{tr("paySalaries")}</Btn>
+                <div className="no-print flex flex-wrap items-center gap-2">
+                  <select className={inputCls} value={cashAccountId || String(cashAccounts[0]?.id || "")} onChange={(e) => setCashAccountId(e.target.value)}>
+                    {cashAccounts.map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                  <Btn onClick={() => confirm(tr("paySalaries"), tr("deleteConfirm"), () => payRun())}>{tr("paySalaries")}</Btn>
+                </div>
               ) : null}
             </div>
             <div className="grid gap-3 md:grid-cols-5">
@@ -815,7 +826,8 @@ export function AdvancesPage() {
   const [emps, setEmps] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [otOpen, setOtOpen] = useState(false);
-  const [form, setForm] = useState({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [form, setForm] = useState({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", cash_account_id: "" });
+  const cashAccounts = lookups?.cash_accounts || [];
   const [ot, setOt] = useState({ employee_id: "", hours: 1, date: new Date().toISOString().slice(0, 10), notes: "" });
   const { confirmDelete, dialog } = useConfirm();
   const month = f.values.month || new Date().toISOString().slice(0, 7);
@@ -940,6 +952,11 @@ export function AdvancesPage() {
           <Field label={tr("amount")}><input className={inputCls} type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>
           <Field label={tr("date")}><input className={inputCls} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
           <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+          <Field label={tr("cashBox")}>
+            <select className={inputCls} value={form.cash_account_id || String(cashAccounts[0]?.id || "")} onChange={(e) => setForm({ ...form, cash_account_id: e.target.value })}>
+              {cashAccounts.map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </Field>
           <Btn onClick={async () => {
             await post("/api/hr/advances", {
               employee_id: form.employee_id ? Number(form.employee_id) : undefined,
@@ -948,9 +965,10 @@ export function AdvancesPage() {
               date: form.date,
               notes: form.notes,
               month,
+              cash_account_id: Number(form.cash_account_id || cashAccounts[0]?.id || 0) || undefined,
             });
             setOpen(false);
-            setForm({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "" });
+            setForm({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", cash_account_id: "" });
             list.reload();
           }}>{tr("save")}</Btn>
         </div>

@@ -40,10 +40,14 @@ import { CashAccountsPage, ChartPage, JournalPage, VouchersPage } from "./pages/
 import TrialBalance from "./pages/TrialBalance";
 import DailyReport from "./pages/DailyReport";
 import DailyReportClassic from "./pages/DailyReportClassic";
+import DailyFinance from "./pages/DailyFinance";
+import OtherRevenues from "./pages/OtherRevenues";
 import Partners from "./pages/Partners";
 import { SerialsPage, ChequesPage, InstallmentsPage } from "./pages/Sahl";
 import CourierDashboard from "./pages/CourierDashboard";
 import { SettingsPage } from "./pages/Settings";
+import PosShiftsPage from "./pages/PosShifts";
+import { PosShiftGuard } from "./components/PosShiftGuard";
 import PurchaseInvoiceForm from "./pages/PurchaseInvoiceForm";
 import { homePath } from "./lib/home";
 
@@ -63,7 +67,11 @@ function PermGuard({ perm, children }: { perm: string | string[]; children: Reac
 
 function POSGate() {
   const { uiLayout } = useApp();
-  return uiLayout === "classic_easy" ? <POSClassic /> : <POS />;
+  return (
+    <PosShiftGuard>
+      {uiLayout === "classic_easy" ? <POSClassic /> : <POS />}
+    </PosShiftGuard>
+  );
 }
 
 function ProductsGate() {
@@ -97,6 +105,7 @@ function AppRoutes() {
         <Route index element={user?.role_slug === "delivery" ? <Navigate to="/courier" replace /> : <Dashboard />} />
         <Route path="courier" element={<PermGuard perm={["delivery.mark", "delivery.view"]}><CourierDashboard /></PermGuard>} />
         <Route path="pos" element={<PermGuard perm="sales.create"><POSGate /></PermGuard>} />
+        <Route path="pos/shifts" element={<PermGuard perm={["sales.view", "reports.view", "sales.create"]}><PosShiftsPage /></PermGuard>} />
         <Route path="sales" element={<PermGuard perm="sales.view"><SalesList /></PermGuard>} />
         <Route path="sales/:id" element={<PermGuard perm="sales.view"><Invoice /></PermGuard>} />
         <Route path="delivery" element={<PermGuard perm="delivery.update"><DeliveryBoard /></PermGuard>} />
@@ -149,6 +158,8 @@ function AppRoutes() {
         <Route path="ledger/vouchers" element={<VouchersPage />} />
         <Route path="reports/trial-balance" element={<PermGuard perm={["reports.view", "ledger.view"]}><TrialBalance /></PermGuard>} />
         <Route path="reports/daily-movement" element={<PermGuard perm="reports.view"><DailyReportGate /></PermGuard>} />
+        <Route path="reports/daily-finance" element={<PermGuard perm="reports.view"><DailyFinance /></PermGuard>} />
+        <Route path="revenues" element={<PermGuard perm={["payments.create", "reports.view", "expenses.view"]}><OtherRevenues /></PermGuard>} />
         <Route path="partners" element={<PermGuard perm="partners.view"><Partners /></PermGuard>} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="users" element={<UsersPage />} />

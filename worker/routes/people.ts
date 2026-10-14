@@ -4,6 +4,7 @@ import { requirePerm } from "../lib/auth";
 import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql, sqlText } from "../lib/filters";
 import { postCollectionJournal, postOpeningPartyJournal } from "../lib/ledger";
 import { applyStandaloneReceipt, customerOpeningSigned, fxCurrency, fxRate, openingCreditAbs, supplierPayableEgp } from "../lib/party-money";
+import { createStaff, type StaffInput } from "../lib/staff";
 
 export const peopleRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -40,12 +41,25 @@ peopleRoutes.get("/customers", requirePerm("customers.view", "sales.create"), as
   }
   const whereSql = where.join(" AND ");
   const count = await c.env.DB.prepare(`SELECT COUNT(*) as n FROM customers WHERE ${whereSql}`).bind(...params).first<{ n: number }>();
-  const sums = await c.env.DB.prepare(`SELECT COALESCE(SUM(current_balance),0) as balance FROM customers WHERE ${whereSql}`).bind(...params).first<{ balance: number }>();
+  const sums = await c.env.DB
+    .prepare(
+      `SELECT COALESCE(SUM(current_balance),0) as balance,
+              COALESCE(SUM(CASE WHEN current_balance > 0 THEN current_balance ELSE 0 END),0) as credit_total
+       FROM customers WHERE ${whereSql}`,
+    )
+    .bind(...params)
+    .first<{ balance: number; credit_total: number }>();
   const { results } = await c.env.DB
     .prepare(`SELECT * FROM customers WHERE ${whereSql} ${sortSql(p.sort, CUSTOMER_SORT, "id DESC")} LIMIT ? OFFSET ?`)
     .bind(...params, pageSize, offset)
     .all();
-  return c.json({ data: results, total: count?.n || 0, page, pageSize, totals: { count: count?.n || 0, balance: sums?.balance || 0 } });
+  return c.json({
+    data: results,
+    total: count?.n || 0,
+    page,
+    pageSize,
+    totals: { count: count?.n || 0, balance: sums?.balance || 0, credit_total: sums?.credit_total || 0 },
+  });
 });
 
 peopleRoutes.get("/customers/:id", requirePerm("customers.view", "sales.create"), async (c) => {
@@ -55,6 +69,24 @@ peopleRoutes.get("/customers/:id", requirePerm("customers.view", "sales.create")
   const invoices = await c.env.DB.prepare("SELECT * FROM sales_invoices WHERE customer_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100").bind(id).all();
   const payments = await c.env.DB.prepare("SELECT * FROM payments WHERE customer_id = ? AND voided_at IS NULL ORDER BY id DESC LIMIT 100").bind(id).all();
   const returns = await c.env.DB.prepare("SELECT * FROM sales_returns WHERE customer_id = ? ORDER BY id DESC LIMIT 50").bind(id).all();
+  const returnItems = await c.env.DB
+    .prepare(
+      `SELECT sri.*, sr.number, sr.date, sr.total as return_total, si.number as invoice_number,
+              COALESCE(sii.sku, p.sku) as sku,
+              COALESCE(sii.product_name, p.name_ar) as product_name,
+              COALESCE(sii.unit_name, p.unit) as unit_name,
+              COALESCE(sri.unit_price, sii.unit_price) as unit_price,
+              COALESCE(sii.quantity, sri.qty) as original_qty
+       FROM sales_return_items sri
+       JOIN sales_returns sr ON sr.id = sri.return_id
+       LEFT JOIN sales_invoices si ON si.id = sr.invoice_id
+       LEFT JOIN sales_invoice_items sii ON sii.id = sri.invoice_item_id
+       LEFT JOIN products p ON p.id = sri.product_id
+       WHERE sr.customer_id = ?
+       ORDER BY sr.id DESC, sri.id`,
+    )
+    .bind(id)
+    .all();
   const itemRows = await c.env.DB
     .prepare(
       `SELECT si.date, si.number, sii.product_name, sii.quantity, sii.unit_price, sii.total
@@ -71,7 +103,17 @@ peopleRoutes.get("/customers/:id", requirePerm("customers.view", "sales.create")
     )
     .bind(id)
     .all();
-  return c.json({ data: { ...row, invoices: invoices.results, payments: payments.results, returns: returns.results, statement_items: itemRows.results, overdue: overdue.results } });
+  return c.json({
+    data: {
+      ...row,
+      invoices: invoices.results,
+      payments: payments.results,
+      returns: returns.results,
+      return_items: returnItems.results,
+      statement_items: itemRows.results,
+      overdue: overdue.results,
+    },
+  });
 });
 
 function normPhone(v: unknown) {
@@ -265,7 +307,7 @@ peopleRoutes.delete("/customers/:id", requirePerm("customers.edit"), async (c) =
 
 peopleRoutes.post("/customers/:id/payments", requirePerm("payments.create", "vouchers.create"), async (c) => {
   const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string }>();
+  const b = await c.req.json<{ amount: number; method?: string; notes?: string; surplus_mode?: string; cash_account_id?: number }>();
   const cust = await c.env.DB.prepare("SELECT id, name, current_balance FROM customers WHERE id = ? AND deleted_at IS NULL").bind(id).first<{
     id: number;
     name: string;
@@ -313,6 +355,7 @@ peopleRoutes.post("/customers/:id/payments", requirePerm("payments.create", "vou
       amount: plan.take,
       method: b.method || "cash",
       date: todayIso(),
+      cashAccountId: b.cash_account_id || null,
       userId: user.id,
     });
   });
@@ -441,6 +484,19 @@ peopleRoutes.get("/users", requirePerm("users.view"), async (c) => {
     .bind(...params)
     .all();
   return c.json({ data: results });
+});
+
+peopleRoutes.post("/staff", requirePerm("hr.manage", "users.manage", "settings.edit", "sales.create"), async (c) => {
+  const b = await c.req.json<StaffInput>();
+  try {
+    const created = await createStaff(c.env.DB, b, c.get("user"));
+    return c.json(created, 201);
+  } catch (e) {
+    const code = e instanceof Error ? e.message : "error";
+    if (code === "missing_name" || code === "invalid_kind") return c.json({ error: code }, 400);
+    if (code === "username_taken") return c.json({ error: code }, 409);
+    throw e;
+  }
 });
 
 peopleRoutes.post("/users", requirePerm("users.manage"), async (c) => {

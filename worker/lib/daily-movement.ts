@@ -3,7 +3,7 @@ import type { ListQ } from "./filters";
 import { round2, todayIso } from "./helpers";
 
 const DT_RE = /^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/;
-const LIVE_SALES = "si.status NOT IN ('cancelled','draft','held','quote','order')";
+const LIVE_SALES = "si.status NOT IN ('cancelled','void','draft','held','quote','order')";
 
 export type DailyRange = {
   from: string;
@@ -34,10 +34,10 @@ export type DailySalesLine = {
   customer: string;
 };
 
-export type DailyReturnLine = Omit<DailySalesLine, "cost" | "profit" | "invoice_id"> & { return_id?: number };
+export type DailyReturnLine = Omit<DailySalesLine, "invoice_id"> & { return_id?: number };
 
 export type DailyLineTotals = { qty: number; total: number; discount: number; net: number; cost: number; profit: number };
-export type DailyReturnTotals = { qty: number; total: number; discount: number; net: number };
+export type DailyReturnTotals = DailyLineTotals;
 
 export type DailySummary = {
   cash_sales: number;
@@ -260,7 +260,7 @@ export function mapSalesLine(
   const addition = round2(alloc.addition);
   const net = round2(total - alloc.headerShare + addition);
   const cost = round2((Number(row.unit_cost) || 0) * qty);
-  const profit = row.profit == null ? round2(net - cost) : round2(Number(row.profit) || 0);
+  const profit = round2(net - cost);
   return {
     invoice_id: row.invoice_id,
     date,
@@ -298,6 +298,7 @@ export function mapReturnLine(row: {
   extra_amount?: number | null;
   goods_base?: number | null;
   customer_name?: string | null;
+  unit_cost?: number | null;
 }): DailyReturnLine {
   const { date, time } = splitDateTime(row.created_at, row.date || "");
   const qty = Number(row.qty) || 0;
@@ -311,6 +312,8 @@ export function mapReturnLine(row: {
   const addition = round2(extraFull * ratio);
   const lineDisc = round2((Number(row.line_discount) || 0) * ratio);
   const total = round2(Number(row.total) || 0);
+  const net = round2(total - headerShare + addition);
+  const cost = round2((Number(row.unit_cost) || 0) * qty);
   return {
     return_id: row.return_id,
     date,
@@ -323,7 +326,9 @@ export function mapReturnLine(row: {
     total,
     discount: round2(lineDisc + headerShare),
     addition,
-    net: round2(total - headerShare + addition),
+    net,
+    cost,
+    profit: round2(net - cost),
     customer: row.customer_name || "",
   };
 }
@@ -369,12 +374,14 @@ export function sumSalesTotals(lines: Array<Pick<DailySalesLine, "qty" | "total"
   };
 }
 
-export function sumReturnTotals(lines: Array<Pick<DailyReturnLine, "qty" | "total" | "discount" | "net">>): DailyReturnTotals {
+export function sumReturnTotals(lines: Array<Pick<DailyReturnLine, "qty" | "total" | "discount" | "net" | "cost" | "profit">>): DailyLineTotals {
   return {
     qty: round2(lines.reduce((s, r) => s + (Number(r.qty) || 0), 0)),
     total: round2(lines.reduce((s, r) => s + (Number(r.total) || 0), 0)),
     discount: round2(lines.reduce((s, r) => s + (Number(r.discount) || 0), 0)),
     net: round2(lines.reduce((s, r) => s + (Number(r.net) || 0), 0)),
+    cost: round2(lines.reduce((s, r) => s + (Number(r.cost) || 0), 0)),
+    profit: round2(lines.reduce((s, r) => s + (Number(r.profit) || 0), 0)),
   };
 }
 
@@ -395,6 +402,7 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
   const userId = p.user_id ? Number(p.user_id) : 0;
   const treasuryId = p.treasury_id ? Number(p.treasury_id) : 0;
   const locationId = p.location_id ? Number(p.location_id) : 0;
+  const shiftId = p.shift_id ? Number(p.shift_id) : 0;
   const { fromDt, toDt } = range;
 
   const salesWhere = ["si.deleted_at IS NULL", LIVE_SALES, `${dtExpr("si")} >= ?`, `${dtExpr("si")} <= ?`];
@@ -411,6 +419,10 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     salesWhere.push("si.location_id = ?");
     salesBinds.push(locationId);
   }
+  if (shiftId) {
+    salesWhere.push("si.shift_id = ?");
+    salesBinds.push(shiftId);
+  }
 
   const retWhere = [`${dtExpr("sr")} >= ?`, `${dtExpr("sr")} <= ?`];
   const retBinds: (string | number)[] = [fromDt, toDt];
@@ -425,6 +437,10 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
   if (locationId) {
     retWhere.push("si.location_id = ?");
     retBinds.push(locationId);
+  }
+  if (shiftId) {
+    retWhere.push("sr.shift_id = ?");
+    retBinds.push(shiftId);
   }
 
   const purWhere = ["pi.deleted_at IS NULL", "pi.status IN ('approved','partially_returned')", `${dateMidnight("pi")} >= ?`, `${dateMidnight("pi")} <= ?`];
@@ -451,12 +467,20 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     vWhere.push("v.cash_account_id = ?");
     vBinds.push(treasuryId);
   }
+  if (shiftId) {
+    vWhere.push("v.shift_id = ?");
+    vBinds.push(shiftId);
+  }
 
   const payWhere = ["p.voided_at IS NULL", `${dateMidnight("p")} >= ?`, `${dateMidnight("p")} <= ?`];
   const payBinds: (string | number)[] = [fromDt, toDt];
   if (userId) {
     payWhere.push("p.created_by = ?");
     payBinds.push(userId);
+  }
+  if (shiftId) {
+    payWhere.push("p.shift_id = ?");
+    payBinds.push(shiftId);
   }
 
   const cashWhere = ["c.active = 1", `${dateMidnight("j")} < ?`];
@@ -526,6 +550,7 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
       `SELECT sr.id as return_id, sr.date, sr.created_at, si.customer_name, si.discount as header_discount, si.extra_amount,
               COALESCE(si.subtotal, si.total) as goods_base, sri.qty, sri.unit_price, sri.total,
               sii.quantity as orig_qty, sii.total as orig_total, sii.discount as line_discount,
+              sii.unit_cost,
               COALESCE(sii.sku, p.sku) as sku, COALESCE(sii.product_name, p.name_ar) as product_name,
               COALESCE(sii.unit_name, p.unit) as unit_name, p.unit as product_unit
        FROM sales_return_items sri
@@ -628,9 +653,12 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     sales_lines = sales_lines.concat(group.map((row, i) => mapSalesLine(row, shares[i] || { headerShare: 0, addition: 0 })));
   }
 
-  const return_lines = ((returnRows.results || []) as Parameters<typeof mapReturnLine>[0][]).map(mapReturnLine);
+  let return_lines = ((returnRows.results || []) as Parameters<typeof mapReturnLine>[0][]).map(mapReturnLine);
   const hideCost = Boolean(opts?.hideCost);
-  if (hideCost) sales_lines = sales_lines.map((l) => ({ ...l, cost: 0, profit: 0 }));
+  if (hideCost) {
+    sales_lines = sales_lines.map((l) => ({ ...l, cost: 0, profit: 0 }));
+    return_lines = return_lines.map((l) => ({ ...l, cost: 0, profit: 0 }));
+  }
 
   let voucherReceiptCount = 0;
   let voucherPaymentCount = 0;
@@ -660,8 +688,8 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
     summary,
     matrix,
     sales_lines: hideCost ? sales_lines.map(omitCostProfit) : sales_lines,
-    return_lines,
+    return_lines: hideCost ? return_lines.map(omitCostProfit) : return_lines,
     sales_totals: hideCost ? { ...sumSalesTotals(sales_lines), cost: 0, profit: 0 } : sumSalesTotals(sales_lines),
-    return_totals: sumReturnTotals(return_lines),
+    return_totals: hideCost ? { ...sumReturnTotals(return_lines), cost: 0, profit: 0 } : sumReturnTotals(return_lines),
   };
 }

@@ -198,6 +198,14 @@ export async function ensureAppSchema(db: AppDb) {
     ["sales_invoices", "returned_total REAL NOT NULL DEFAULT 0"],
     ["payments", "supplier_id INTEGER"],
     ["payments", "purchase_id INTEGER"],
+    ["sales_invoices", "shift_id INTEGER"],
+    ["sales_returns", "shift_id INTEGER"],
+    ["vouchers", "shift_id INTEGER"],
+    ["expenses", "shift_id INTEGER"],
+    ["payments", "shift_id INTEGER"],
+    ["vouchers", "invoice_id INTEGER"],
+    ["salary_advances", "cash_account_id INTEGER"],
+    ["salary_advances", "journal_id INTEGER"],
   ];
   for (const [table, def] of alters) await run(`ALTER TABLE ${table} ADD COLUMN ${def}`);
   await run(`INSERT OR IGNORE INTO payment_methods (code, name_ar, name_en, active, sort_order) VALUES
@@ -210,7 +218,9 @@ export async function ensureAppSchema(db: AppDb) {
     ('price_3_name', 'سعر 3'),
     ('price_4_name', 'سعر 4'),
     ('auto_backup_on_login', '1'),
-    ('usd_egp_rate', '50')`);
+    ('usd_egp_rate', '50'),
+    ('main_safe_id', '1'),
+    ('pos_require_shift', '1')`);
   await run(`CREATE TABLE IF NOT EXISTS demo_seed_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name TEXT NOT NULL,
@@ -312,6 +322,78 @@ export async function ensureAppSchema(db: AppDb) {
   await run("CREATE INDEX idx_batches_loc_product ON inventory_batches(location_id, product_id)");
   await run("CREATE INDEX idx_products_alive ON products(deleted_at, active, id)");
   await run("CREATE INDEX idx_invoices_location ON sales_invoices(location_id)");
+  await run(`CREATE TABLE IF NOT EXISTS pos_shifts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    cash_account_id INTEGER NOT NULL,
+    opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+    closed_at TEXT,
+    opening_cash_balance REAL NOT NULL DEFAULT 0,
+    expected_cash_balance REAL,
+    actual_cash_balance REAL,
+    variance REAL,
+    leave_float REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open',
+    close_journal_id INTEGER,
+    variance_journal_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run("CREATE INDEX idx_pos_shifts_user_open ON pos_shifts(user_id, status)");
+  await run("CREATE INDEX idx_pos_shifts_drawer_open ON pos_shifts(cash_account_id, status)");
+  await run("CREATE INDEX idx_sales_shift ON sales_invoices(shift_id)");
+  await run("CREATE INDEX idx_returns_shift ON sales_returns(shift_id)");
+  await run("CREATE INDEX idx_vouchers_shift ON vouchers(shift_id)");
+  await run("CREATE INDEX idx_expenses_shift ON expenses(shift_id)");
+  await run("CREATE INDEX idx_payments_shift ON payments(shift_id)");
+  await run(`INSERT OR IGNORE INTO ledger_accounts (code, name_ar, name_en, type) VALUES
+    ('4210', 'زيادة صندوق', 'Cash overage', 'revenue'),
+    ('5215', 'عجز صندوق', 'Cash shortage', 'expense'),
+    ('1101', 'الخزنة', 'Safe cash', 'asset')`);
+  await run(`INSERT INTO cash_accounts (kind, name, name_en, account_id, opening_balance, current_balance, active)
+    SELECT 'cash', 'الصندوق الرئيسي', 'Main cash', la.id, 0, 0, 1
+    FROM ledger_accounts la
+    WHERE la.code = '1100'
+      AND NOT EXISTS (
+        SELECT 1 FROM cash_accounts c
+        WHERE c.name IN ('الصندوق الرئيسي') OR c.name_en IN ('Main cash', 'Main Fund')
+      )
+    LIMIT 1`);
+  await run(`INSERT INTO cash_accounts (kind, name, name_en, account_id, opening_balance, current_balance, active)
+    SELECT 'cash', 'الخزنه', 'Safe', la.id, 0, 0, 1
+    FROM ledger_accounts la
+    WHERE la.code = '1101'
+      AND NOT EXISTS (
+        SELECT 1 FROM cash_accounts c
+        WHERE c.name IN ('الخزنه', 'الخزنة') OR c.name_en IN ('Safe', 'The Safe')
+      )
+    LIMIT 1`);
+  await run(`CREATE TABLE IF NOT EXISTS revenue_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name_ar TEXT NOT NULL,
+    name_en TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS other_revenues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    cash_account_id INTEGER NOT NULL,
+    category_id INTEGER,
+    category TEXT,
+    notes TEXT,
+    journal_id INTEGER,
+    shift_id INTEGER,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    voided_at TEXT
+  )`);
+  await run("CREATE INDEX idx_other_revenues_date ON other_revenues(date)");
+  await run("CREATE INDEX idx_vouchers_invoice ON vouchers(invoice_id)");
+  await run(`INSERT OR IGNORE INTO revenue_categories (id, name_ar, name_en, active) VALUES
+    (1, 'إيجار معرّض', 'Display rent', 1),
+    (2, 'رسوم خدمات', 'Service fees', 1),
+    (3, 'تسوية', 'Settlement', 1),
+    (4, 'أخرى', 'Other', 1)`);
   try {
     const live = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NULL").first<{ n: number }>();
     const dead = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NOT NULL").first<{ n: number }>();

@@ -5,6 +5,7 @@ import { csvBody } from "../lib/csv";
 import { reconcile } from "../lib/reconcile";
 import { loadTrialBalance, splitClosingSides } from "../lib/trial-balance";
 import { loadDailyMovement } from "../lib/daily-movement";
+import { loadDailyFinance } from "../lib/daily-finance";
 import { applyDate, applyEq, applyInvoiceListFilters, applyRange, applySearch, listParams, resolveDates, sqlText } from "../lib/filters";
 import { listFilteredProducts } from "../lib/product-query";
 import { productToImportCells, productsImportWorkbook } from "../lib/product-import";
@@ -348,6 +349,11 @@ reportRoutes.get("/daily-movement", requirePerm("reports.view"), async (c) => {
   const user = c.get("user");
   const hideCost = user.role_slug !== "admin" && !user.permissions.includes("costs.view");
   const data = await loadDailyMovement(c.env.DB, listParams(new URL(c.req.url)), { hideCost });
+  return c.json(data);
+});
+
+reportRoutes.get("/daily-finance", requirePerm("reports.view"), async (c) => {
+  const data = await loadDailyFinance(c.env.DB, listParams(new URL(c.req.url)));
   return c.json(data);
 });
 

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { audit, nextNumber, paginate, round2, todayIso, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { cashByKind, postJournal, reverseJournal } from "../lib/ledger";
+import { attachOpenShift } from "../lib/pos-shifts";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
 
 export const ledgerRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
@@ -252,12 +253,13 @@ ledgerRoutes.post("/vouchers", requirePerm("vouchers.create", "ledger.manage", "
             { account_id: cash.account_id, credit: b.amount },
           ],
   });
+  const shift = await attachOpenShift(c.env.DB, c.get("user").id);
   const r = await c.env.DB
     .prepare(
-      `INSERT INTO vouchers (number, type, date, cash_account_id, party_type, party_id, party_name, amount, method, description, journal_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO vouchers (number, type, date, cash_account_id, party_type, party_id, party_name, amount, method, description, journal_id, created_by, shift_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(number, b.type, date, cash.id, b.party_type || null, b.party_id || null, partyName, b.amount, b.type === "receipt" ? "in" : "out", b.description || null, journalId, c.get("user").id)
+    .bind(number, b.type, date, cash.id, b.party_type || null, b.party_id || null, partyName, b.amount, b.type === "receipt" ? "in" : "out", b.description || null, journalId, c.get("user").id, shift?.id || null)
     .run();
   await c.env.DB.prepare("UPDATE journal_entries SET source_id = ? WHERE id = ?").bind(r.meta.last_row_id, journalId).run();
   if (b.party_type === "supplier" && b.party_id && b.type !== "receipt") {

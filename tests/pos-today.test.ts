@@ -4,6 +4,7 @@ import { numAgg, parkedInvoiceSql } from "../worker/lib/pos-today.ts";
 
 test("parked invoice SQL excludes held quotes and orders", () => {
   const sql = parkedInvoiceSql("si.status");
+  assert.match(sql, /void/);
   assert.match(sql, /held/);
   assert.match(sql, /quote/);
   assert.match(sql, /pending_delivery/);

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { audit, paginate, todayIso, type AppBindings, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
-import { postExpenseJournal, reverseJournal, tryLedger } from "../lib/ledger";
+import { postExpenseJournal, postOtherRevenueJournal, reverseJournal, tryLedger } from "../lib/ledger";
+import { attachOpenShift } from "../lib/pos-shifts";
 import { applyDate, applyEq, applyRange, applySearch, listParams, sqlText } from "../lib/filters";
 
 export const financeRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
@@ -53,11 +54,12 @@ financeRoutes.post("/expenses", requirePerm("expenses.create"), async (c) => {
   if (nextDue) nextDue.setDate(nextDue.getDate() + days);
   const amount = Number(b.amount || 0);
   if (!(amount > 0) || !b.category_id) return c.json({ error: "missing_fields" }, 400);
+  const shift = await attachOpenShift(c.env.DB, c.get("user").id);
   try {
     const id = await c.env.DB.transaction(async (tx) => {
       const r = await tx
-        .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id, cost_center, recurring, recur_every_days, next_due, cash_account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(b.category_id, amount, date, b.description || null, c.get("user").id, b.cost_center || null, b.recurring ? 1 : 0, days || null, nextDue ? nextDue.toISOString().slice(0, 10) : null, b.cash_account_id || null)
+        .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id, cost_center, recurring, recur_every_days, next_due, cash_account_id, shift_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(b.category_id, amount, date, b.description || null, c.get("user").id, b.cost_center || null, b.recurring ? 1 : 0, days || null, nextDue ? nextDue.toISOString().slice(0, 10) : null, b.cash_account_id || null, shift?.id || null)
         .run();
       await postExpenseJournal(tx, {
         id: r.meta.last_row_id,
@@ -152,5 +154,103 @@ financeRoutes.delete("/payments/:id", requirePerm("payments.void", "payments.cre
   const id = Number(c.req.param("id"));
   await c.env.DB.prepare("UPDATE payments SET voided_at = datetime('now') WHERE id = ?").bind(id).run();
   await audit(c.env.DB, c.get("user"), "void_payment", "payment", id, "void");
+  return c.json({ ok: true });
+});
+
+financeRoutes.get("/revenue-categories", requirePerm("payments.create", "reports.view", "expenses.view"), async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT * FROM revenue_categories WHERE active = 1 ORDER BY id").all();
+  return c.json({ data: results });
+});
+
+financeRoutes.get("/revenues", requirePerm("payments.create", "reports.view", "expenses.view"), async (c) => {
+  const url = new URL(c.req.url);
+  const p = listParams(url);
+  const { page, pageSize, offset } = paginate(url);
+  const where = ["r.voided_at IS NULL"];
+  const params: (string | number)[] = [];
+  applyDate(where, params, "r.date", p);
+  applyEq(where, params, "r.cash_account_id", p.cash_account_id, true);
+  applySearch(where, params, p.q, ["r.notes", "r.category", "IFNULL(rc.name_ar,'')", "IFNULL(rc.name_en,'')"]);
+  const whereSql = where.join(" AND ");
+  const count = await c.env.DB
+    .prepare(`SELECT COUNT(*) as n FROM other_revenues r LEFT JOIN revenue_categories rc ON rc.id = r.category_id WHERE ${whereSql}`)
+    .bind(...params)
+    .first<{ n: number }>();
+  const sums = await c.env.DB
+    .prepare(`SELECT COALESCE(SUM(r.amount),0) as total FROM other_revenues r LEFT JOIN revenue_categories rc ON rc.id = r.category_id WHERE ${whereSql}`)
+    .bind(...params)
+    .first<{ total: number }>();
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT r.*, rc.name_ar as category_ar, rc.name_en as category_en, c.name as cash_name
+       FROM other_revenues r
+       LEFT JOIN revenue_categories rc ON rc.id = r.category_id
+       LEFT JOIN cash_accounts c ON c.id = r.cash_account_id
+       WHERE ${whereSql}
+       ORDER BY r.date DESC, r.id DESC LIMIT ? OFFSET ?`,
+    )
+    .bind(...params, pageSize, offset)
+    .all();
+  return c.json({ data: results, total: count?.n || 0, page, pageSize, totals: { count: count?.n || 0, total: sums?.total || 0 } });
+});
+
+financeRoutes.post("/revenues", requirePerm("payments.create"), async (c) => {
+  const b = await c.req.json<{
+    amount: number;
+    cash_account_id: number;
+    category_id?: number;
+    category?: string;
+    notes?: string;
+    date?: string;
+  }>();
+  const amount = Number(b.amount || 0);
+  const cashAccountId = Number(b.cash_account_id || 0);
+  if (!(amount > 0) || !cashAccountId) return c.json({ error: "missing_fields" }, 400);
+  const date = b.date || todayIso();
+  const shift = await attachOpenShift(c.env.DB, c.get("user").id);
+  let category = (b.category || "").trim();
+  if (b.category_id) {
+    const cat = await c.env.DB.prepare("SELECT name_ar FROM revenue_categories WHERE id = ?").bind(b.category_id).first<{ name_ar: string }>();
+    category = category || cat?.name_ar || "";
+  }
+  try {
+    const id = await c.env.DB.transaction(async (tx) => {
+      const r = await tx
+        .prepare(
+          `INSERT INTO other_revenues (date, amount, cash_account_id, category_id, category, notes, shift_id, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(date, amount, cashAccountId, b.category_id || null, category || null, b.notes || null, shift?.id || null, c.get("user").id)
+        .run();
+      const journalId = await postOtherRevenueJournal(tx, {
+        id: r.meta.last_row_id,
+        amount,
+        date,
+        description: category ? `إيراد متنوع — ${category}` : b.notes || `إيراد متنوع #${r.meta.last_row_id}`,
+        cashAccountId,
+        userId: c.get("user").id,
+      });
+      if (journalId) {
+        await tx.prepare("UPDATE other_revenues SET journal_id = ? WHERE id = ?").bind(journalId, r.meta.last_row_id).run();
+      }
+      return r.meta.last_row_id;
+    });
+    await audit(c.env.DB, c.get("user"), "other_revenue", "other_revenue", id, `${amount}`);
+    return c.json({ id }, 201);
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    if (msg === "ledger" || msg === "unbalanced_journal") return c.json({ error: "ledger" }, 400);
+    throw e;
+  }
+});
+
+financeRoutes.post("/revenues/:id/void", requirePerm("payments.create"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const row = await c.env.DB.prepare("SELECT id, voided_at FROM other_revenues WHERE id = ?").bind(id).first<{ id: number; voided_at: string | null }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.voided_at) return c.json({ error: "already_cancelled" }, 400);
+  await reverseJournal(c.env.DB, "other_revenue", id, c.get("user").id);
+  await c.env.DB.prepare("UPDATE other_revenues SET voided_at = datetime('now') WHERE id = ?").bind(id).run();
+  await audit(c.env.DB, c.get("user"), "void_other_revenue", "other_revenue", id, "void");
   return c.json({ ok: true });
 });

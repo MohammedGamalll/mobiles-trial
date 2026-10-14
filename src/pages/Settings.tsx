@@ -7,6 +7,7 @@ import { Btn, Field, Modal, PageLoading, PrintLetterhead, Switch, inputCls } fro
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { authHeaders } from "../lib/session";
 import { parseMapsCoords, looksLikeMapsUrl, isShortMapsUrl, formatMapsCoord } from "../lib/maps";
+import { StaffForm } from "../components/StaffForm";
 
 const OsmMap = lazy(() => import("../components/OsmMap").then((m) => ({ default: m.OsmMap })));
 
@@ -176,7 +177,10 @@ function AccountPanel() {
               />,
             ])}
           />
-          <Modal open={open} title={form.id ? tr("edit") : tr("add")} onClose={() => setOpen(false)}>
+          <Modal open={open} title={form.id ? tr("edit") : tr("addEmployee")} onClose={() => setOpen(false)} wide>
+            {!form.id ? (
+              <StaffForm onSaved={() => { setOpen(false); setAccMsg(tr("staffCreated")); void loadAccounts(); }} onCancel={() => setOpen(false)} />
+            ) : (
             <div className="grid gap-3">
               <Field label={tr("username")}>
                 <input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
@@ -223,6 +227,7 @@ function AccountPanel() {
                 }
               }}>{tr("save")}</Btn>
             </div>
+            )}
           </Modal>
         </Card>
       ) : null}

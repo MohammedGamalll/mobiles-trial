@@ -7,6 +7,7 @@ export type PaymentModalResult = {
   unpaid: boolean;
   paid: number;
   surplus_mode: "wallet" | "ignore";
+  cash_account_id: number | null;
 };
 
 export type PaymentSummary = {
@@ -29,6 +30,8 @@ export function PaymentModal({
   due,
   debt,
   summary,
+  requireTreasury = true,
+  defaultCashAccountId,
   onClose,
   onSubmit,
 }: {
@@ -37,25 +40,34 @@ export function PaymentModal({
   due: number;
   debt?: number;
   summary?: PaymentSummary;
+  requireTreasury?: boolean;
+  defaultCashAccountId?: number | null;
   onClose: () => void;
   onSubmit: (r: PaymentModalResult) => void | Promise<void>;
 }) {
-  const { tr, lang } = useApp();
+  const { tr, lang, lookups } = useApp();
+  const cashAccounts = lookups?.cash_accounts || [];
   const cap = Number(due > 0 ? due : debt || 0);
+  const fallbackCashId = Number(defaultCashAccountId || cashAccounts[0]?.id || 0) || 0;
   const [unpaid, setUnpaid] = useState(false);
   const [paid, setPaid] = useState(String(cap || 0));
   const [surplusMode, setSurplusMode] = useState<"wallet" | "ignore">("wallet");
+  const [cashAccountId, setCashAccountId] = useState(String(fallbackCashId || ""));
+  const [err, setErr] = useState("");
   useEffect(() => {
     if (!open) return;
     setUnpaid(false);
     setPaid(String(cap || 0));
     setSurplusMode("wallet");
-  }, [open, cap]);
+    setCashAccountId(String(fallbackCashId || ""));
+    setErr("");
+  }, [open, cap, fallbackCashId]);
   const amt = Number(paid || 0);
   const take = unpaid ? 0 : Math.min(amt, cap);
   const extra = unpaid ? 0 : Math.max(0, amt - cap);
   const nextRemaining = Math.max(0, cap - take);
   const showSurplus = !unpaid && extra > 0.001 && cap >= 0;
+  const showTreasury = requireTreasury && !unpaid;
   const lines = [
     summary?.number ? [tr("invoiceNo"), summary.number] : null,
     summary?.party ? [tr("name"), summary.party] : null,
@@ -100,6 +112,16 @@ export function PaymentModal({
           <input className={inputCls} type="text" inputMode="decimal" value={paid} onChange={(e) => setPaid(e.target.value)} />
         </Field>
       )}
+      {showTreasury ? (
+        <Field label={tr("cashBox")}>
+          <select className={inputCls} value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value)}>
+            <option value="">{tr("cashBox")}</option>
+            {cashAccounts.map((a: { id: number; name: string }) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
       {!unpaid ? (
         <div className="mb-3 grid grid-cols-2 gap-2 text-sm font-bold">
           <div>{tr("paidAmount")}: {money(take, lang)}</div>
@@ -119,9 +141,17 @@ export function PaymentModal({
           </label>
         </Field>
       ) : null}
+      {err ? <div className="mb-2 text-sm font-bold text-rose-600">{err}</div> : null}
       <Btn
         className="mt-3"
-        onClick={() => onSubmit({ unpaid, paid: unpaid ? 0 : amt, surplus_mode: showSurplus ? surplusMode : "wallet" })}
+        onClick={() => {
+          const cashId = Number(cashAccountId || 0) || null;
+          if (showTreasury && !cashId) {
+            setErr(tr("errTreasuryRequired"));
+            return;
+          }
+          void onSubmit({ unpaid, paid: unpaid ? 0 : amt, surplus_mode: showSurplus ? surplusMode : "wallet", cash_account_id: cashId });
+        }}
       >
         {tr("save")}
       </Btn>

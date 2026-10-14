@@ -6,7 +6,7 @@ import { apiMessage } from "../lib/errors";
 import { Btn, ErrorNote, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { useConfirm } from "../components/Confirm";
-import { posExchangePath } from "../lib/format";
+import { money, posExchangePath } from "../lib/format";
 import { rememberResumeInvoice } from "../hooks/usePOSLogic";
 import { PaymentModal } from "../components/PaymentModal";
 
@@ -95,9 +95,9 @@ export default function Invoice() {
         ) : null}
       </div>
 
-      {can("payments.create") && Number(inv.remaining) > 0 ? (
+          {can("payments.create") && Number(inv.remaining) > 0 && !["cancelled", "void", "held", "quote", "order"].includes(inv.status) ? (
         <div className="no-print flex items-end gap-2 rounded-2xl bg-white p-4">
-          <Btn onClick={() => setCollectOpen(true)}>{tr("payments")}</Btn>
+          <Btn onClick={() => setCollectOpen(true)}>{tr("payInstallment")}</Btn>
         </div>
       ) : null}
 
@@ -142,7 +142,7 @@ export default function Invoice() {
       </Modal>
       <PaymentModal
         open={collectOpen}
-        title={tr("paymentModal")}
+        title={tr("payInstallment")}
         due={Number(inv.remaining) || 0}
         summary={{
           number: inv.number,
@@ -164,7 +164,7 @@ export default function Invoice() {
               setCollectOpen(false);
               return;
             }
-            await post(`/api/invoices/${id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode });
+            await post(`/api/invoices/${id}/pay`, { amount: r.paid, method: "cash", surplus_mode: r.surplus_mode, cash_account_id: r.cash_account_id });
             setCollectOpen(false);
             reload();
           } catch (e) {
@@ -195,6 +195,7 @@ export default function Invoice() {
               unpaid: r.unpaid,
               payment_method: r.unpaid ? "credit" : "cash",
               surplus_mode: r.surplus_mode,
+              cash_account_id: r.cash_account_id,
             });
             setPayOpen(false);
             reload();
@@ -209,11 +210,20 @@ export default function Invoice() {
 }
 
 export function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () => void; onExchange?: () => void }) {
-  const { tr } = useApp();
+  const { tr, lang } = useApp();
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [items, setItems] = useState(inv.items.map((i: any) => ({ invoice_item_id: i.id, qty: 0, max: Math.max(0, Number(i.quantity || 0) - Number(i.returned_qty || 0)), name: i.product_name })));
+  const [items, setItems] = useState(inv.items.map((i: any) => ({
+    invoice_item_id: i.id,
+    qty: 0,
+    max: Math.max(0, Number(i.quantity || 0) - Number(i.returned_qty || 0)),
+    name: i.product_name,
+    sku: i.sku || i.product_sku || "",
+    unit: i.unit_name || "",
+    price: Number(i.unit_price || 0),
+    quantity: Number(i.quantity || 0),
+  })));
   async function send(exchange = false) {
     try {
       setErr("");
@@ -238,15 +248,37 @@ export function ReturnForm({ inv, onDone, onExchange }: { inv: any; onDone: () =
   }
   return (
     <div className="space-y-3">
-      {items.map((i: any) => (
-        <div key={i.invoice_item_id} className="flex items-center justify-between gap-2">
-          <span>{i.name}</span>
-          <input className={`${inputCls} w-24`} type="number" min={0} max={i.max} value={i.qty} onChange={(e) => {
-            const qty = Math.max(0, Math.min(i.max, Number(e.target.value) || 0));
-            setItems(items.map((x: any) => (x.invoice_item_id === i.invoice_item_id ? { ...x, qty } : x)));
-          }} />
-        </div>
-      ))}
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="bg-[var(--surface-2)] text-start">
+              <th className="p-2">{tr("itemName")}</th>
+              <th className="p-2">{tr("sku")}</th>
+              <th className="p-2">{tr("unit")}</th>
+              <th className="p-2">{tr("qty")}</th>
+              <th className="p-2">{tr("sellingPrice")}</th>
+              <th className="p-2">{tr("returnCreate")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((i: any) => (
+              <tr key={i.invoice_item_id}>
+                <td className="p-2 font-bold">{i.name}</td>
+                <td className="p-2">{i.sku || "—"}</td>
+                <td className="p-2">{i.unit || "—"}</td>
+                <td className="p-2">{i.quantity}</td>
+                <td className="p-2">{money(i.price, lang)}</td>
+                <td className="p-2">
+                  <input className={`${inputCls} w-24`} type="number" min={0} max={i.max} value={i.qty} onChange={(e) => {
+                    const qty = Math.max(0, Math.min(i.max, Number(e.target.value) || 0));
+                    setItems(items.map((x: any) => (x.invoice_item_id === i.invoice_item_id ? { ...x, qty } : x)));
+                  }} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <input className={inputCls} placeholder={tr("reason")} value={reason} onChange={(e) => setReason(e.target.value)} />
       {err ? <div className="text-sm text-rose-600">{err}</div> : null}
       <div className="flex gap-2">

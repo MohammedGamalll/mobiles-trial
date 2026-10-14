@@ -17,6 +17,8 @@ const pages: { to: string; key: Msg; perm: string }[] = [
   { to: "/purchases", key: "purchases", perm: "purchases.view" },
   { to: "/expenses", key: "expenses", perm: "expenses.view" },
   { to: "/reports", key: "reports", perm: "reports.view" },
+  { to: "/reports/daily-finance", key: "dailyFinance", perm: "reports.view" },
+  { to: "/revenues", key: "otherRevenues", perm: "payments.create" },
   { to: "/serials", key: "serials", perm: "serials.manage" },
   { to: "/cheques", key: "cheques", perm: "cheques.manage" },
   { to: "/installments", key: "installments", perm: "installments.manage" },

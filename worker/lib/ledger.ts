@@ -274,11 +274,12 @@ export async function postCollectionJournal(
   db: AppDb,
   opts: { paymentId: number; invoiceNumber: string; amount: number; method?: string; date: string; cashAccountId?: number | null; userId?: number | null },
 ) {
-  if (await existingJournal(db, "payment", opts.paymentId)) return;
+  const existing = await existingJournal(db, "payment", opts.paymentId);
+  if (existing) return existing.id;
   const ar = await accountByCode(db, "1200");
   const cash = await cashAccountFor(db, opts.method, opts.cashAccountId);
   if (!ar || !cash) throw new Error("ledger");
-  await postJournal(db, {
+  return postJournal(db, {
     date: opts.date,
     description: `تحصيل ${opts.invoiceNumber}`,
     source: "payment",
@@ -293,11 +294,11 @@ export async function postCollectionJournal(
 
 export async function postSupplierPaymentJournal(
   db: AppDb,
-  opts: { paymentId: number; invoiceNumber: string; amount: number; method?: string; date: string; userId?: number | null },
+  opts: { paymentId: number; invoiceNumber: string; amount: number; method?: string; date: string; cashAccountId?: number | null; userId?: number | null },
 ) {
   if (await existingJournal(db, "supplier_payment", opts.paymentId)) return;
   const ap = await accountByCode(db, "2100");
-  const cash = await cashAccountFor(db, opts.method);
+  const cash = await cashAccountFor(db, opts.method, opts.cashAccountId);
   if (!ap || !cash) throw new Error("ledger");
   await postJournal(db, {
     date: opts.date,
@@ -307,6 +308,90 @@ export async function postSupplierPaymentJournal(
     userId: opts.userId,
     lines: [
       { account_id: ap.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
+export async function insertLinkedReceiptVoucher(
+  db: AppDb,
+  opts: {
+    cashAccountId: number;
+    amount: number;
+    date: string;
+    partyType?: string | null;
+    partyId?: number | null;
+    partyName?: string | null;
+    description: string;
+    journalId?: number | null;
+    invoiceId?: number | null;
+    userId?: number | null;
+    shiftId?: number | null;
+  },
+) {
+  const cashId = Number(opts.cashAccountId || 0);
+  if (!cashId || opts.amount <= 0) return null;
+  const number = await nextNumber(db, "voucher");
+  const r = await db
+    .prepare(
+      `INSERT INTO vouchers (number, type, date, cash_account_id, party_type, party_id, party_name, amount, method, description, journal_id, created_by, shift_id, invoice_id)
+       VALUES (?, 'receipt', ?, ?, ?, ?, ?, ?, 'in', ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      number,
+      opts.date,
+      cashId,
+      opts.partyType || null,
+      opts.partyId || null,
+      opts.partyName || null,
+      round2(opts.amount),
+      opts.description,
+      opts.journalId || null,
+      opts.userId || null,
+      opts.shiftId || null,
+      opts.invoiceId || null,
+    )
+    .run();
+  return { id: r.meta.last_row_id, number };
+}
+
+export async function postOtherRevenueJournal(
+  db: AppDb,
+  opts: { id: number; amount: number; date: string; description?: string | null; cashAccountId?: number | null; userId?: number | null },
+) {
+  if (await existingJournal(db, "other_revenue", opts.id)) return;
+  const income = await accountByCode(db, "4200");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!income || !cash || opts.amount <= 0) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: opts.description || `إيراد متنوع #${opts.id}`,
+    source: "other_revenue",
+    sourceId: opts.id,
+    userId: opts.userId,
+    lines: [
+      { account_id: cash.account_id, debit: opts.amount },
+      { account_id: income.id, credit: opts.amount },
+    ],
+  });
+}
+
+export async function postAdvanceJournal(
+  db: AppDb,
+  opts: { id: number; amount: number; date: string; description?: string | null; cashAccountId?: number | null; userId?: number | null },
+) {
+  if (await existingJournal(db, "advance", opts.id)) return;
+  const sal = await accountByCode(db, "5300");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!sal || !cash || opts.amount <= 0) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: opts.description || `سلفة #${opts.id}`,
+    source: "advance",
+    sourceId: opts.id,
+    userId: opts.userId,
+    lines: [
+      { account_id: sal.id, debit: opts.amount },
       { account_id: cash.account_id, credit: opts.amount },
     ],
   });

@@ -26,7 +26,7 @@ type SalesLine = {
   customer: string;
 };
 
-type ReturnLine = Omit<SalesLine, "cost" | "profit">;
+type ReturnLine = SalesLine;
 
 type Summary = {
   cash_sales: number;
@@ -53,7 +53,7 @@ type Report = {
   sales_lines: SalesLine[];
   return_lines: ReturnLine[];
   sales_totals: { qty: number; total: number; discount: number; net: number; cost: number; profit: number };
-  return_totals: { qty: number; total: number; discount: number; net: number };
+  return_totals: { qty: number; total: number; discount: number; net: number; cost?: number; profit?: number };
 };
 
 type Tab = "summary" | "sales" | "returns";
@@ -374,6 +374,7 @@ export default function DailyReport() {
                 tr("discount"),
                 tr("addition"),
                 tr("netAmount"),
+                ...(showCost ? [tr("cost"), tr("profit")] : []),
                 tr("account"),
               ]}
               rows={data.return_lines.map((r) => [
@@ -388,6 +389,7 @@ export default function DailyReport() {
                 money(r.discount, lang),
                 money(r.addition, lang),
                 money(r.net, lang),
+                ...(showCost ? [money(r.cost, lang), money(r.profit, lang)] : []),
                 r.customer || "—",
               ])}
               footer={[
@@ -402,9 +404,10 @@ export default function DailyReport() {
                 money(data.return_totals.discount, lang),
                 "",
                 money(data.return_totals.net, lang),
+                ...(showCost ? [money(data.return_totals.cost, lang), money(data.return_totals.profit, lang)] : []),
                 "",
               ]}
-              minWidth="1080px"
+              minWidth={showCost ? "1280px" : "1080px"}
             />
           ) : null}
         </>

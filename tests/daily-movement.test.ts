@@ -73,11 +73,11 @@ test("sales line net is total minus header share plus addition", () => {
   assert.equal(line.addition, 5);
   assert.equal(line.net, 285);
   assert.equal(line.cost, 160);
-  assert.equal(line.profit, 100);
+  assert.equal(line.profit, 125);
   assert.equal(line.time, "11:20");
 });
 
-test("return line never includes cost or profit keys", () => {
+test("return line includes cost and profit from original unit cost", () => {
   const line = mapReturnLine({
     date: "2026-10-07",
     created_at: "2026-10-07 16:00:00",
@@ -93,17 +93,18 @@ test("return line never includes cost or profit keys", () => {
     header_discount: 40,
     extra_amount: 20,
     goods_base: 400,
+    unit_cost: 80,
     customer_name: "عميل",
   });
-  assert.equal("cost" in line, false);
-  assert.equal("profit" in line, false);
-  assert.ok(line.net !== undefined);
+  assert.equal(line.cost, 80);
+  assert.equal(line.net, 142.5);
+  assert.equal(line.profit, 62.5);
   const stripped = omitCostProfit({ ...line, cost: 99, profit: 88 });
   assert.equal("cost" in stripped, false);
   assert.equal("profit" in stripped, false);
   const totals = sumReturnTotals([line]);
-  assert.equal("cost" in totals, false);
-  assert.equal("profit" in totals, false);
+  assert.equal(totals.cost, 80);
+  assert.equal(totals.profit, line.profit);
 });
 
 test("purchase return cash is counted once and does not shrink the original purchase outflow", () => {

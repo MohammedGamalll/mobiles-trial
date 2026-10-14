@@ -49,6 +49,7 @@ const groups: Group[] = [
       { to: "/ledger/vouchers", key: "vouchers", perm: "vouchers.create" },
       { to: "/payments", key: "payments", perm: "payments.view" },
       { to: "/expenses", key: "expenses", perm: "expenses.view" },
+      { to: "/revenues", key: "otherRevenues", perm: "payments.create" },
       { to: "/partners", key: "partnersEquity", perm: "partners.view" },
       { to: "/cheques", key: "cheques", perm: "cheques.manage" },
       { to: "/installments", key: "installments", perm: "installments.manage" },
@@ -68,6 +69,7 @@ const groups: Group[] = [
     items: [
       { to: "/reports", key: "reports", perm: "reports.view" },
       { to: "/reports/trial-balance", key: "trialBalance", perm: "reports.view" },
+      { to: "/reports/daily-finance", key: "dailyFinance", perm: "reports.view" },
       { to: "/reports?tab=sales", key: "easySalesAnalysis", perm: "reports.view" },
       { to: "/reports?tab=expiry", key: "expiryReport", perm: "reports.view" },
     ],

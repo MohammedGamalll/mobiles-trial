@@ -2,10 +2,11 @@ import { Hono } from "hono";
 import { audit, getSettings, paginate, round2, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { haversineMeters, workplaceFromSettings } from "../lib/geo";
-import { postExpenseJournal } from "../lib/ledger";
+import { postAdvanceJournal, postExpenseJournal, reverseJournal } from "../lib/ledger";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
 import { notifyAdmins, safeNotify, sendNotification, userIdForEmployee } from "../lib/notifications";
 import { applyAdvanceDeduction, netPay } from "../lib/invoice-math";
+import { createStaff, STAFF_KINDS, type StaffInput } from "../lib/staff";
 
 export const hrRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -290,6 +291,23 @@ async function refreshUnpaidSlipsForEmployee(db: AppDb, employeeId: number) {
       .run();
   }
 }
+
+hrRoutes.post("/staff", requirePerm("hr.manage", "users.manage", "settings.edit", "sales.create"), async (c) => {
+  const b = await c.req.json<StaffInput>();
+  try {
+    const created = await createStaff(c.env.DB, b, c.get("user"));
+    return c.json(created, 201);
+  } catch (e) {
+    const code = e instanceof Error ? e.message : "error";
+    if (code === "missing_name" || code === "invalid_kind") return c.json({ error: code }, 400);
+    if (code === "username_taken") return c.json({ error: code }, 409);
+    throw e;
+  }
+});
+
+hrRoutes.get("/staff-kinds", requirePerm("hr.manage", "users.manage", "settings.edit", "sales.create"), async (c) => {
+  return c.json({ data: STAFF_KINDS });
+});
 
 hrRoutes.get("/employees", requirePerm("hr.view", "hr.manage", "hr.payroll"), async (c) => {
   const url = new URL(c.req.url);
@@ -698,7 +716,10 @@ hrRoutes.post("/payroll/:id/deduct", requirePerm("hr.payroll"), async (c) => {
 
 hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {
   const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ payouts?: { payslip_id: number; amount: number }[] }>().catch(() => ({ payouts: undefined as { payslip_id: number; amount: number }[] | undefined }));
+  const b = await c.req.json<{ payouts?: { payslip_id: number; amount: number }[]; cash_account_id?: number }>().catch(
+    () => ({ payouts: undefined as { payslip_id: number; amount: number }[] | undefined, cash_account_id: undefined as number | undefined }),
+  );
+  const cashAccountId = Number(b.cash_account_id || 0) || null;
   const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first<{ id: number; status: string; month: string }>();
   if (!run) return c.json({ error: "not_found" }, 404);
   if (run.status === "paid") return c.json({ error: "already_paid" }, 400);
@@ -727,8 +748,8 @@ hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {
         if (payNow > 0) {
           const emp = await tx.prepare("SELECT name FROM employees WHERE id = ?").bind(s.employee_id).first<{ name: string }>();
           const exp = await tx
-            .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id) VALUES (?, ?, ?, ?, ?)")
-            .bind(catId, payNow, todayIso(), `راتب ${run.month} — ${emp?.name || s.employee_id}`, user.id)
+            .prepare("INSERT INTO expenses (category_id, amount, date, description, user_id, cash_account_id) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(catId, payNow, todayIso(), `راتب ${run.month} — ${emp?.name || s.employee_id}`, user.id, cashAccountId)
             .run();
           expenseId = exp.meta.last_row_id;
           await postExpenseJournal(tx, {
@@ -737,6 +758,7 @@ hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {
             date: todayIso(),
             description: `راتب ${run.month} — ${emp?.name || s.employee_id}`,
             userId: user.id,
+            cashAccountId,
           });
         }
         if (!s.advances_settled) {
@@ -984,7 +1006,7 @@ async function ensureCourierEmployee(db: AppDb, agentId: number) {
 }
 
 hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (c) => {
-  const b = await c.req.json<{ employee_id?: number; delivery_agent_id?: number; amount: number; date?: string; month?: string; notes?: string }>();
+  const b = await c.req.json<{ employee_id?: number; delivery_agent_id?: number; amount: number; date?: string; month?: string; notes?: string; cash_account_id?: number }>();
   let employeeId = Number(b.employee_id || 0);
   try {
     if (!employeeId && b.delivery_agent_id) employeeId = await ensureCourierEmployee(c.env.DB, Number(b.delivery_agent_id));
@@ -995,12 +1017,36 @@ hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (
   if (!employeeId || !b.amount) return c.json({ error: "missing" }, 400);
   const date = b.date || todayIso();
   const month = b.month || date.slice(0, 7);
-  const r = await c.env.DB
-    .prepare("INSERT INTO salary_advances (employee_id, amount, remaining, date, month, status, notes, created_by) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)")
-    .bind(employeeId, round2(b.amount), round2(b.amount), date, month, b.notes || null, c.get("user").id)
-    .run();
+  const cashAccountId = Number(b.cash_account_id || 0) || null;
+  const user = c.get("user");
+  let advanceId = 0;
+  try {
+    advanceId = await c.env.DB.transaction(async (tx) => {
+      const r = await tx
+        .prepare("INSERT INTO salary_advances (employee_id, amount, remaining, date, month, status, notes, created_by, cash_account_id) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)")
+        .bind(employeeId, round2(b.amount), round2(b.amount), date, month, b.notes || null, user.id, cashAccountId)
+        .run();
+      const id = r.meta.last_row_id;
+      const journalId = await postAdvanceJournal(tx, {
+        id,
+        amount: round2(b.amount),
+        date,
+        description: `سلفة #${id}`,
+        cashAccountId,
+        userId: user.id,
+      });
+      if (journalId) {
+        await tx.prepare("UPDATE salary_advances SET journal_id = ? WHERE id = ?").bind(journalId, id).run();
+      }
+      return id;
+    });
+  } catch (e) {
+    const msg = String((e as Error)?.message || "");
+    if (msg === "ledger" || msg === "unbalanced_journal") return c.json({ error: "ledger" }, 500);
+    throw e;
+  }
   await refreshUnpaidSlipsForEmployee(c.env.DB, employeeId);
-  await audit(c.env.DB, c.get("user"), "create_advance", "advance", r.meta.last_row_id, String(b.amount));
+  await audit(c.env.DB, user, "create_advance", "advance", advanceId, String(b.amount));
   await safeNotify(async () => {
     const emp = await c.env.DB.prepare("SELECT name FROM employees WHERE id = ?").bind(employeeId).first<{ name: string }>();
     const amt = round2(b.amount);
@@ -1011,7 +1057,7 @@ hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (
       bodyAr: `تم تسجيل سلفة بقيمة ${amt} للموظف ${emp?.name || ""}`,
       bodyEn: `An advance of ${amt} was registered for ${emp?.name || "an employee"}`,
       entityType: "advance",
-      entityId: Number(r.meta.last_row_id),
+      entityId: Number(advanceId),
       actionUrl: "/hr/advances",
     });
     const uid = await userIdForEmployee(c.env.DB, employeeId);
@@ -1022,11 +1068,11 @@ hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (
       bodyAr: `تم تسجيل سلفة بقيمة ${amt} على حسابك`,
       bodyEn: `An advance of ${amt} has been registered to your account`,
       entityType: "advance",
-      entityId: Number(r.meta.last_row_id),
+      entityId: Number(advanceId),
       actionUrl: "/hr/advances",
     });
   });
-  return c.json({ id: r.meta.last_row_id, employee_id: employeeId }, 201);
+  return c.json({ id: advanceId, employee_id: employeeId }, 201);
 });
 
 hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll"), async (c) => {
@@ -1034,6 +1080,11 @@ hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll
   const row = await c.env.DB.prepare("SELECT status, employee_id FROM salary_advances WHERE id = ?").bind(id).first<{ status: string; employee_id: number }>();
   if (!row) return c.json({ error: "not_found" }, 404);
   if (row.status !== "open") return c.json({ error: "not_open" }, 400);
+  try {
+    await reverseJournal(c.env.DB, "advance", id, c.get("user").id);
+  } catch {
+    /* no posted journal */
+  }
   await c.env.DB.prepare("UPDATE salary_advances SET status = 'cancelled' WHERE id = ?").bind(id).run();
   await refreshUnpaidSlipsForEmployee(c.env.DB, row.employee_id);
   await safeNotify(async () => {

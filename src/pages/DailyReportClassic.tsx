@@ -18,11 +18,15 @@ type SalesLine = {
   time: string;
   sku: string;
   name: string;
+  unit?: string;
   qty: number;
   price: number;
   total: number;
   discount: number;
+  addition?: number;
   net: number;
+  cost?: number;
+  profit?: number;
   customer: string;
 };
 
@@ -66,8 +70,8 @@ type Report = {
   matrix?: Matrix;
   sales_lines: SalesLine[];
   return_lines: SalesLine[];
-  sales_totals: { qty: number; total: number; discount: number; net: number };
-  return_totals: { qty: number; total: number; discount: number; net: number };
+  sales_totals: { qty: number; total: number; discount: number; net: number; cost?: number; profit?: number };
+  return_totals: { qty: number; total: number; discount: number; net: number; cost?: number; profit?: number };
 };
 
 type Tab = "summary" | "sales" | "returns";
@@ -161,6 +165,7 @@ function sahlNum(n: number) {
 
 export default function DailyReportClassic() {
   const { tr, lang, can, lookups } = useApp();
+  const showCost = can("costs.view");
   const cashAccounts = lookups?.cash_accounts || [];
   const warehouses = warehouseLocations(lookups?.locations);
   const [from, setFrom] = useState(defaultFrom);
@@ -247,11 +252,14 @@ export default function DailyReportClassic() {
     tr("time"),
     tr("itemCode"),
     tr("itemName"),
+    tr("unit"),
     tr("qty"),
     tr("sellingPrice"),
     tr("total"),
     tr("discount"),
+    tr("addition"),
     tr("netAmount"),
+    ...(showCost ? [tr("cost"), tr("profit")] : []),
     tr("account"),
   ];
 
@@ -409,11 +417,14 @@ export default function DailyReportClassic() {
               r.time || "—",
               r.sku,
               r.name,
+              r.unit || "—",
               num(r.qty, lang),
               money(r.price, lang),
               money(r.total, lang),
               money(r.discount, lang),
+              money(r.addition, lang),
               money(r.net, lang),
+              ...(showCost ? [money(r.cost, lang), money(r.profit, lang)] : []),
               r.customer || "—",
             ])}
             footer={[
@@ -421,11 +432,14 @@ export default function DailyReportClassic() {
               "",
               "",
               "",
+              "",
               num(data.sales_totals.qty, lang),
               "",
               money(data.sales_totals.total, lang),
               money(data.sales_totals.discount, lang),
+              "",
               money(data.sales_totals.net, lang),
+              ...(showCost ? [money(data.sales_totals.cost, lang), money(data.sales_totals.profit, lang)] : []),
               "",
             ]}
           />
@@ -439,11 +453,14 @@ export default function DailyReportClassic() {
               r.time || "—",
               r.sku,
               r.name,
+              r.unit || "—",
               num(r.qty, lang),
               money(r.price, lang),
               money(r.total, lang),
               money(r.discount, lang),
+              money(r.addition, lang),
               money(r.net, lang),
+              ...(showCost ? [money(r.cost, lang), money(r.profit, lang)] : []),
               r.customer || "—",
             ])}
             footer={[
@@ -451,11 +468,14 @@ export default function DailyReportClassic() {
               "",
               "",
               "",
+              "",
               num(data.return_totals.qty, lang),
               "",
               money(data.return_totals.total, lang),
               money(data.return_totals.discount, lang),
+              "",
               money(data.return_totals.net, lang),
+              ...(showCost ? [money(data.return_totals.cost, lang), money(data.return_totals.profit, lang)] : []),
               "",
             ]}
           />
