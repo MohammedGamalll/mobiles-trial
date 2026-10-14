@@ -50,6 +50,17 @@ export function drawerCashForSale(
   return Number(requested || 0) || shift?.cash_account_id || null;
 }
 
+/** Credit invoices still put any upfront cash into the open shift drawer. */
+export function saleDrawerForInvoice(
+  shift: { cash_account_id: number } | null | undefined,
+  method?: string | null,
+  requested?: number | null,
+  paidAmount?: number | null,
+) {
+  const creditCash = String(method || "").toLowerCase() === "credit" && Number(paidAmount || 0) > 0;
+  return drawerCashForSale(shift, creditCash ? "cash" : method, requested);
+}
+
 export function shiftExpected(opening: number, cashIn: number, cashOut: number) {
   return round2(Number(opening || 0) + Number(cashIn || 0) - Number(cashOut || 0));
 }

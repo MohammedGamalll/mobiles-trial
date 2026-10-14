@@ -30,6 +30,7 @@ import { StaffForm } from "../components/StaffForm";
 import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PageSizeControl } from "../components/PageSizeControl";
 import { EndShiftButton } from "../components/PosShiftGuard";
+import { CreditDownPayment } from "../components/CreditDownPayment";
 import { PosHeaderFilter, applyPosHeaderFilters, uniqueFilterValues } from "../components/PosHeaderFilter";
 import { binText, lastSupplierName } from "../lib/place";
 
@@ -82,7 +83,7 @@ export default function POSClassic() {
     catalogLoading, catalogError, catalogPage, setCatalogPage, catalogTotal, catalogPageSize, setCatalogPageSize, reloadCatalog,
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
-    subtotal, discAmt, total, creditNeedCustomer,
+    subtotal, discAmt, total, creditNeedCustomer, paidInvalid,
     printRows, printInvoice, waEnabled, cartQty, applyParty, saveAccount,
     loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
@@ -195,7 +196,7 @@ export default function POSClassic() {
               <button
                 type="button"
                 className="pos-classic-rail-btn is-save"
-                disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer}
+                disabled={busy || !cart.length || !can("sales.create") || creditNeedCustomer || paidInvalid}
                 onClick={() => void submit({ print: true })}
                 title={tr("posSavePrintNew")}
               >
@@ -217,7 +218,7 @@ export default function POSClassic() {
               <button
                 type="button"
                 className="pos-classic-rail-btn is-credit"
-                disabled={busy || !cart.length || !can("sales.create")}
+                disabled={busy || !cart.length || !can("sales.create") || paidInvalid}
                 onClick={() => void submitCredit()}
                 title={`${tr("posCreditSale")} F8`}
               >
@@ -672,6 +673,22 @@ export default function POSClassic() {
                 </label>
               </>
             ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-xs font-black ${method === "cash" ? "bg-[var(--ink)] text-white" : "border"}`}
+                onClick={() => setMethod("cash")}
+              >
+                {tr("posPayCash")}
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-xs font-black ${method === "credit" ? "bg-[var(--ink)] text-white" : "border"}`}
+                onClick={() => setMethod("credit")}
+              >
+                {tr("posPayCredit")}
+              </button>
+            </div>
             <div className="pos-classic-green-totals">
               <div className="pos-classic-green-stat">
                 <small>{tr("qty")}</small>
@@ -682,6 +699,11 @@ export default function POSClassic() {
                 <b>{money(total, lang)}</b>
               </div>
             </div>
+            {method === "credit" ? (
+              <div className="min-w-[220px] flex-1">
+                <CreditDownPayment total={total} paid={paid} onPaid={setPaid} />
+              </div>
+            ) : null}
           </div>
 
           <div className="pos-classic-black">
@@ -693,7 +715,7 @@ export default function POSClassic() {
             <button type="button" onClick={() => window.print()}><Printer size={12} /> {tr("posPrintBarcode")}</button>
             {can("settings.edit") ? <button type="button" onClick={() => nav("/settings")}><Settings size={12} /> {tr("settings")}</button> : null}
             <button type="button" onClick={() => nav("/")}>{tr("posClose")}</button>
-            <button type="button" className="is-credit" disabled={busy || !cart.length || !can("sales.create")} onClick={() => void submitCredit()}>{tr("posCreditSale")}</button>
+            <button type="button" className="is-credit" disabled={busy || !cart.length || !can("sales.create") || paidInvalid} onClick={() => void submitCredit()}>{tr("posCreditSale")}</button>
             <span className="pos-classic-black-gap" />
             <button type="button" className="is-hold" disabled={busy || resuming || !cart.length} onClick={() => void holdInvoice()}>{tr("posHold")}</button>
           </div>
@@ -734,10 +756,14 @@ export default function POSClassic() {
             <span>{tr("invoiceDate")}</span>
             <input className={`${inputCls} w-36`} type="date" value={invDate} onChange={(e) => { setInvDate(e.target.value); if (method === "credit") setDue(e.target.value); }} />
           </label>
-          <label className="text-xs">
-            <span className="mb-1 block font-bold">{tr("paid")}</span>
-            <input className={inputCls} type="number" value={paid} onChange={(e) => setPaid(Number(e.target.value))} />
-          </label>
+          {method === "credit" ? (
+            <CreditDownPayment total={total} paid={paid} onPaid={setPaid} />
+          ) : (
+            <label className="text-xs">
+              <span className="mb-1 block font-bold">{tr("paid")}</span>
+              <input className={inputCls} type="number" value={paid} onChange={(e) => setPaid(Number(e.target.value))} />
+            </label>
+          )}
           <div>
             <div className="mb-1 text-xs font-bold">{tr("splitPay")}</div>
             {pays.map((p, i) => (

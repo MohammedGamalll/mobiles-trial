@@ -18,7 +18,7 @@ import { loadPosToday } from "../lib/pos-today";
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { insertLinkedReceiptVoucher, postCollectionJournal, postReturnJournal, postSaleJournal, reverseJournal } from "../lib/ledger";
-import { attachOpenShift, drawerCashForSale, isShiftErr, requirePosShift } from "../lib/pos-shifts";
+import { attachOpenShift, drawerCashForSale, saleDrawerForInvoice, isShiftErr, requirePosShift } from "../lib/pos-shifts";
 import { creditLimitBlocked, invoiceTotals, returnLineNet, settleReturn } from "../lib/invoice-math";
 import { splitInvoiceCash } from "../lib/party-money";
 import {
@@ -232,6 +232,8 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     expected_delivery_time?: string;
     payment_method?: string;
     paid?: number;
+    paid_amount?: number;
+    amount_paid?: number;
     discount?: number;
     surplus_mode?: string;
     due_date?: string;
@@ -355,14 +357,18 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     throw e;
   }
   const shiftId = posShift?.id || null;
-  const saleCashId = drawerCashForSale(posShift, b.payment_method, b.cash_account_id);
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
   const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
+  const rawPaid = b.paid ?? b.paid_amount ?? b.amount_paid;
   const requestedPaid = hold
     ? 0
     : splitPays.length
       ? round2(splitPays.reduce((s, p) => s + p.amount, 0))
-      : round2(b.payment_method === "credit" ? b.paid || 0 : b.paid ?? (type === "normal" ? total : 0));
+      : round2(b.payment_method === "credit" ? rawPaid || 0 : rawPaid ?? (type === "normal" ? total : 0));
+  if (!hold && b.payment_method === "credit" && (requestedPaid < 0 || requestedPaid > total + 0.001)) {
+    return c.json({ error: "paid_range" }, 400);
+  }
+  const saleCashId = saleDrawerForInvoice(posShift, b.payment_method, b.cash_account_id, requestedPaid);
   const split = hold ? { invoicePaid: 0, remaining: 0, surplus: 0 } : splitInvoiceCash(requestedPaid, total, surplusMode);
   const paid = split.invoicePaid;
   const remaining = split.remaining;
@@ -597,7 +603,7 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
       }
       const escrow = type === "delivery" && !hold;
       if (!hold && paid > 0 && !escrow) {
-        const rows = splitPays.length ? splitPays : [{ method: b.payment_method || "cash", amount: paid }];
+        const rows = splitPays.length ? splitPays : [{ method: b.payment_method === "credit" ? "cash" : (b.payment_method || "cash"), amount: paid }];
         let left = paid;
         for (const pay of rows) {
           if (left <= 0) break;
@@ -700,16 +706,20 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number }[];
   };
   if (row.status !== "held" && row.status !== "quote" && row.status !== "order") return c.json({ error: "not_held" }, 400);
-  const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }));
+  const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; paid_amount?: number; amount_paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; paid_amount?: number; amount_paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }));
   const user = c.get("user");
   const wasReserved = row.status === "quote" || row.status === "order";
   let costTotal = 0;
   const splitPays = (b.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ method: p.method || "cash", amount: round2(p.amount) }));
   const surplusMode = b.surplus_mode === "ignore" ? "ignore" : "wallet";
   const defaultPaid = row.status === "quote" ? 0 : row.total;
+  const rawPaid = b.paid ?? b.paid_amount ?? b.amount_paid;
   const requested = splitPays.length
     ? round2(splitPays.reduce((s, p) => s + p.amount, 0))
-    : round2(b.unpaid || b.payment_method === "credit" ? Number(b.paid ?? 0) : (b.paid ?? defaultPaid));
+    : round2(b.unpaid || b.payment_method === "credit" ? Number(rawPaid ?? 0) : (rawPaid ?? defaultPaid));
+  if (b.payment_method === "credit" && !b.unpaid && (requested < 0 || requested > Number(row.total) + 0.001)) {
+    return c.json({ error: "paid_range" }, 400);
+  }
   const split = splitInvoiceCash(requested, row.total, surplusMode);
   const paid = split.invoicePaid;
   const remaining = split.remaining;
@@ -732,7 +742,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     throw e;
   }
   const shiftId = posShift?.id || null;
-  const saleCashId = Number(b.cash_account_id || 0) || drawerCashForSale(posShift, b.payment_method || row.payment_method, row.cash_account_id);
+  const saleCashId = saleDrawerForInvoice(posShift, b.payment_method || row.payment_method, b.cash_account_id || row.cash_account_id, paid);
   try {
     await c.env.DB.transaction(async (tx) => {
       costTotal = 0;
@@ -765,7 +775,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
         .bind(status, null, paid, remaining, b.payment_method || row.payment_method, costTotal, round2(row.total - costTotal), remaining <= 0 ? todayIso() : null, saleCashId, shiftId, id)
         .run();
       if (paid > 0) {
-        const pays = splitPays.length ? splitPays : [{ method: b.payment_method || row.payment_method || "cash", amount: paid }];
+        const pays = splitPays.length ? splitPays : [{ method: (b.payment_method || row.payment_method) === "credit" ? "cash" : (b.payment_method || row.payment_method || "cash"), amount: paid }];
         let left = paid;
         for (const pay of pays) {
           if (left <= 0) break;

@@ -110,12 +110,17 @@ export function PaymentModal({
           <option value="unpaid">{tr("invoiceUnpaid")}</option>
         </select>
       </Field>
-      {unpaid ? null : (
-        <Field label={tr("amount")}>
-          <input className={inputCls} type="text" inputMode="decimal" value={paid} onChange={(e) => setPaid(e.target.value)} />
-        </Field>
-      )}
-      {showTreasury ? (
+      <Field label={tr("paidAmount")}>
+        <input
+          className={`${inputCls} tabular-nums text-lg font-black`}
+          type="text"
+          inputMode="decimal"
+          placeholder="0"
+          value={paid}
+          onChange={(e) => setPaid(e.target.value)}
+        />
+      </Field>
+      {showTreasury || (unpaid && amt > 0) ? (
         <Field label={tr("cashBox")}>
           <select className={inputCls} value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value)}>
             {cashAccounts.map((a: { id: number; name: string }) => (
@@ -124,13 +129,11 @@ export function PaymentModal({
           </select>
         </Field>
       ) : null}
-      {!unpaid ? (
-        <div className="mb-3 grid grid-cols-2 gap-2 text-sm font-bold">
-          <div>{tr("paidAmount")}: {money(take, lang)}</div>
-          <div>{tr("remainingAmount")}: {money(nextRemaining, lang)}</div>
-          {extra > 0.001 ? <div className="col-span-2">{summary?.surplusLabel || tr("surplus")}: {money(extra, lang)}</div> : null}
-        </div>
-      ) : null}
+      <div className="mb-3 grid grid-cols-2 gap-2 text-sm font-bold">
+        <div>{tr("paidAmount")}: <span className="tabular-nums">{money(unpaid ? Math.min(Math.max(0, amt), cap) : take, lang)}</span></div>
+        <div>{tr("remainingAmount")}: <span className="tabular-nums">{money(unpaid ? Math.max(0, cap - Math.min(Math.max(0, amt), cap)) : nextRemaining, lang)}</span></div>
+        {!unpaid && extra > 0.001 ? <div className="col-span-2">{summary?.surplusLabel || tr("surplus")}: {money(extra, lang)}</div> : null}
+      </div>
       {showSurplus ? (
         <Field label={tr("surplus")}>
           <label className="mb-2 flex items-center gap-2 text-sm font-bold">
@@ -148,11 +151,16 @@ export function PaymentModal({
         className="mt-3"
         onClick={() => {
           const cashId = Number(cashAccountId || 0) || null;
-          if (showTreasury && !cashId) {
+          const needTreasury = showTreasury || (unpaid && amt > 0);
+          if (needTreasury && !cashId) {
             setErr(tr("errTreasuryRequired"));
             return;
           }
-          void onSubmit({ unpaid, paid: unpaid ? 0 : amt, surplus_mode: showSurplus ? surplusMode : "wallet", cash_account_id: cashId });
+          if (unpaid && (amt < 0 || amt > cap + 0.001)) {
+            setErr(tr("errPaidRange"));
+            return;
+          }
+          void onSubmit({ unpaid, paid: unpaid ? Math.min(Math.max(0, amt), cap) : amt, surplus_mode: showSurplus ? surplusMode : "wallet", cash_account_id: cashId });
         }}
       >
         {tr("save")}

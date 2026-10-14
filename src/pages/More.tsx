@@ -22,6 +22,7 @@ import {
   uniqueFilterValues,
 } from "../components/PosHeaderFilter";
 import { rememberResumeInvoice, type Product } from "../hooks/usePOSLogic";
+import { purchaseDefaultCashId } from "../lib/cash";
 import { ReturnForm } from "./Invoice";
 import { ListPager, TablePager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
@@ -552,7 +553,7 @@ export function BatchesPage() {
 }
 
 export function PurchasesPage() {
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
   const nav = useNavigate();
   const f = useListQuery("purchases");
   const [rows, setRows] = useState<any[]>([]);
@@ -629,6 +630,7 @@ export function PurchasesPage() {
       <PaymentModal
         open={!!payRow}
         title={tr("payPurchase")}
+        defaultCashAccountId={purchaseDefaultCashId(lookups?.cash_accounts)}
         due={Number(payRow?.remaining) || 0}
         summary={payRow ? {
           number: payRow.number,
@@ -736,7 +738,7 @@ function ProductPick({ resetKey, onChange }: { resetKey: number; onChange: (p: {
 
 export function PurchaseDetail() {
   const { id } = useParams();
-  const { tr, lang, can } = useApp();
+  const { tr, lang, can, lookups } = useApp();
   const [d, setD] = useState<any>(null);
   const [retOpen, setRetOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
@@ -782,6 +784,7 @@ export function PurchaseDetail() {
       <PaymentModal
         open={payOpen}
         title={tr("payPurchase")}
+        defaultCashAccountId={Number(d.cash_account_id) || purchaseDefaultCashId(lookups?.cash_accounts)}
         due={Number(d.remaining) || 0}
         summary={{
           number: d.number,

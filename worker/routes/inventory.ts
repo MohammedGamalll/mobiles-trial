@@ -3,7 +3,7 @@ import { audit, nextNumber, paginate, round2, todayIso, type AppBindings, type A
 import { requirePerm } from "../lib/auth";
 import { applyDate, applyEq, applyLocationCol, applyRange, applySearch, listParams, sqlText, stockScopeIds } from "../lib/filters";
 import { availCostSql, availQtySql, availableBatches, consumeFromBatch, logMovement, maybeStockAlerts, reservedCostSql, reservedQtySql } from "../lib/stock";
-import { postPurchaseJournal, postPurchaseReturnJournal, postSupplierPaymentJournal } from "../lib/ledger";
+import { postPurchaseJournal, postPurchaseReturnJournal, postSupplierPaymentJournal, resolvePurchaseCashId } from "../lib/ledger";
 import { returnLineNet, settleReturn } from "../lib/invoice-math";
 import { splitInvoiceCash } from "../lib/party-money";
 import { mergeWarehouseStats } from "../lib/warehouse";
@@ -36,6 +36,7 @@ type PurchaseRow = {
   remaining: number;
   payment_method: string | null;
   wallet_surplus?: number;
+  cash_account_id?: number | null;
 };
 
 async function receivePurchase(db: AppDb, inv: PurchaseRow, user: AuthUser) {
@@ -115,7 +116,7 @@ async function receivePurchase(db: AppDb, inv: PurchaseRow, user: AuthUser) {
   }
   await postPurchaseJournal(
     db,
-    { id: inv.id, number: inv.number, date: inv.date, total: Number(inv.total), paid: round2(paid + surplus), remaining, surplus, payment_method: inv.payment_method },
+    { id: inv.id, number: inv.number, date: inv.date, total: Number(inv.total), paid: round2(paid + surplus), remaining, surplus, payment_method: inv.payment_method, cash_account_id: inv.cash_account_id },
     user.id,
   );
 }
@@ -565,6 +566,7 @@ inventoryRoutes.post("/purchases", requirePerm("purchases.create"), async (c) =>
     paid?: number;
     payment_method?: string;
     surplus_mode?: string;
+    cash_account_id?: number;
     items: { product_id: number; quantity: number; unit_cost: number; selling_price?: number; discount?: number; expiry_date?: string; production_date?: string }[];
   }>();
   if (!b.items?.length) return c.json({ error: "no_items" }, 400);
@@ -579,15 +581,16 @@ inventoryRoutes.post("/purchases", requirePerm("purchases.create"), async (c) =>
   const remaining = split.remaining;
   const walletSurplus = split.surplus;
   const user = c.get("user");
+  const cashAccountId = paid > 0 ? await resolvePurchaseCashId(c.env.DB, b.cash_account_id) : (Number(b.cash_account_id || 0) || null);
   let id = 0;
   try {
     id = await c.env.DB.transaction(async (tx) => {
       const ins = await tx
         .prepare(
-          `INSERT INTO purchase_invoices (number, supplier_id, date, status, subtotal, discount, extra_expenses, total, notes, created_by, paid, remaining, payment_method, wallet_surplus)
-           VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO purchase_invoices (number, supplier_id, date, status, subtotal, discount, extra_expenses, total, notes, created_by, paid, remaining, payment_method, wallet_surplus, cash_account_id)
+           VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(number, b.supplier_id || null, b.date || todayIso(), subtotal, b.discount || 0, b.extra_expenses || 0, total, b.notes || null, user.id, paid, remaining, b.payment_method || (remaining > 0 ? "credit" : "cash"), walletSurplus)
+        .bind(number, b.supplier_id || null, b.date || todayIso(), subtotal, b.discount || 0, b.extra_expenses || 0, total, b.notes || null, user.id, paid, remaining, b.payment_method || (remaining > 0 ? "credit" : "cash"), walletSurplus, cashAccountId)
         .run();
       const purchaseId = ins.meta.last_row_id;
       await tx.batch(
@@ -619,6 +622,7 @@ inventoryRoutes.post("/purchases", requirePerm("purchases.create"), async (c) =>
           remaining,
           payment_method: b.payment_method || (remaining > 0 ? "credit" : "cash"),
           wallet_surplus: walletSurplus,
+          cash_account_id: cashAccountId,
         },
         user,
       );
@@ -736,7 +740,7 @@ inventoryRoutes.post("/purchases/:id/pay", requirePerm("payments.create", "purch
         amount: take,
         method: b.method || inv.payment_method || "cash",
         date: todayIso(),
-        cashAccountId: Number(b.cash_account_id || 0) || null,
+        cashAccountId: await resolvePurchaseCashId(tx, b.cash_account_id),
         userId: user.id,
       });
     });

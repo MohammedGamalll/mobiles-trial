@@ -568,6 +568,14 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     ? Math.max(0, total - (splitPaid || paid))
     : Math.max(0, total - (paid || total));
   const creditNeedCustomer = method === "credit" && !customer && !quoteMode;
+  const paidInvalid = method === "credit" && (Number(paid) < 0 || Number(paid) > total + 0.001);
+
+  function setPayMethod(next: string) {
+    setMethod((cur) => {
+      if (next === "credit" && cur !== "credit") setPaid(0);
+      return next;
+    });
+  }
   const printRows = printSnap?.items || cart;
   const printTotal = printSnap?.total ?? total;
   const printExtra = Number(printSnap?.extra_amount ?? printSnap?.extra ?? extraAmount ?? 0);
@@ -781,6 +789,11 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     }
     const paidAmt = opts?.paid ?? paid;
     const asQuote = !!(opts?.quote || quoteMode);
+    if (payMethod === "credit" && !opts?.hold && !asQuote && !opts?.order && (Number(paidAmt) < 0 || Number(paidAmt) > total + 0.001)) {
+      playSound("err");
+      setErr(tr("errPaidRange"));
+      return;
+    }
     const cashOut = splitPaid || paidAmt || 0;
     if (!opts?.hold && !asQuote && !opts?.order && cashOut > total + 0.001 && !party && type !== "delivery") {
       playSound("err");
@@ -1105,7 +1118,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     q, setQ, catalog, typeFilter, setTypeFilter, kindFilter, setKindFilter,
     cart, setCart, sel, setSel, type, setType,
     customerQ, setCustomerQ, customers, custListOpen, setCustListOpen,
-    customer, setCustomer, walkIn, setWalkIn, method, setMethod,
+    customer, setCustomer, walkIn, setWalkIn, method, setMethod: setPayMethod,
     cashAccountId, setCashAccountId, agentId, setAgentId, salesAgentId, setSalesAgentId,
     address, setAddress, area, setArea, time, setTime, paid, setPaid,
     discount, setDiscount, discMode, setDiscMode, invDate, setInvDate,
@@ -1124,7 +1137,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     reloadCatalog: () => setStockTick((n) => n + 1),
     searchRef, customerRef, qtyRef, priceRef, extraRef, custBlurRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
-    subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer,
+    subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer, paidInvalid,
     printRows, printTotal, printExtra, printInvoice, related, waEnabled, cartQty,
     loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,

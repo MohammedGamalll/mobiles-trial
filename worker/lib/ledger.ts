@@ -26,6 +26,25 @@ export async function cashAccountFor(db: AppDb, method?: string | null, cashAcco
   return cashByKind(db, methodKind(method));
 }
 
+/** Default purchase payout box: الخزنة (id 2), never the main POS drawer. */
+export async function resolvePurchaseCashId(db: AppDb, requested?: number | null) {
+  const asked = Number(requested || 0);
+  if (asked) {
+    const row = await db.prepare("SELECT id FROM cash_accounts WHERE id = ? AND active = 1").bind(asked).first<{ id: number }>();
+    if (row) return row.id;
+  }
+  const safe = await db
+    .prepare("SELECT id FROM cash_accounts WHERE active = 1 AND (name IN ('الخزنه', 'الخزنة') OR name_en IN ('Safe', 'The Safe')) ORDER BY id LIMIT 1")
+    .first<{ id: number }>();
+  if (safe) return safe.id;
+  const two = await db.prepare("SELECT id FROM cash_accounts WHERE id = 2 AND active = 1 AND (kind = 'cash' OR kind IS NULL)").first<{ id: number }>();
+  if (two) return two.id;
+  const other = await db
+    .prepare("SELECT id FROM cash_accounts WHERE active = 1 AND (kind = 'cash' OR kind IS NULL) AND name NOT IN ('الصندوق الرئيسي') ORDER BY id LIMIT 1")
+    .first<{ id: number }>();
+  return other?.id || null;
+}
+
 export function methodKind(method?: string | null): "cash" | "bank" {
   const m = String(method || "cash").toLowerCase();
   if (["card", "visa", "bank", "transfer", "instapay", "wallet"].includes(m)) return "bank";
@@ -123,7 +142,7 @@ export async function postSaleJournal(
       lines.push({ account_id: cash.account_id, debit: p.amount, notes: p.method });
     }
   } else if (invoice.paid > 0) {
-    const cash = await cashAccountFor(db, invoice.payment_method, invoice.cash_account_id);
+    const cash = await cashAccountFor(db, invoice.payment_method === "credit" ? "cash" : invoice.payment_method, invoice.cash_account_id);
     if (!cash) throw new Error("ledger");
     lines.push({ account_id: cash.account_id, debit: invoice.paid });
   }
@@ -172,7 +191,7 @@ export async function postDamageJournal(
 
 export async function postPurchaseJournal(
   db: AppDb,
-  purchase: { id: number; number: string; date: string; total: number; paid: number; remaining: number; surplus?: number; payment_method?: string | null },
+  purchase: { id: number; number: string; date: string; total: number; paid: number; remaining: number; surplus?: number; payment_method?: string | null; cash_account_id?: number | null },
   userId?: number | null,
 ) {
   if (await existingJournal(db, "purchase", purchase.id)) return;
@@ -184,7 +203,8 @@ export async function postPurchaseJournal(
   const surplus = round2(purchase.surplus || 0);
   const lines: JournalLine[] = [{ account_id: inventory.id, debit: round2(purchase.total) }];
   if (paid > 0) {
-    const cash = await cashByKind(db, methodKind(purchase.payment_method));
+    const cashId = await resolvePurchaseCashId(db, purchase.cash_account_id);
+    const cash = await cashAccountFor(db, purchase.payment_method === "credit" ? "cash" : purchase.payment_method, cashId);
     if (!cash) throw new Error("ledger");
     lines.push({ account_id: cash.account_id, credit: paid });
   }

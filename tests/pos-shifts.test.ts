@@ -4,6 +4,7 @@ import {
   drawerCashForSale,
   drawerFlowSinceSql,
   isDrawerPayMethod,
+  saleDrawerForInvoice,
   planShiftClose,
   shiftExpected,
   shiftVariance,
@@ -126,4 +127,10 @@ test("cash methods bind the shift drawer", () => {
   assert.equal(isDrawerPayMethod("credit"), false);
   assert.equal(drawerCashForSale({ cash_account_id: 4 }, "cash", 9), 4);
   assert.equal(drawerCashForSale({ cash_account_id: 4 }, "visa", 9), 9);
+});
+
+test("credit down payment still binds the shift drawer", () => {
+  assert.equal(saleDrawerForInvoice({ cash_account_id: 4 }, "credit", 9, 200), 4);
+  assert.equal(saleDrawerForInvoice({ cash_account_id: 4 }, "credit", 9, 0), 9);
+  assert.equal(saleDrawerForInvoice({ cash_account_id: 4 }, "cash", 9, 200), 4);
 });

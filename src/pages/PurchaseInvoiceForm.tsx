@@ -6,6 +6,7 @@ import { get, post } from "../lib/api";
 import { money } from "../lib/format";
 import { Btn, ErrorNote, Field, SearchPick, inputCls } from "../components/ui";
 import { useActionError } from "../lib/errors";
+import { purchaseDefaultCashId } from "../lib/cash";
 import { matchScanned, playSound } from "../lib/sounds";
 
 export type PurchaseLine = {
@@ -63,11 +64,19 @@ export default function PurchaseInvoiceForm() {
   const [notes, setNotes] = useState("");
   const [discount, setDiscount] = useState(0);
   const [paid, setPaid] = useState(0);
+  const cashAccounts = (lookups?.cash_accounts || []).filter((a) => !a.kind || a.kind === "cash");
+  const [cashAccountId, setCashAccountId] = useState(() => purchaseDefaultCashId(lookups?.cash_accounts));
   const [items, setItems] = useState<PurchaseLine[]>([]);
   const priceRefs = useRef<Array<HTMLInputElement | null>>([]);
   const qtyRefs = useRef<Array<HTMLInputElement | null>>([]);
   const sellRefs = useRef<Array<HTMLInputElement | null>>([]);
   const focusRow = useRef<number | null>(null);
+
+  useEffect(() => {
+    const preferred = purchaseDefaultCashId(lookups?.cash_accounts);
+    if (!preferred) return;
+    if (!cashAccounts.some((a) => a.id === cashAccountId)) setCashAccountId(preferred);
+  }, [lookups?.cash_accounts, cashAccounts, cashAccountId]);
 
   useEffect(() => {
     if (focusRow.current == null) return;
@@ -109,6 +118,10 @@ export default function PurchaseInvoiceForm() {
       act.fail(undefined, "errInvalidQty");
       return;
     }
+    if (Number(paid || 0) > 0 && !Number(cashAccountId || 0)) {
+      act.fail(undefined, "errTreasuryRequired");
+      return;
+    }
     try {
       const r = await post<{ id: number }>(`/api/inventory/purchases`, {
         supplier_id: Number(supplierId),
@@ -116,6 +129,7 @@ export default function PurchaseInvoiceForm() {
         notes: notes || null,
         discount: Number(discount || 0),
         paid: Number(paid || 0),
+        cash_account_id: Number(cashAccountId || 0) || null,
         surplus_mode: "wallet",
         items: items.map((it) => ({
           product_id: it.product_id,
@@ -144,7 +158,7 @@ export default function PurchaseInvoiceForm() {
         </div>
       </div>
       <p className="text-sm font-bold leading-6 text-[#0b1f33] dark:text-[#f8f1de]">{tr("purchaseHint")}</p>
-      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Field label={tr("supplier")}>
           <SearchPick
             path="/api/suppliers"
@@ -165,7 +179,15 @@ export default function PurchaseInvoiceForm() {
           <input className={inputCls} type="number" min={0} value={discount} onChange={(e) => setDiscount(Number(e.target.value || 0))} />
         </Field>
         <Field label={tr("paid")}>
-          <input className={inputCls} type="number" min={0} value={paid} onChange={(e) => setPaid(Number(e.target.value || 0))} />
+          <input className={`${inputCls} tabular-nums`} type="number" min={0} value={paid} onChange={(e) => setPaid(Number(e.target.value || 0))} />
+        </Field>
+        <Field label={tr("cashBox")}>
+          <select className={inputCls} value={cashAccountId || ""} onChange={(e) => setCashAccountId(Number(e.target.value) || 0)}>
+            {!cashAccounts.length ? <option value="">{tr("errTreasuryRequired")}</option> : null}
+            {cashAccounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
         </Field>
       </div>
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">

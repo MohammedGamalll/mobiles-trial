@@ -10,6 +10,7 @@ const ERR_KEYS: Record<string, Msg> = {
   missing_name: "errNameRequired",
   credit_limit: "errCreditLimit",
   customer_required: "errCustomerRequired",
+  paid_range: "errPaidRange",
   cannot_return: "errCannotReturn",
     overpay: "errOverpay",
   invalid_amount: "errInvalidQty",

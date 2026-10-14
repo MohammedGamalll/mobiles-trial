@@ -195,6 +195,7 @@ export async function ensureAppSchema(db: AppDb) {
     ["purchase_invoice_items", "returned_qty INTEGER NOT NULL DEFAULT 0"],
     ["purchase_invoices", "wallet_surplus REAL NOT NULL DEFAULT 0"],
     ["purchase_invoices", "returned_total REAL NOT NULL DEFAULT 0"],
+    ["purchase_invoices", "cash_account_id INTEGER"],
     ["sales_invoices", "returned_total REAL NOT NULL DEFAULT 0"],
     ["payments", "supplier_id INTEGER"],
     ["payments", "purchase_id INTEGER"],

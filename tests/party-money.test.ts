@@ -53,6 +53,13 @@ test("standalone wallet surplus becomes negative credit", () => {
   assert.equal(r.nextBalance, -200);
 });
 
+test("credit down payment splits remaining onto AR", () => {
+  const s = splitInvoiceCash(200, 1000, "wallet");
+  assert.equal(s.invoicePaid, 200);
+  assert.equal(s.remaining, 800);
+  assert.equal(s.surplus, 0);
+});
+
 test("quote overpay ignore keeps invoice exact", () => {
   const s = splitInvoiceCash(1200, 1000, "ignore");
   assert.equal(s.invoicePaid, 1000);

@@ -19,6 +19,7 @@ import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PageSizeControl } from "../components/PageSizeControl";
 import { useApp } from "../context";
 import { EndShiftButton } from "../components/PosShiftGuard";
+import { CreditDownPayment } from "../components/CreditDownPayment";
 
 export default function POS() {
   const {
@@ -147,6 +148,7 @@ export default function POS() {
     taxAmount,
     total,
     creditNeedCustomer,
+    paidInvalid,
     printRows,
     printInvoice,
     related,
@@ -1104,15 +1106,18 @@ export default function POS() {
                   />
                 </label>
                 {method === "credit" ? (
-                  <label className="flex w-full items-center justify-between gap-2 text-xs">
-                    <span className="shrink-0">{tr("dueDate")}</span>
-                    <input
-                      className={`${inputCls} min-w-0 flex-1`}
-                      type="date"
-                      value={due}
-                      onChange={(e) => setDue(e.target.value)}
-                    />
-                  </label>
+                  <>
+                    <label className="flex w-full items-center justify-between gap-2 text-xs">
+                      <span className="shrink-0">{tr("dueDate")}</span>
+                      <input
+                        className={`${inputCls} min-w-0 flex-1`}
+                        type="date"
+                        value={due}
+                        onChange={(e) => setDue(e.target.value)}
+                      />
+                    </label>
+                    <CreditDownPayment total={total} paid={paid} onPaid={setPaid} />
+                  </>
                 ) : null}
                 {err ? (
                   <div className="text-sm text-rose-600">{err}</div>
@@ -1132,7 +1137,8 @@ export default function POS() {
                       busy ||
                       !cart.length ||
                       !can("sales.create") ||
-                      creditNeedCustomer
+                      creditNeedCustomer ||
+                      paidInvalid
                     }
                     onClick={() => submit({ print: true })}
                   >
@@ -1144,7 +1150,8 @@ export default function POS() {
                       busy ||
                       !cart.length ||
                       !can("sales.create") ||
-                      creditNeedCustomer
+                      creditNeedCustomer ||
+                      paidInvalid
                     }
                     onClick={() => submit()}
                   >
@@ -1324,7 +1331,9 @@ export default function POS() {
                 </select>
               </label>
             ) : null}
-            {method === "credit" || type === "delivery" ? (
+            {method === "credit" ? (
+              <CreditDownPayment total={total} paid={paid} onPaid={setPaid} />
+            ) : type === "delivery" ? (
               <label className="text-xs">
                 <span className="mb-1 block font-bold">{tr("paid")}</span>
                 <input
