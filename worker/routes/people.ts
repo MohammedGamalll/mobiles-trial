@@ -371,12 +371,20 @@ peopleRoutes.post("/suppliers", requirePerm("suppliers.manage"), async (c) => {
     supplierId = r.meta.last_row_id;
     await postOpeningPartyJournal(tx, { kind: "supplier", partyId: supplierId, amount: opening, name: String(b.name), userId: user.id });
   });
+  await audit(c.env.DB, user, "create_supplier", "supplier", supplierId, String(b.name));
   return c.json({ id: supplierId, balance: opening, currency }, 201);
 });
 
 peopleRoutes.put("/suppliers/:id", requirePerm("suppliers.manage"), async (c) => {
   const id = Number(c.req.param("id"));
-  const prev = await c.env.DB.prepare("SELECT * FROM suppliers WHERE id = ?").bind(id).first<{ currency?: string; balance?: number }>();
+  const prev = await c.env.DB.prepare("SELECT * FROM suppliers WHERE id = ?").bind(id).first<{
+    currency?: string;
+    balance?: number;
+    name?: string;
+    phone?: string | null;
+    city?: string | null;
+    payment_terms?: string | null;
+  }>();
   if (!prev) return c.json({ error: "not_found" }, 404);
   const b = await c.req.json<Record<string, unknown>>();
   const settings = await getSettings(c.env.DB);
@@ -401,6 +409,10 @@ peopleRoutes.put("/suppliers/:id", requirePerm("suppliers.manage"), async (c) =>
       id,
     )
     .run();
+  await audit(c.env.DB, c.get("user"), "edit_supplier", "supplier", id, String(b.name || id), {
+    old_value: { name: prev.name, phone: prev.phone, city: prev.city, payment_terms: prev.payment_terms },
+    new_value: { name: b.name, phone: b.phone, city: b.city, payment_terms: b.payment_terms },
+  });
   return c.json({ ok: true, balance: stored, currency, display: currency === "USD" ? round2(stored / rate) : stored, fx_rate: rate });
 });
 

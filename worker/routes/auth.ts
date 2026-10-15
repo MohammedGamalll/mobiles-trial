@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
-import { audit, hashPassword, randomToken, type AppBindings, type AppVars } from "../lib/helpers";
-import { clearSessionCookie, destroySession, loginUser, requireAuth, setSessionCookie } from "../lib/auth";
+import { audit, hashPassword, randomToken, type AppBindings, type AppVars, type AuthUser } from "../lib/helpers";
+import { clearSessionCookie, destroySession, loadUserFromToken, loginUser, requireAuth, setSessionCookie } from "../lib/auth";
 
 export const authRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -36,6 +36,17 @@ authRoutes.post("/login", async (c) => {
     )
     .bind(body.username.trim())
     .all<{ code: string }>();
+  if (user) {
+    const row = user as { id: number; full_name?: string; username?: string };
+    await audit(
+      c.env.DB,
+      { id: Number(row.id), full_name: String(row.full_name || body.username) } as AuthUser,
+      "login",
+      "user",
+      Number(row.id),
+      String(row.username || body.username),
+    );
+  }
   return c.json({ user: { ...user, permissions: perms.results.map((p) => p.code) }, token: result.token });
 });
 
@@ -43,7 +54,9 @@ authRoutes.post("/logout", async (c) => {
   const header = c.req.header("authorization") || "";
   const bearer = header.match(/^Bearer\s+(\S+)/i)?.[1];
   const token = bearer || getCookie(c, "pixel_session");
+  const sessionUser = token ? await loadUserFromToken(c.env.DB, token) : null;
   if (token) await destroySession(c.env.DB, token);
+  if (sessionUser) await audit(c.env.DB, sessionUser, "logout", "user", sessionUser.id, sessionUser.username);
   clearSessionCookie(c);
   return c.json({ ok: true });
 });

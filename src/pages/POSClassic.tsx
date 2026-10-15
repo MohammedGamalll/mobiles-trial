@@ -167,6 +167,7 @@ export default function POSClassic() {
           </button>
           {railOpen ? (
             <>
+              <div className="pos-classic-rail-scroll">
               <button type="button" className={`pos-classic-rail-btn is-sell ${desk === "sale" ? "is-on" : ""}`} onClick={() => setDesk("sale")}>
                 <ShoppingCart size={22} />
                 <span>{tr("posSell")}</span>
@@ -226,6 +227,8 @@ export default function POSClassic() {
                 <small>F8</small>
                 <span>{tr("posCreditSale")}</span>
               </button>
+              </div>
+              <EndShiftButton className="pos-classic-rail-btn is-end" />
             </>
           ) : null}
         </aside>
@@ -673,17 +676,17 @@ export default function POSClassic() {
                 </label>
               </>
             ) : null}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="pos-classic-pay-modes">
               <button
                 type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs font-black ${method === "cash" ? "bg-[var(--ink)] text-white" : "border"}`}
+                className={method === "cash" ? "is-on" : ""}
                 onClick={() => setMethod("cash")}
               >
                 {tr("posPayCash")}
               </button>
               <button
                 type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs font-black ${method === "credit" ? "bg-[var(--ink)] text-white" : "border"}`}
+                className={method === "credit" ? "is-on" : ""}
                 onClick={() => setMethod("credit")}
               >
                 {tr("posPayCredit")}

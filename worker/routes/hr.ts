@@ -803,12 +803,14 @@ hrRoutes.post("/shifts", requirePerm("hr.manage"), async (c) => {
       .prepare("INSERT INTO work_shifts (name, name_en, start_time, end_time, break_minutes, expected_hours, overtime_rate, weekdays) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(b.name, b.name_en || b.name, b.start_time, b.end_time, b.break_minutes ?? 60, b.expected_hours ?? 8, b.overtime_rate ?? 1.5, days)
       .run();
+    await audit(c.env.DB, c.get("user"), "create_shift", "work_shifts", r.meta.last_row_id, b.name);
     return c.json({ id: r.meta.last_row_id }, 201);
   } catch {
     const r = await c.env.DB
       .prepare("INSERT INTO work_shifts (name, name_en, start_time, end_time, break_minutes, expected_hours, overtime_rate) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .bind(b.name, b.name_en || b.name, b.start_time, b.end_time, b.break_minutes ?? 60, b.expected_hours ?? 8, b.overtime_rate ?? 1.5)
       .run();
+    await audit(c.env.DB, c.get("user"), "create_shift", "work_shifts", r.meta.last_row_id, b.name);
     return c.json({ id: r.meta.last_row_id }, 201);
   }
 });
@@ -828,6 +830,7 @@ hrRoutes.put("/shifts/:id", requirePerm("hr.manage"), async (c) => {
       .bind(b.name, b.name_en || b.name, b.start_time, b.end_time, b.break_minutes ?? 60, b.expected_hours ?? 8, b.overtime_rate ?? 1.5, b.active === 0 ? 0 : 1, id)
       .run();
   }
+  await audit(c.env.DB, c.get("user"), "edit_shift", "work_shifts", id, b.name);
   return c.json({ ok: true });
 });
 
@@ -1086,6 +1089,7 @@ hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll
     /* no posted journal */
   }
   await c.env.DB.prepare("UPDATE salary_advances SET status = 'cancelled' WHERE id = ?").bind(id).run();
+  await audit(c.env.DB, c.get("user"), "cancel_advance", "advance", id, String(row.employee_id));
   await refreshUnpaidSlipsForEmployee(c.env.DB, row.employee_id);
   await safeNotify(async () => {
     const uid = await userIdForEmployee(c.env.DB, row.employee_id);
@@ -1119,6 +1123,7 @@ hrRoutes.get("/overtime", requirePerm("hr.payroll", "hr.view"), async (c) => {
 hrRoutes.delete("/overtime/:id", requirePerm("hr.payroll"), async (c) => {
   const id = Number(c.req.param("id"));
   await c.env.DB.prepare("DELETE FROM overtime_entries WHERE id = ?").bind(id).run();
+  await audit(c.env.DB, c.get("user"), "delete_overtime", "overtime", id, String(id));
   return c.json({ ok: true });
 });
 
@@ -1135,6 +1140,7 @@ hrRoutes.post("/overtime", requirePerm("hr.payroll"), async (c) => {
     .prepare("INSERT INTO overtime_entries (employee_id, date, hours, rate, amount, source, notes, created_by) VALUES (?, ?, ?, ?, ?, 'manual', ?, ?)")
     .bind(b.employee_id, b.date || todayIso(), b.hours, rate, amount, b.notes || null, c.get("user").id)
     .run();
+  await audit(c.env.DB, c.get("user"), "overtime", "overtime", r.meta.last_row_id, `${b.hours}h`);
   return c.json({ id: r.meta.last_row_id, amount }, 201);
 });
 

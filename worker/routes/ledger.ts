@@ -24,6 +24,7 @@ ledgerRoutes.post("/accounts", requirePerm("ledger.manage"), async (c) => {
     .prepare("INSERT INTO ledger_accounts (code, name_ar, name_en, type) VALUES (?, ?, ?, ?)")
     .bind(b.code, b.name_ar, b.name_en || b.name_ar, b.type)
     .run();
+  await audit(c.env.DB, c.get("user"), "create_account", "ledger_account", r.meta.last_row_id, `${b.code} ${b.name_ar}`);
   return c.json({ id: r.meta.last_row_id }, 201);
 });
 
@@ -53,6 +54,7 @@ ledgerRoutes.post("/cash", requirePerm("ledger.manage"), async (c) => {
     .prepare("INSERT INTO cash_accounts (kind, name, name_en, account_id, account_number, opening_balance, current_balance) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .bind(b.kind || "cash", b.name, b.name_en || b.name, b.account_id, b.account_number || null, open, open)
     .run();
+  await audit(c.env.DB, c.get("user"), "create_cash", "cash_account", r.meta.last_row_id, b.name);
   return c.json({ id: r.meta.last_row_id }, 201);
 });
 
@@ -65,6 +67,10 @@ ledgerRoutes.put("/cash/:id", requirePerm("ledger.manage"), async (c) => {
     .prepare("UPDATE cash_accounts SET name=?, name_en=?, account_number=?, active=?, notes=? WHERE id=?")
     .bind(b.name ?? cur.name, b.name_en ?? cur.name_en, b.account_number ?? cur.account_number, b.active === 0 ? 0 : 1, b.notes ?? cur.notes, id)
     .run();
+  await audit(c.env.DB, c.get("user"), "edit_cash", "cash_account", id, String(b.name ?? cur.name), {
+    old_value: { name: cur.name, account_number: cur.account_number, active: cur.active },
+    new_value: { name: b.name ?? cur.name, account_number: b.account_number ?? cur.account_number, active: b.active === 0 ? 0 : 1 },
+  });
   return c.json({ ok: true });
 });
 
@@ -321,5 +327,6 @@ ledgerRoutes.post("/vouchers/:id/void", requirePerm("ledger.manage"), async (c) 
   if (row.party_type === "supplier" && row.party_id && row.type !== "receipt") {
     await c.env.DB.prepare("UPDATE suppliers SET balance = COALESCE(balance,0) + ? WHERE id = ?").bind(round2(row.amount), row.party_id).run();
   }
+  await audit(c.env.DB, c.get("user"), "void_voucher", "voucher", id, String(row.amount));
   return c.json({ ok: true });
 });

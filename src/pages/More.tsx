@@ -27,6 +27,7 @@ import { ReturnForm } from "./Invoice";
 import { ListPager, TablePager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
 import { StaffForm } from "../components/StaffForm";
+import { auditActionOptions, formatAuditRow } from "../lib/audit-format";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId, settings } = useApp();
@@ -1892,7 +1893,7 @@ export function UsersPage() {
 }
 
 export function AuditPage() {
-  const { tr, can } = useApp();
+  const { tr, lang, can } = useApp();
   const [sp] = useSearchParams();
   const [tab, setTab] = useState<"log" | "approvals">(sp.get("tab") === "approvals" ? "approvals" : "log");
   const f = useListQuery("audit");
@@ -1925,34 +1926,31 @@ export function AuditPage() {
       {tab === "log" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "action", label: "actions", type: "select", quick: true, options: [
-              "create_invoice", "cancel_invoice", "change_price", "expense", "pay_commission", "approve", "login",
-            ].map((a) => ({ value: a, label: a })) },
+            { key: "action", label: "actions", type: "select", quick: true, options: auditActionOptions(lang) },
             { key: "entity", label: "source", type: "text" },
             { key: "entity_id", label: "invoiceNo", type: "text" },
             { key: "user_id", label: "users", type: "text" },
           ]} />
           <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
           <Table
-            cols={[tr("name"), tr("actions"), tr("details"), tr("oldValue"), tr("time")]}
-            rows={rows.map((a) => [
-              a.user_name,
-              `${a.action} · ${a.entity_type || ""} #${a.entity_id || ""}`,
-              a.details,
-              a.old_value || a.new_value ? (
-                <button className="font-bold text-cyan-700" onClick={() => setDetail(a)}>{tr("view")}</button>
-              ) : "—",
-              a.created_at,
-            ])}
+            cols={[tr("name"), tr("actions"), tr("auditRecord"), tr("details"), tr("oldValue"), tr("time")]}
+            rows={rows.map((a) => {
+              const view = formatAuditRow(a, lang);
+              return [
+                a.user_name,
+                view.action,
+                view.entity || "—",
+                view.details || "—",
+                a.old_value || a.new_value ? (
+                  <button className="font-bold text-cyan-700" onClick={() => setDetail(a)}>{tr("view")}</button>
+                ) : "—",
+                a.created_at,
+              ];
+            })}
           />
           </ListGate>
           <ListPager f={f} total={auditTotal} disabled={list.loading} />
-          <Modal open={!!detail} title={detail?.action || ""} onClose={() => setDetail(null)} wide>
-            <pre className="whitespace-pre-wrap text-xs">{JSON.stringify({
-              old: (() => { try { return detail?.old_value ? JSON.parse(detail.old_value) : null; } catch { return detail?.old_value; } })(),
-              new: (() => { try { return detail?.new_value ? JSON.parse(detail.new_value) : null; } catch { return detail?.new_value; } })(),
-            }, null, 2)}</pre>
-          </Modal>
+          <AuditDetailModal row={detail} lang={lang} tr={tr} onClose={() => setDetail(null)} />
         </>
       ) : (
         <div className="space-y-6">
@@ -1998,6 +1996,56 @@ export function AuditPage() {
         </div>
       )}
     </Page>
+  );
+}
+
+function AuditDetailModal({
+  row,
+  lang,
+  tr,
+  onClose,
+}: {
+  row: any;
+  lang: "ar" | "en";
+  tr: (key: any) => string;
+  onClose: () => void;
+}) {
+  const view = row ? formatAuditRow(row, lang) : null;
+  return (
+    <Modal open={!!row} title={view?.action || ""} onClose={onClose} wide>
+      {view ? (
+        <div className="space-y-4 text-sm">
+          <div className="grid gap-1 text-[var(--text)]">
+            {view.entity ? <div><span className="text-[var(--muted)]">{tr("auditRecord")}: </span>{view.entity}</div> : null}
+            {view.details && view.details !== view.entity ? <div><span className="text-[var(--muted)]">{tr("details")}: </span>{view.details}</div> : null}
+          </div>
+          {view.changes.length ? (
+            <div className="overflow-hidden rounded-xl border border-[var(--border)]">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-[var(--surface-2)]">
+                    <th className="p-2 text-start">{tr("name")}</th>
+                    <th className="p-2 text-start">{tr("auditWas")}</th>
+                    <th className="p-2 text-start">{tr("auditBecame")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.changes.map((c) => (
+                    <tr key={c.field} className="border-t border-[var(--border)]">
+                      <td className="p-2 font-bold">{c.field}</td>
+                      <td className="p-2 text-[var(--muted)]">{c.from}</td>
+                      <td className="p-2 font-bold">{c.to}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-[var(--muted)]">{tr("auditNoDiff")}</div>
+          )}
+        </div>
+      ) : null}
+    </Modal>
   );
 }
 

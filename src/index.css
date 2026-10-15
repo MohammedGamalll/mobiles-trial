@@ -2792,27 +2792,48 @@ html[data-ui="modern"] .login-gold {
 .pos-classic-rail {
   display: flex;
   width: 92px;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   align-items: center;
   gap: 8px;
   padding: 8px 6px;
+  overflow: hidden;
   background: #f3f3f3;
   border-inline-start: 1px solid #d5d5d5;
 }
 
+.pos-classic-rail-scroll {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.pos-classic-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 .pos-classic-rail-tog {
   align-self: flex-start;
+  flex-shrink: 0;
   color: #666;
 }
 
 .pos-classic-rail-btn {
   display: flex;
   width: 100%;
+  flex-shrink: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 8px 4px;
   font-size: 11px;
   font-weight: 800;
@@ -2823,6 +2844,10 @@ html[data-ui="modern"] .login-gold {
   line-height: 1.2;
 }
 
+.pos-classic-rail-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
 .pos-classic-rail-btn small {
   font-size: 10px;
   font-weight: 700;
@@ -2830,14 +2855,14 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-rail-btn.is-sell {
-  background: #43a047;
-  border-color: #2e7d32;
+  background: #059669;
+  border-color: #047857;
   color: #fff;
 }
 
 .pos-classic-rail-btn.is-save {
-  background: #f4d03f;
-  border-color: #d4ac0d;
+  background: #f59e0b;
+  border-color: #d97706;
   color: #111;
 }
 
@@ -2846,14 +2871,21 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-rail-btn.is-credit {
-  background: #fb8c00;
-  border-color: #ef6c00;
+  background: #ea580c;
+  border-color: #c2410c;
+  color: #fff;
+}
+
+.pos-classic-rail-btn.is-end {
+  flex-shrink: 0;
+  background: #dc2626;
+  border-color: #b91c1c;
   color: #fff;
 }
 
 .pos-classic-rail-btn.is-on:not(.is-sell) {
-  border-color: #43a047;
-  box-shadow: inset 0 0 0 1px #43a047;
+  border-color: #059669;
+  box-shadow: inset 0 0 0 1px #059669;
 }
 
 .pos-classic-rail-btn:disabled {
@@ -2869,8 +2901,9 @@ html[data-ui="modern"] .login-gold {
 
 .pos-classic-top {
   display: flex;
-  align-items: stretch;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
   padding: 6px 8px;
   background: linear-gradient(180deg, #f7f7f7, #ececec);
   border-bottom: 1px solid #d0d0d0;
@@ -2882,7 +2915,7 @@ html[data-ui="modern"] .login-gold {
   width: 42px;
   align-items: center;
   justify-content: center;
-  color: #2e7d32;
+  color: #047857;
 }
 
 .pos-classic-cart-ico i {
@@ -2922,21 +2955,22 @@ html[data-ui="modern"] .login-gold {
 
 .pos-classic-field.is-search {
   flex: 1 1 220px;
+  min-width: 160px;
 }
 
 .pos-classic-field span {
   padding: 2px 8px;
-  background: #43a047;
+  background: #059669;
   color: #fff;
   font-size: 12px;
   font-weight: 800;
-  border-radius: 3px 3px 0 0;
+  border-radius: 6px 6px 0 0;
   white-space: nowrap;
 }
 
 .pos-classic-field.is-qty span,
 .pos-classic-field.is-search span {
-  background: #f4d03f;
+  background: #f59e0b;
   color: #111;
 }
 
@@ -2951,13 +2985,21 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-inquire {
-  width: 36px;
+  display: flex;
+  width: 40px;
   align-self: end;
-  height: 28px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid #c8c8c8;
   background: #fff;
   font-weight: 900;
   color: #333;
+  border-radius: 6px;
+}
+
+.pos-classic-inquire:hover:not(:disabled) {
+  filter: brightness(0.95);
 }
 
 .pos-classic-add {
@@ -2965,14 +3007,19 @@ html[data-ui="modern"] .login-gold {
   min-width: 78px;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 8px;
   align-self: end;
-  height: 28px;
-  background: #43a047;
+  height: 40px;
+  padding: 0 16px;
+  background: #059669;
   color: #fff;
   font-size: 13px;
   font-weight: 800;
-  border-radius: 3px;
+  border-radius: 6px;
+}
+
+.pos-classic-add:hover:not(:disabled) {
+  filter: brightness(0.95);
 }
 
 .pos-classic-clock {
@@ -2995,23 +3042,28 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-docs button {
-  height: 26px;
-  padding: 0 10px;
+  height: 32px;
+  padding: 0 16px;
   border: 1px solid #c8c8c8;
   background: #fff;
   font-size: 12px;
   font-weight: 800;
+  border-radius: 6px;
+}
+
+.pos-classic-docs button:hover:not(:disabled) {
+  filter: brightness(0.95);
 }
 
 .pos-classic-docs button.is-on {
-  background: #43a047;
-  border-color: #2e7d32;
+  background: #059669;
+  border-color: #047857;
   color: #fff;
 }
 
 .pos-classic-pane-title {
   padding: 6px 10px;
-  background: #e8f5e9;
+  background: #ecfdf5;
   font-size: 13px;
   font-weight: 900;
 }
@@ -3058,14 +3110,16 @@ html[data-ui="modern"] .login-gold {
 .pos-classic-control-grid button {
   min-height: 48px;
   border: 1px solid #c8c8c8;
+  border-radius: 6px;
   background: #fafafa;
   font-size: 13px;
   font-weight: 800;
 }
 
 .pos-classic-control-grid button:hover:not(:disabled) {
-  background: #e8f5e9;
-  border-color: #43a047;
+  background: #ecfdf5;
+  border-color: #059669;
+  filter: brightness(0.95);
 }
 
 .pos-classic-control-grid button:disabled {
@@ -3284,7 +3338,7 @@ html[data-ui="modern"] .login-gold {
   align-items: end;
   gap: 8px;
   padding: 6px 10px;
-  background: #43a047;
+  background: #059669;
   color: #fff;
 }
 
@@ -3298,9 +3352,10 @@ html[data-ui="modern"] .login-gold {
 
 .pos-classic-green input,
 .pos-classic-green select {
-  height: 26px;
+  height: 32px;
   min-width: 90px;
-  border: 1px solid #2e7d32;
+  border: 1px solid #047857;
+  border-radius: 6px;
   padding: 0 6px;
   color: #111;
 }
@@ -3365,9 +3420,10 @@ html[data-ui="modern"] .login-gold {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border: 1px solid #2e7d32;
+  border: 1px solid #047857;
+  border-radius: 6px;
   background: #fff;
-  padding: 0 8px;
+  padding: 0 16px;
   color: #111;
   text-align: start;
   font-weight: 700;
@@ -3381,7 +3437,7 @@ html[data-ui="modern"] .login-gold {
   min-width: 260px;
   max-height: 280px;
   overflow: auto;
-  border: 1px solid #2e7d32;
+  border: 1px solid #047857;
   background: #fff;
   box-shadow: 0 -8px 18px rgba(0, 0, 0, 0.18);
 }
@@ -3413,23 +3469,42 @@ html[data-ui="modern"] .login-gold {
 
 .pos-classic-dropup-menu button:hover,
 .pos-classic-dropup-menu button.is-on {
-  background: #e8f5e9;
+  background: #ecfdf5;
 }
 
-.pos-classic-deliv {
-  height: 26px;
+.pos-classic-deliv,
+.pos-classic-pay-modes button {
+  display: inline-flex;
+  height: 32px;
+  min-width: 88px;
+  align-items: center;
+  justify-content: center;
   align-self: end;
   border: 1px solid #fff;
-  background: #2e7d32;
-  padding: 0 10px;
+  border-radius: 6px;
+  background: #047857;
+  padding: 0 16px;
   font-size: 12px;
   font-weight: 800;
   color: #fff;
 }
 
-.pos-classic-deliv.is-on {
+.pos-classic-deliv:hover:not(:disabled),
+.pos-classic-pay-modes button:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.pos-classic-pay-modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.pos-classic-deliv.is-on,
+.pos-classic-pay-modes button.is-on {
   background: #fff;
-  color: #1b5e20;
+  color: #047857;
 }
 
 .pos-classic-black {
@@ -3446,15 +3521,17 @@ html[data-ui="modern"] .login-gold {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 26px;
-  padding: 0 8px;
+  height: 32px;
+  padding: 0 12px;
   font-size: 11px;
   font-weight: 700;
   color: #fff;
+  border-radius: 6px;
 }
 
-.pos-classic-black button:hover {
+.pos-classic-black button:hover:not(:disabled) {
   background: #333;
+  filter: brightness(0.95);
 }
 
 .pos-classic-black button:disabled {
@@ -3466,11 +3543,11 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-black button.is-credit {
-  height: 28px;
+  height: 32px;
   padding: 0 12px;
-  background: #ef6c00;
+  background: #ea580c;
   color: #fff;
-  border: 1px solid #ffb74d;
+  border: 1px solid #fb923c;
   font-size: 12px;
   font-weight: 900;
 }
@@ -3480,7 +3557,7 @@ html[data-ui="modern"] .login-gold {
 }
 
 .pos-classic-black button.is-hold {
-  height: 28px;
+  height: 32px;
   padding: 0 14px;
   background: #e11d48;
   color: #fff;
@@ -3947,16 +4024,25 @@ html[data-ui="modern"] .login-gold {
 .pos-classic-quick {
   display: flex;
   align-self: end;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
 }
 
 .pos-classic-quick button {
-  height: 28px;
-  padding: 0 8px;
-  background: #f4d03f;
+  display: flex;
+  height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  background: #f59e0b;
   color: #111;
   font-size: 11px;
   font-weight: 800;
+  border-radius: 6px;
+}
+
+.pos-classic-quick button:hover:not(:disabled) {
+  filter: brightness(0.95);
 }
 
 .pos-classic,
@@ -4060,9 +4146,16 @@ html[data-ui="modern"] .login-gold {
   background-color: #fff !important;
 }
 
+.pos-classic-deliv.is-on,
+.pos-classic-pay-modes button.is-on {
+  color: #047857 !important;
+  background-color: #fff !important;
+}
+
 .pos-classic-black button.is-hold,
 .pos-classic-black button.is-credit,
-.pos-classic-rail-btn.is-credit {
+.pos-classic-rail-btn.is-credit,
+.pos-classic-rail-btn.is-end {
   color: #fff !important;
 }
 

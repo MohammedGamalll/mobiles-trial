@@ -56,6 +56,7 @@ settingsRoutes.put("/whatsapp-templates/:code", requirePerm("settings.edit"), as
     .prepare("UPDATE whatsapp_templates SET body_ar=?, body_en=?, active=?, updated_at=datetime('now') WHERE code=?")
     .bind(b.body_ar, b.body_en, b.active === 0 ? 0 : 1, code)
     .run();
+  await audit(c.env.DB, c.get("user"), "edit_whatsapp_template", "whatsapp_template", null, code);
   return c.json({ ok: true });
 });
 
@@ -63,11 +64,13 @@ settingsRoutes.put("/payment-methods/:id", requirePerm("settings.edit"), async (
   const id = Number(c.req.param("id"));
   const b = await c.req.json<{ name_ar: string; name_en: string; active: number; sort_order: number }>();
   await c.env.DB.prepare("UPDATE payment_methods SET name_ar=?, name_en=?, active=?, sort_order=? WHERE id=?").bind(b.name_ar, b.name_en, b.active, b.sort_order, id).run();
+  await audit(c.env.DB, c.get("user"), "edit_payment_method", "payment_method", id, b.name_ar);
   return c.json({ ok: true });
 });
 
 settingsRoutes.post("/payment-methods", requirePerm("settings.edit"), async (c) => {
   const b = await c.req.json<{ code: string; name_ar: string; name_en: string }>();
   const r = await c.env.DB.prepare("INSERT INTO payment_methods (code, name_ar, name_en, active, sort_order) VALUES (?, ?, ?, 1, 99)").bind(b.code, b.name_ar, b.name_en).run();
+  await audit(c.env.DB, c.get("user"), "create_payment_method", "payment_method", r.meta.last_row_id, b.name_ar);
   return c.json({ id: r.meta.last_row_id }, 201);
 });

@@ -319,6 +319,7 @@ sahlRoutes.post("/installments/dues/:id/pay", requirePerm("installments.manage",
     .run();
   const open = await c.env.DB.prepare("SELECT COUNT(*) as n FROM installment_dues WHERE plan_id=? AND status!='paid'").bind(due.plan_id).first<{ n: number }>();
   if (!open?.n) await c.env.DB.prepare("UPDATE installment_plans SET status='completed' WHERE id=?").bind(due.plan_id).run();
+  await audit(c.env.DB, c.get("user"), "installment_pay", "installment", id, `${payAmt} ${inv.number}`);
   if (payRow) {
     await tryLedger(() =>
       postCollectionJournal(c.env.DB, { paymentId: payRow.id, invoiceNumber: inv.number, amount: payAmt, method: "installment", date: todayIso(), userId: c.get("user").id }),

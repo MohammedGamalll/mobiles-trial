@@ -2,8 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Minus, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, ErrorNote, Field, Modal, PageLoading, PrintBtn, Stat, inputCls } from "../components/ui";
+import {
+  invoicePayStatus,
+  money,
+  num,
+  statusClass,
+  statusLabel,
+} from "../lib/format";
+import {
+  Btn,
+  ErrorNote,
+  Field,
+  Modal,
+  PageLoading,
+  PrintBtn,
+  Stat,
+  inputCls,
+} from "../components/ui";
 import { StaffForm } from "../components/StaffForm";
 import { binText, lastSupplierName } from "../lib/place";
 import { InvoicePrint } from "../components/InvoicePrint";
@@ -167,11 +182,17 @@ export default function POS() {
   const [courierOpen, setCourierOpen] = useState(false);
   const [courierQ, setCourierQ] = useState("");
   const [courierFormOpen, setCourierFormOpen] = useState(false);
-  const couriers = (lookups?.delivery_agents || []).filter((a) => String((a as { status?: string }).status || "active") !== "inactive");
+  const couriers = (lookups?.delivery_agents || []).filter(
+    (a) => String((a as { status?: string }).status || "active") !== "inactive",
+  );
   const courierHits = couriers.filter((a) => {
     const qv = courierQ.trim().toLowerCase();
     if (!qv) return true;
-    return [a.name, a.code, a.phone].some((v) => String(v || "").toLowerCase().includes(qv));
+    return [a.name, a.code, a.phone].some((v) =>
+      String(v || "")
+        .toLowerCase()
+        .includes(qv),
+    );
   });
   const courierName = couriers.find((a) => a.id === agentId)?.name || "";
   const [headerFilters, setHeaderFilters] = useState<Record<string, string>>(
@@ -184,13 +205,15 @@ export default function POS() {
     [visible, headerFilters, lang, pickPrice],
   );
   const { settings } = useApp();
-  const extraPriceCols = (["price_2", "price_3", "price_4"] as const).filter((k) =>
-    visible.some((p) => {
-      const v = Number(p[k]) || 0;
-      if (!v) return false;
-      if (k === "price_2" && v === Number(p.last_purchase_price || 0)) return false;
-      return true;
-    }),
+  const extraPriceCols = (["price_2", "price_3", "price_4"] as const).filter(
+    (k) =>
+      visible.some((p) => {
+        const v = Number(p[k]) || 0;
+        if (!v) return false;
+        if (k === "price_2" && v === Number(p.last_purchase_price || 0))
+          return false;
+        return true;
+      }),
   );
   function extraPriceLabel(k: "price_2" | "price_3" | "price_4") {
     const named = String(settings?.[`${k}_name`] || "").trim();
@@ -314,7 +337,7 @@ export default function POS() {
                 {tr("view")}
               </kbd>
             </button>
-            <EndShiftButton className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-700" />
+            <EndShiftButton className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-bold bg-rose-700 text-white" />
             <div className="ms-auto text-xs text-slate-500" tabIndex={-1}>
               <b>
                 {clock.toLocaleTimeString(lang === "ar" ? "ar-EG" : "en-GB", {
@@ -348,15 +371,45 @@ export default function POS() {
             className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-slate-200 bg-[var(--surface)] px-3 py-1.5 text-xs font-bold"
             dir={lang === "ar" ? "rtl" : "ltr"}
           >
-            <PageSizeControl value={catalogPageSize} onChange={setCatalogPageSize} />
+            <PageSizeControl
+              value={catalogPageSize}
+              onChange={setCatalogPageSize}
+            />
             {catalogTotal > 0 ? (
               <>
                 <span className="text-slate-500">
-                  {num((catalogPage - 1) * catalogPageSize + (visible.length ? 1 : 0), lang)}
-                  –{num((catalogPage - 1) * catalogPageSize + visible.length, lang)} {tr("of")} {num(catalogTotal, lang)}
+                  {num(
+                    (catalogPage - 1) * catalogPageSize +
+                      (visible.length ? 1 : 0),
+                    lang,
+                  )}
+                  –
+                  {num(
+                    (catalogPage - 1) * catalogPageSize + visible.length,
+                    lang,
+                  )}{" "}
+                  {tr("of")} {num(catalogTotal, lang)}
                 </span>
-                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogPage <= 1 || catalogLoading} onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}>{tr("prev")}</button>
-                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogLoading || catalogPage >= Math.max(1, Math.ceil(catalogTotal / catalogPageSize))} onClick={() => setCatalogPage((n) => n + 1)}>{tr("next")}</button>
+                <button
+                  type="button"
+                  className="rounded-lg border px-2 py-1 disabled:opacity-40"
+                  disabled={catalogPage <= 1 || catalogLoading}
+                  onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}
+                >
+                  {tr("prev")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border px-2 py-1 disabled:opacity-40"
+                  disabled={
+                    catalogLoading ||
+                    catalogPage >=
+                      Math.max(1, Math.ceil(catalogTotal / catalogPageSize))
+                  }
+                  onClick={() => setCatalogPage((n) => n + 1)}
+                >
+                  {tr("next")}
+                </button>
               </>
             ) : null}
           </div>
@@ -369,226 +422,302 @@ export default function POS() {
             ) : catalogError && !catalogRows.length ? (
               <div className="px-4 py-12 text-center">
                 <ErrorNote message={catalogError} />
-                <Btn className="mt-3" onClick={() => reloadCatalog()}>{tr("retry")}</Btn>
+                <Btn className="mt-3" onClick={() => reloadCatalog()}>
+                  {tr("retry")}
+                </Btn>
               </div>
             ) : (
-            <table
-              className="pos-modern-table w-full text-sm"
-              dir={lang === "ar" ? "rtl" : "ltr"}
-            >
-              <thead className="sticky top-0 z-10">
-                <tr className="text-[11px]">
-                  <th className="text-start font-black">#</th>
-                  <PosHeaderFilter
-                    column="name"
-                    label={tr("posColName")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "name",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.name || ""}
-                    onChange={(v) => setHeaderFilter("name", v)}
-                  />
-                  <th className="text-start font-black">{tr("available")}</th>
-                  <PosHeaderFilter
-                    column="category"
-                    label={tr("posColCategory")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "category",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.category || ""}
-                    onChange={(v) => setHeaderFilter("category", v)}
-                  />
-                  <PosHeaderFilter
-                    column="partType"
-                    label={tr("posColKind")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "partType",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.partType || ""}
-                    onChange={(v) => setHeaderFilter("partType", v)}
-                  />
-                  <PosHeaderFilter
-                    column="brand"
-                    label={tr("posColBrand")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "brand",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.brand || ""}
-                    onChange={(v) => setHeaderFilter("brand", v)}
-                  />
-                  <PosHeaderFilter
-                    column="sku"
-                    label={tr("posColSku")}
-                    values={uniqueFilterValues(visible, "sku", lang, pickPrice)}
-                    value={headerFilters.sku || ""}
-                    onChange={(v) => setHeaderFilter("sku", v)}
-                  />
-                  <PosHeaderFilter
-                    column="supplier"
-                    label={tr("supplier")}
-                    values={uniqueFilterValues(visible, "supplier", lang, pickPrice)}
-                    value={headerFilters.supplier || ""}
-                    onChange={(v) => setHeaderFilter("supplier", v)}
-                  />
-                  <PosHeaderFilter
-                    column="warehouse"
-                    label={tr("warehouses")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "warehouse",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.warehouse || ""}
-                    onChange={(v) => setHeaderFilter("warehouse", v)}
-                  />
-                  <PosHeaderFilter
-                    column="box"
-                    label={tr("kindBay")}
-                    values={uniqueFilterValues(visible, "box", lang, pickPrice)}
-                    value={headerFilters.box || ""}
-                    onChange={(v) => setHeaderFilter("box", v)}
-                  />
-                  <PosHeaderFilter
-                    column="shelf"
-                    label={tr("shelf")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "shelf",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.shelf || ""}
-                    onChange={(v) => setHeaderFilter("shelf", v)}
-                  />
-                  <PosHeaderFilter
-                    column="selling"
-                    label={tr("sellingPrice")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "selling",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.selling || ""}
-                    onChange={(v) => setHeaderFilter("selling", v)}
-                  />
-                  <PosHeaderFilter
-                    column="min"
-                    label={tr("posColMinPrice")}
-                    values={uniqueFilterValues(visible, "min", lang, pickPrice)}
-                    value={headerFilters.min || ""}
-                    onChange={(v) => setHeaderFilter("min", v)}
-                  />
-                  <PosHeaderFilter
-                    column="wholesale"
-                    label={tr("wholesale")}
-                    values={uniqueFilterValues(
-                      visible,
-                      "wholesale",
-                      lang,
-                      pickPrice,
-                    )}
-                    value={headerFilters.wholesale || ""}
-                    onChange={(v) => setHeaderFilter("wholesale", v)}
-                  />
-                  {showCost ? <th className="text-start font-black">{tr("posColAvgBuy")}</th> : null}
-                  {showCost ? <th className="text-start font-black">{tr("posColLastBuy")}</th> : null}
-                  {extraPriceCols.map((k) => (
-                    <th key={k} className="text-start font-black">
-                      {extraPriceLabel(k)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {catalogRows.map((p, i) => {
-                  const sell = canSell(p);
-                  return (
-                    <tr
-                      key={p.id}
-                      tabIndex={-1}
-                      onClick={() => {
-                        if (sell) add(p);
-                        else playSound("err");
-                      }}
-                      className={`cursor-pointer ${sell ? "" : "is-oos cursor-not-allowed"} ${picked === p.id ? "ring-2 ring-inset ring-[var(--ink)]" : ""}`}
-                    >
-                      <td className="font-mono text-xs text-slate-400">{(catalogPage - 1) * catalogPageSize + i + 1}</td>
-                      <td className="font-bold">
-                        {lang === "ar" ? p.name_ar : p.name_en}
-                      </td>
-                      <td
-                        className={`font-black ${sell ? "" : "text-rose-500"}`}
+              <table
+                className="pos-modern-table w-full text-sm"
+                dir={lang === "ar" ? "rtl" : "ltr"}
+              >
+                <thead className="sticky top-0 z-10">
+                  <tr className="text-[11px]">
+                    <th className="text-start font-black">#</th>
+                    <PosHeaderFilter
+                      column="name"
+                      label={tr("posColName")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "name",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.name || ""}
+                      onChange={(v) => setHeaderFilter("name", v)}
+                    />
+                    <th className="text-start font-black">{tr("available")}</th>
+                    <PosHeaderFilter
+                      column="category"
+                      label={tr("posColCategory")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "category",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.category || ""}
+                      onChange={(v) => setHeaderFilter("category", v)}
+                    />
+                    <PosHeaderFilter
+                      column="partType"
+                      label={tr("posColKind")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "partType",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.partType || ""}
+                      onChange={(v) => setHeaderFilter("partType", v)}
+                    />
+                    <PosHeaderFilter
+                      column="brand"
+                      label={tr("posColBrand")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "brand",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.brand || ""}
+                      onChange={(v) => setHeaderFilter("brand", v)}
+                    />
+                    <PosHeaderFilter
+                      column="sku"
+                      label={tr("posColSku")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "sku",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.sku || ""}
+                      onChange={(v) => setHeaderFilter("sku", v)}
+                    />
+                    <PosHeaderFilter
+                      column="supplier"
+                      label={tr("supplier")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "supplier",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.supplier || ""}
+                      onChange={(v) => setHeaderFilter("supplier", v)}
+                    />
+                    <PosHeaderFilter
+                      column="warehouse"
+                      label={tr("warehouses")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "warehouse",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.warehouse || ""}
+                      onChange={(v) => setHeaderFilter("warehouse", v)}
+                    />
+                    <PosHeaderFilter
+                      column="box"
+                      label={tr("kindBay")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "box",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.box || ""}
+                      onChange={(v) => setHeaderFilter("box", v)}
+                    />
+                    <PosHeaderFilter
+                      column="shelf"
+                      label={tr("shelf")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "shelf",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.shelf || ""}
+                      onChange={(v) => setHeaderFilter("shelf", v)}
+                    />
+                    <PosHeaderFilter
+                      column="selling"
+                      label={tr("sellingPrice")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "selling",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.selling || ""}
+                      onChange={(v) => setHeaderFilter("selling", v)}
+                    />
+                    <PosHeaderFilter
+                      column="min"
+                      label={tr("posColMinPrice")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "min",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.min || ""}
+                      onChange={(v) => setHeaderFilter("min", v)}
+                    />
+                    <PosHeaderFilter
+                      column="wholesale"
+                      label={tr("wholesale")}
+                      values={uniqueFilterValues(
+                        visible,
+                        "wholesale",
+                        lang,
+                        pickPrice,
+                      )}
+                      value={headerFilters.wholesale || ""}
+                      onChange={(v) => setHeaderFilter("wholesale", v)}
+                    />
+                    {showCost ? (
+                      <th className="text-start font-black">
+                        {tr("posColAvgBuy")}
+                      </th>
+                    ) : null}
+                    {showCost ? (
+                      <th className="text-start font-black">
+                        {tr("posColLastBuy")}
+                      </th>
+                    ) : null}
+                    {extraPriceCols.map((k) => (
+                      <th key={k} className="text-start font-black">
+                        {extraPriceLabel(k)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {catalogRows.map((p, i) => {
+                    const sell = canSell(p);
+                    return (
+                      <tr
+                        key={p.id}
+                        tabIndex={-1}
+                        onClick={() => {
+                          if (sell) add(p);
+                          else playSound("err");
+                        }}
+                        className={`cursor-pointer ${sell ? "" : "is-oos cursor-not-allowed"} ${picked === p.id ? "ring-2 ring-inset ring-[var(--ink)]" : ""}`}
                       >
-                        {p.kind === "service" || p.non_stock
-                          ? "∞"
-                          : num(p.available, lang)}
-                      </td>
-                      <td className="text-slate-500">{p.quality || (lang === "ar" ? p.category_ar : p.category_en) || p.category_ar || "—"}</td>
-                      <td className="text-slate-500">
-                        {(lang === "ar" ? p.part_type_ar : p.part_type_en) ||
-                          p.part_type_ar ||
-                          "—"}
-                      </td>
-                      <td className="text-slate-500">
-                        {(lang === "ar" ? p.brand_ar : p.brand_en) ||
-                          p.brand_ar ||
-                          "—"}
-                      </td>
-                      <td className="font-mono text-xs text-slate-500">
-                        {[p.sku, p.barcode].filter(Boolean).join(" / ") || "—"}
-                      </td>
-                      <td className="text-slate-500">{lastSupplierName(p) || "—"}</td>
-                      <td className="text-slate-500">
-                        {p.warehouse || p.location_name || "—"}
-                      </td>
-                      <td className="text-slate-500">{p.box || "—"}</td>
-                      <td className="text-slate-500">{binText(p) || "—"}</td>
-                      <td className="is-sell">{money(pickPrice(p), lang)}</td>
-                      <td>
-                        {p.min_selling_price
-                          ? money(p.min_selling_price, lang)
-                          : "—"}
-                      </td>
-                      <td>
-                        {p.wholesale_price
-                          ? money(p.wholesale_price, lang)
-                          : "—"}
-                      </td>
-                      {showCost ? <td>{money(p.purchase_price || 0, lang)}</td> : null}
-                      {showCost ? <td>{money(p.last_purchase_price || p.purchase_price || 0, lang)}</td> : null}
-                      {extraPriceCols.map((k) => (
-                        <td key={k}>
-                          {Number(p[k]) ? money(Number(p[k]), lang) : "—"}
+                        <td className="font-mono text-xs text-slate-400">
+                          {(catalogPage - 1) * catalogPageSize + i + 1}
                         </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <td className="font-bold">
+                          {lang === "ar" ? p.name_ar : p.name_en}
+                        </td>
+                        <td
+                          className={`font-black ${sell ? "" : "text-rose-500"}`}
+                        >
+                          {p.kind === "service" || p.non_stock
+                            ? "∞"
+                            : num(p.available, lang)}
+                        </td>
+                        <td className="text-slate-500">
+                          {p.quality ||
+                            (lang === "ar" ? p.category_ar : p.category_en) ||
+                            p.category_ar ||
+                            "—"}
+                        </td>
+                        <td className="text-slate-500">
+                          {(lang === "ar" ? p.part_type_ar : p.part_type_en) ||
+                            p.part_type_ar ||
+                            "—"}
+                        </td>
+                        <td className="text-slate-500">
+                          {(lang === "ar" ? p.brand_ar : p.brand_en) ||
+                            p.brand_ar ||
+                            "—"}
+                        </td>
+                        <td className="font-mono text-xs text-slate-500">
+                          {[p.sku, p.barcode].filter(Boolean).join(" / ") ||
+                            "—"}
+                        </td>
+                        <td className="text-slate-500">
+                          {lastSupplierName(p) || "—"}
+                        </td>
+                        <td className="text-slate-500">
+                          {p.warehouse || p.location_name || "—"}
+                        </td>
+                        <td className="text-slate-500">{p.box || "—"}</td>
+                        <td className="text-slate-500">{binText(p) || "—"}</td>
+                        <td className="is-sell">{money(pickPrice(p), lang)}</td>
+                        <td>
+                          {p.min_selling_price
+                            ? money(p.min_selling_price, lang)
+                            : "—"}
+                        </td>
+                        <td>
+                          {p.wholesale_price
+                            ? money(p.wholesale_price, lang)
+                            : "—"}
+                        </td>
+                        {showCost ? (
+                          <td>{money(p.purchase_price || 0, lang)}</td>
+                        ) : null}
+                        {showCost ? (
+                          <td>
+                            {money(
+                              p.last_purchase_price || p.purchase_price || 0,
+                              lang,
+                            )}
+                          </td>
+                        ) : null}
+                        {extraPriceCols.map((k) => (
+                          <td key={k}>
+                            {Number(p[k]) ? money(Number(p[k]), lang) : "—"}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
             {catalogTotal > 0 ? (
               <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 px-3 py-2 text-xs font-bold">
                 <span className="text-slate-500">
-                  {num((catalogPage - 1) * catalogPageSize + (visible.length ? 1 : 0), lang)}
-                  –{num((catalogPage - 1) * catalogPageSize + visible.length, lang)} {tr("of")} {num(catalogTotal, lang)}
+                  {num(
+                    (catalogPage - 1) * catalogPageSize +
+                      (visible.length ? 1 : 0),
+                    lang,
+                  )}
+                  –
+                  {num(
+                    (catalogPage - 1) * catalogPageSize + visible.length,
+                    lang,
+                  )}{" "}
+                  {tr("of")} {num(catalogTotal, lang)}
                 </span>
-                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogPage <= 1 || catalogLoading} onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}>{tr("prev")}</button>
-                <button type="button" className="rounded-lg border px-2 py-1 disabled:opacity-40" disabled={catalogLoading || catalogPage >= Math.max(1, Math.ceil(catalogTotal / catalogPageSize))} onClick={() => setCatalogPage((n) => n + 1)}>{tr("next")}</button>
+                <button
+                  type="button"
+                  className="rounded-lg border px-2 py-1 disabled:opacity-40"
+                  disabled={catalogPage <= 1 || catalogLoading}
+                  onClick={() => setCatalogPage((n) => Math.max(1, n - 1))}
+                >
+                  {tr("prev")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border px-2 py-1 disabled:opacity-40"
+                  disabled={
+                    catalogLoading ||
+                    catalogPage >=
+                      Math.max(1, Math.ceil(catalogTotal / catalogPageSize))
+                  }
+                  onClick={() => setCatalogPage((n) => n + 1)}
+                >
+                  {tr("next")}
+                </button>
               </div>
             ) : null}
             {!catalogLoading && !catalogError && !catalogRows.length ? (
@@ -598,7 +727,13 @@ export default function POS() {
             ) : catalogError && catalogRows.length ? (
               <div className="px-3 py-2">
                 <ErrorNote message={catalogError} />
-                <Btn kind="ghost" className="mt-2" onClick={() => reloadCatalog()}>{tr("retry")}</Btn>
+                <Btn
+                  kind="ghost"
+                  className="mt-2"
+                  onClick={() => reloadCatalog()}
+                >
+                  {tr("retry")}
+                </Btn>
               </div>
             ) : null}
           </div>
@@ -757,7 +892,9 @@ export default function POS() {
               </button>
               {type === "delivery" ? (
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-[var(--surface-2)] p-2">
-                  <div className="text-xs font-black text-slate-600">{tr("agent")}</div>
+                  <div className="text-xs font-black text-slate-600">
+                    {tr("agent")}
+                  </div>
                   <div className="flex gap-2">
                     <div className="relative min-w-0 flex-1">
                       <button
@@ -765,7 +902,11 @@ export default function POS() {
                         className={`${inputCls} flex min-h-11 w-full items-center justify-between gap-2 text-start`}
                         onClick={() => setCourierOpen((v) => !v)}
                       >
-                        <span className={courierName ? "font-bold" : "text-slate-400"}>
+                        <span
+                          className={
+                            courierName ? "font-bold" : "text-slate-400"
+                          }
+                        >
                           {courierName || tr("agent")}
                         </span>
                         <ChevronDown size={16} />
@@ -802,12 +943,16 @@ export default function POS() {
                             >
                               <div className="font-bold">{a.name}</div>
                               <div className="text-[11px] text-slate-500">
-                                {[a.code, a.phone, a.area].filter(Boolean).join(" · ")}
+                                {[a.code, a.phone, a.area]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </div>
                             </button>
                           ))}
                           {!courierHits.length ? (
-                            <div className="px-3 py-3 text-sm text-slate-400">{tr("noAgentsHint")}</div>
+                            <div className="px-3 py-3 text-sm text-slate-400">
+                              {tr("noAgentsHint")}
+                            </div>
                           ) : null}
                         </div>
                       ) : null}
@@ -821,7 +966,9 @@ export default function POS() {
                     </button>
                   </div>
                   <label className="block text-xs font-bold">
-                    <span className="mb-1 block text-slate-500">{tr("deliveryFee")}</span>
+                    <span className="mb-1 block text-slate-500">
+                      {tr("deliveryFee")}
+                    </span>
                     <input
                       tabIndex={3}
                       className={inputCls}
@@ -1116,7 +1263,11 @@ export default function POS() {
                         onChange={(e) => setDue(e.target.value)}
                       />
                     </label>
-                    <CreditDownPayment total={total} paid={paid} onPaid={setPaid} />
+                    <CreditDownPayment
+                      total={total}
+                      paid={paid}
+                      onPaid={setPaid}
+                    />
                   </>
                 ) : null}
                 {err ? (
@@ -1471,75 +1622,75 @@ export default function POS() {
                 {(held || []).map((h) => {
                   const open = isOpenHeld(h.status);
                   return (
-                  <tr key={h.id} className={open ? "" : "opacity-50"}>
-                    <td>{h.number}</td>
-                    <td>{h.customer_name || tr("walkIn")}</td>
-                    <td>{h.delivery_agent_name || "—"}</td>
-                    <td className="font-bold">{money(h.total, lang)}</td>
-                    <td>{statusLabel(h.status, lang)}</td>
-                    <td>
-                      {open ? (
-                      <div className="held-act">
-                        <button
-                          type="button"
-                          className="is-pay"
-                          disabled={busy || !can("sales.create")}
-                          onClick={() => void finalizeHeld(h.id, "pay")}
-                        >
-                          {tr("completeHeldPay")}
-                        </button>
-                        <button
-                          type="button"
-                          className="is-credit"
-                          disabled={busy || !can("sales.create")}
-                          onClick={() => void finalizeHeld(h.id, "credit")}
-                        >
-                          {tr("completeHeldCredit")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            beginResumeHeld(h.id);
-                            setHeldOpen(false);
-                            nav(`/pos?held=${h.id}`);
-                          }}
-                        >
-                          {tr("restoreHeld")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => nav(`/sales/${h.id}`)}
-                        >
-                          {tr("preview")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHeldOpen(false);
-                            nav(`/sales/${h.id}`);
-                            setTimeout(() => window.print(), 400);
-                          }}
-                        >
-                          {tr("print")}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!waEnabled || !can("whatsapp.send")}
-                          onClick={() => void previewWa(h.id)}
-                        >
-                          {tr("whatsapp")}
-                        </button>
-                        <button
-                          type="button"
-                          className="is-del"
-                          onClick={() => void cancelHeld(h.id)}
-                        >
-                          {tr("delete")}
-                        </button>
-                      </div>
-                      ) : null}
-                    </td>
-                  </tr>
+                    <tr key={h.id} className={open ? "" : "opacity-50"}>
+                      <td>{h.number}</td>
+                      <td>{h.customer_name || tr("walkIn")}</td>
+                      <td>{h.delivery_agent_name || "—"}</td>
+                      <td className="font-bold">{money(h.total, lang)}</td>
+                      <td>{statusLabel(h.status, lang)}</td>
+                      <td>
+                        {open ? (
+                          <div className="held-act">
+                            <button
+                              type="button"
+                              className="is-pay"
+                              disabled={busy || !can("sales.create")}
+                              onClick={() => void finalizeHeld(h.id, "pay")}
+                            >
+                              {tr("completeHeldPay")}
+                            </button>
+                            <button
+                              type="button"
+                              className="is-credit"
+                              disabled={busy || !can("sales.create")}
+                              onClick={() => void finalizeHeld(h.id, "credit")}
+                            >
+                              {tr("completeHeldCredit")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                beginResumeHeld(h.id);
+                                setHeldOpen(false);
+                                nav(`/pos?held=${h.id}`);
+                              }}
+                            >
+                              {tr("restoreHeld")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => nav(`/sales/${h.id}`)}
+                            >
+                              {tr("preview")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setHeldOpen(false);
+                                nav(`/sales/${h.id}`);
+                                setTimeout(() => window.print(), 400);
+                              }}
+                            >
+                              {tr("print")}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!waEnabled || !can("whatsapp.send")}
+                              onClick={() => void previewWa(h.id)}
+                            >
+                              {tr("whatsapp")}
+                            </button>
+                            <button
+                              type="button"
+                              className="is-del"
+                              onClick={() => void cancelHeld(h.id)}
+                            >
+                              {tr("delete")}
+                            </button>
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -1814,8 +1965,12 @@ export default function POS() {
                 </div>
               ))}
               <div className="flex gap-2">
-                <Btn onClick={() => void submitInvoiceReturn(false)}>{tr("save")}</Btn>
-                <Btn kind="soft" onClick={() => void submitInvoiceReturn(true)}>{tr("exchange")}</Btn>
+                <Btn onClick={() => void submitInvoiceReturn(false)}>
+                  {tr("save")}
+                </Btn>
+                <Btn kind="soft" onClick={() => void submitInvoiceReturn(true)}>
+                  {tr("exchange")}
+                </Btn>
               </div>
             </>
           ) : (
