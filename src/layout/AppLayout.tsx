@@ -49,8 +49,8 @@ function AppNav({
   slim?: boolean;
   classic: boolean;
   groups: NavGroup[];
-  can: (perm: string) => boolean;
-  user: { delivery_agent_id?: number | null; role_slug?: string } | null | undefined;
+  can: (...perm: string[]) => boolean;
+  user: { id?: number; delivery_agent_id?: number | null; role_slug?: string } | null | undefined;
   tr: (k: Msg) => string;
   activeTo: string | null;
   openGroup: Msg | null;
@@ -61,7 +61,7 @@ function AppNav({
   return (
     <nav className="app-nav space-y-2 px-3 pb-8">
       {groups.map((g) => {
-        const visible = g.items.filter((i) => can(i.perm) && (!i.agentOnly || user?.delivery_agent_id || user?.role_slug === "admin"));
+        const visible = g.items.filter((i) => can(...(Array.isArray(i.perm) ? i.perm : [i.perm])) && (!i.agentOnly || user?.delivery_agent_id || user?.role_slug === "admin" || user?.id === 1));
         if (!visible.length) return null;
         const open = openGroup === g.label;
         const GroupIcon = visible[0].icon;

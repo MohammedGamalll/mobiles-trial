@@ -24,6 +24,7 @@ const pages: { to: string; key: Msg; perm: string }[] = [
   { to: "/installments", key: "installments", perm: "installments.manage" },
   { to: "/reps", key: "reps", perm: "reps.view" },
   { to: "/hr/attendance", key: "attendance", perm: "attendance.own" },
+  { to: "/hr/advances", key: "advances", perm: "advances.own" },
   { to: "/ledger/journal", key: "journal", perm: "ledger.view" },
   { to: "/settings", key: "settings", perm: "settings.view" },
 ];

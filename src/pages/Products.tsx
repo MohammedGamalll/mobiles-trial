@@ -241,7 +241,10 @@ export default function Products() {
   async function printFiltered() {
     const r = await get<{ data: any[] }>(`/api/products?${listFilterQuery({ page: "1", pageSize: "5000" })}`);
     setData(r.data || []);
-    requestAnimationFrame(() => printPage());
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    printPage("landscape");
   }
 
   const qualities = Array.from(new Set([
@@ -275,10 +278,10 @@ export default function Products() {
   )].sort((a, b) => a.localeCompare(b, lang === "ar" ? "ar" : "en"));
 
   return (
-    <div className="space-y-4">
+    <div className="products-sheet space-y-4">
       <PrintLetterhead title={tr("products")} />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-black">{tr("products")}</h1>
+        <h1 className="no-print text-2xl font-black">{tr("products")}</h1>
         <div className="no-print page-actions flex gap-2">
           <ExportBtn kind="products" query={listFilterQuery()} />
           <PrintBtn onClick={printFiltered} />
@@ -325,7 +328,7 @@ export default function Products() {
         </div>
       </div>
       {act.message ? <p className="text-sm font-bold text-emerald-700">{act.message}</p> : null}
-      <div className="mb-3 grid gap-3 gx-kpi md:grid-cols-4">
+      <div className="mb-3 grid gap-3 gx-kpi no-print md:grid-cols-4">
         <Stat label={tr("products")} value={`${num(data.length, lang)} / ${num(totals.count, lang)}`} />
         <Stat label={tr("qty")} value={num(totals.qty, lang)} />
         <Stat label={tr("stockValue")} value={money(totals.actual_value ?? totals.value, lang)} />
@@ -465,6 +468,7 @@ export default function Products() {
                 />
                 <PosHeaderFilter
                   column="partType"
+                  className="print-hide"
                   label={tr("partType")}
                   values={partTypeOptions}
                   value={labelForId(lookups?.part_types, f.values.part_type_id, lang)}
@@ -491,9 +495,9 @@ export default function Products() {
                   value={statusFilterOpts.find((s) => s.value === f.values.status)?.label || ""}
                   onChange={(v) => f.set("status", statusFilterOpts.find((s) => s.label === v)?.value || "")}
                 />
-                <th>{tr("lineValue")}</th>
-                <th>{tr("openingQty")}</th>
-                <th>{tr("warehouseDist")}</th>
+                <th className="print-hide">{tr("lineValue")}</th>
+                <th className="print-hide">{tr("openingQty")}</th>
+                <th className="print-hide">{tr("warehouseDist")}</th>
                 <PosHeaderFilter
                   column="selling"
                   label={tr("sellingPrice")}
@@ -504,6 +508,7 @@ export default function Products() {
                 <PosHeaderFilter
                   column="location"
                   label={tr("location")}
+                  className="print-hide"
                   values={uniqueFilterValues(data as Product[], "location", lang, pickPrice)}
                   value={headerFilters.location || ""}
                   onChange={(v) => setHeaderFilter("location", v)}
@@ -524,24 +529,24 @@ export default function Products() {
                   </td>
                   <td>{p.sku}</td>
                   <td>{p.quality || (lang === "ar" ? p.category_ar : p.category_en) || p.category_ar || "—"}</td>
-                  <td>{lang === "ar" ? p.part_type_ar : p.part_type_en}</td>
+                  <td className="print-hide">{lang === "ar" ? p.part_type_ar : p.part_type_en}</td>
                   <td>{lang === "ar" ? p.brand_ar : p.brand_en}</td>
                   <td className="max-w-40 truncate">{(p.models || []).map((m: any) => m.name).join(", ")}</td>
                   <td>
                     <span className={statusClass(p.stock_status)}>{num(p.available, lang)}</span>
                   </td>
-                  <td>
+                  <td className="print-hide">
                     <div>{money(p.stock_value ?? (Number(p.available) || 0) * (Number(p.selling_price) || 0), lang)}</div>
                     {can("costs.view") && p.cost_value != null ? <div className="text-xs text-slate-400">{money(p.cost_value, lang)}</div> : null}
                   </td>
-                  <td>{num(p.opening_qty, lang)}</td>
-                  <td className="text-xs">
+                  <td className="print-hide">{num(p.opening_qty, lang)}</td>
+                  <td className="print-hide text-xs">
                     {(p.warehouses || []).length
                       ? (p.warehouses as { warehouse: string; qty: number }[]).map((w) => `${w.warehouse}${w.qty ? `: ${num(w.qty, lang)}` : ""}`).join(" · ")
                       : placeLabel(p) || "—"}
                   </td>
                   <td>{money(p.selling_price, lang)}</td>
-                  <td className="text-xs">{p.location_name}</td>
+                  <td className="print-hide text-xs">{p.location_name}</td>
                   <td className="no-print">
                     <div className="flex flex-wrap gap-2">
                       <Link className="filter-link text-sm" to={`/products/${p.id}`}>{tr("view")}</Link>
@@ -585,6 +590,7 @@ export default function Products() {
       </div>
       )}
       <TablePager
+        className="no-print"
         page={f.page}
         pageSize={pageSize}
         total={Number(totals.count) || 0}
@@ -592,7 +598,7 @@ export default function Products() {
         onPage={(n) => f.set("page", String(n))}
         onPageSize={(n) => f.setMany({ pageSize: String(n), page: "1" })}
       />
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="no-print grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
           <div className="mb-2 font-bold">{tr("dailyPurchases")}{daily.date ? ` · ${daily.date}` : ""}</div>
           {!daily.purchases.length ? <div className="text-sm text-slate-400">{tr("noData")}</div> : daily.purchases.slice(0, 20).map((r) => (

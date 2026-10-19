@@ -1,4 +1,5 @@
 import { audit, hashPassword, randomToken, todayIso, type AppDb, type AuthUser } from "./helpers";
+import { copyRolePermissionsToUser } from "./user-permissions";
 
 export const STAFF_KINDS = ["courier", "cashier", "warehouse", "accountant", "sales_rep"] as const;
 export type StaffKind = (typeof STAFF_KINDS)[number];
@@ -99,6 +100,7 @@ export async function createStaff(db: AppDb, raw: StaffInput, actor?: AuthUser |
       .bind(username, hash, salt, name, phone || null, role.id, agentId)
       .run();
     const userId = user.meta.last_row_id;
+    await copyRolePermissionsToUser(tx, userId, role.id);
 
     const empCode = await uniqueCode(tx, "employees", spec.agent ? `E-${baseCode}` : baseCode);
     const emp = await tx

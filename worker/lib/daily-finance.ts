@@ -1,7 +1,7 @@
 import type { AppDb } from "./db";
 import type { ListQ } from "./filters";
 import { reportShiftMeta, reportStamp, resolveMovementScope, shiftTaggedJournalBinds, shiftTaggedJournalSql } from "./daily-movement";
-import { SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE } from "./pos-shifts";
+import { SHIFT_CLOSE_SOURCE } from "./pos-shifts";
 import { round2 } from "./helpers";
 
 function n(v: unknown) {
@@ -24,10 +24,10 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
   const shiftSale = shiftId ? " AND si.shift_id = ?" : "";
   const shiftBinds = shiftId ? [shiftId] : [];
   const periodJoin = shiftId
-    ? `j.status = 'posted' AND j.source NOT IN (?, ?) AND (${shiftTaggedJournalSql("j")} OR (${jStamp} >= ? AND ${jStamp} <= ?))`
+    ? `j.status = 'posted' AND j.source <> ? AND (${shiftTaggedJournalSql("j")} OR (${jStamp} >= ? AND ${jStamp} <= ?))`
     : `j.status = 'posted' AND ${jStamp} >= ? AND ${jStamp} <= ?`;
   const periodBinds = shiftId
-    ? [SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE, ...shiftTaggedJournalBinds(shiftId), fromDt, toDt, ...cashBinds]
+    ? [SHIFT_CLOSE_SOURCE, ...shiftTaggedJournalBinds(shiftId), fromDt, toDt, ...cashBinds]
     : [fromDt, toDt, ...cashBinds];
 
   const [accounts, opening, period, expenses, otherRev, extras, overage] = await db.batch([
@@ -82,12 +82,14 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
          ${shiftId ? shiftSale : `AND ${siStamp} >= ? AND ${siStamp} <= ?`}`,
     ).bind(...(shiftId ? shiftBinds : [fromDt, toDt])),
     db.prepare(
-      `SELECT COALESCE(SUM(l.credit),0) as n
+      `SELECT
+          COALESCE(SUM(CASE WHEN a.code = '4210' THEN l.credit ELSE 0 END),0) as overage,
+          COALESCE(SUM(CASE WHEN a.code = '5215' THEN l.debit ELSE 0 END),0) as shortage
        FROM journal_lines l
        JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
-       JOIN ledger_accounts a ON a.id = l.account_id AND a.code = '4210'
-       WHERE ${jStamp} >= ? AND ${jStamp} <= ?`,
-    ).bind(fromDt, toDt),
+       JOIN ledger_accounts a ON a.id = l.account_id AND a.code IN ('4210','5215')
+       WHERE j.source = 'shift_variance' AND ${shiftId ? "j.source_id = ?" : `${jStamp} >= ? AND ${jStamp} <= ?`}`,
+    ).bind(...(shiftId ? [shiftId] : [fromDt, toDt])),
   ]);
 
   const byId = new Map<number, {
@@ -160,7 +162,8 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
       purchase_returns: sourceIn("purchase_return"),
       other_revenues: otherRevenueTotal,
       partner_deposits: sourceIn("partner_deposit"),
-      cash_overage: n((overage.results?.[0] as { n?: number } | undefined)?.n),
+      cash_overage: n((overage.results?.[0] as { overage?: number } | undefined)?.overage),
+      shift_overage: n((overage.results?.[0] as { overage?: number } | undefined)?.overage),
     },
     outflow: {
       purchases: sourceOut("purchase"),
@@ -170,6 +173,7 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
       sales_returns: sourceOut("return"),
       commissions: sourceOut("commission"),
       partner_draws: sourceOut("partner_draw"),
+      shift_shortage: n((overage.results?.[0] as { shortage?: number } | undefined)?.shortage),
     },
     expense_breakdown: ((expenses.results || []) as Array<{ name_ar: string; name_en: string; total: number; c: number }>).map((r) => ({
       name_ar: r.name_ar,
@@ -180,7 +184,8 @@ export async function loadDailyFinance(db: AppDb, p: ListQ) {
     revenue_breakdown: [
       { key: "additions", name_ar: "إضافات الفواتير", name_en: "Invoice additions", total: n((extras.results?.[0] as { n?: number } | undefined)?.n) },
       { key: "other_revenues", name_ar: "إيرادات متنوعة", name_en: "Other revenues", total: otherRevenueTotal },
-      { key: "cash_overage", name_ar: "زيادة صندوق", name_en: "Cash overage", total: n((overage.results?.[0] as { n?: number } | undefined)?.n) },
+      { key: "cash_overage", name_ar: "زيادة صندوق", name_en: "Cash overage", total: n((overage.results?.[0] as { overage?: number } | undefined)?.overage) },
+      { key: "shift_shortage", name_ar: "عجز صندوق", name_en: "Cash shortage", total: n((overage.results?.[0] as { shortage?: number } | undefined)?.shortage) },
       ...((otherRev.results || []) as Array<{ name_ar: string; name_en: string; total: number }>).map((r) => ({
         key: "other",
         name_ar: r.name_ar,

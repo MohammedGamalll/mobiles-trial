@@ -349,7 +349,8 @@ export async function ensureAppSchema(db: AppDb) {
   await run(`INSERT OR IGNORE INTO ledger_accounts (code, name_ar, name_en, type) VALUES
     ('4210', 'زيادة صندوق', 'Cash overage', 'revenue'),
     ('5215', 'عجز صندوق', 'Cash shortage', 'expense'),
-    ('1101', 'الخزنة', 'Safe cash', 'asset')`);
+    ('1101', 'الخزنة', 'Safe cash', 'asset'),
+    ('1410', 'سلف الموظفين', 'Employee advances', 'asset')`);
   await run(`INSERT INTO cash_accounts (kind, name, name_en, account_id, opening_balance, current_balance, active)
     SELECT 'cash', 'الصندوق الرئيسي', 'Main cash', la.id, 0, 0, 1
     FROM ledger_accounts la
@@ -408,6 +409,36 @@ export async function ensureAppSchema(db: AppDb) {
     (2, 'رسوم خدمات', 'Service fees', 1),
     (3, 'تسوية', 'Settlement', 1),
     (4, 'أخرى', 'Other', 1)`);
+  await run(`CREATE TABLE IF NOT EXISTS user_permissions (
+    user_id INTEGER NOT NULL,
+    permission_id INTEGER NOT NULL,
+    UNIQUE KEY uq_user_perm (user_id, permission_id)
+  )`);
+  await run(`INSERT OR IGNORE INTO user_permissions (user_id, permission_id)
+    SELECT u.id, rp.permission_id FROM users u JOIN role_permissions rp ON rp.role_id = u.role_id`);
+  await run(`INSERT OR IGNORE INTO permissions (code, module, name_ar, name_en) VALUES
+    ('advances.own', 'hr', 'طلب سلفة', 'Request own advance')`);
+  await run(`INSERT OR IGNORE INTO user_permissions (user_id, permission_id)
+    SELECT DISTINCT up.user_id, pnew.id
+    FROM user_permissions up
+    JOIN permissions pold ON pold.id = up.permission_id AND pold.code IN ('attendance.own', 'leaves.own')
+    JOIN permissions pnew ON pnew.code = 'advances.own'`);
+  await run(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+    SELECT DISTINCT rp.role_id, pnew.id
+    FROM role_permissions rp
+    JOIN permissions pold ON pold.id = rp.permission_id AND pold.code IN ('attendance.own', 'leaves.own')
+    JOIN permissions pnew ON pnew.code = 'advances.own'`);
+  await run("ALTER TABLE partner_transactions DROP FOREIGN KEY partner_transactions_ibfk_1");
+  await run("ALTER TABLE partner_transactions MODIFY partner_id INTEGER NULL");
+  await run("ALTER TABLE settings MODIFY value LONGTEXT");
+  await run("ALTER TABLE audit_logs MODIFY old_value LONGTEXT");
+  await run("ALTER TABLE audit_logs MODIFY new_value LONGTEXT");
+  await run("ALTER TABLE audit_logs MODIFY details LONGTEXT");
+  await run("ALTER TABLE whatsapp_templates MODIFY body_ar LONGTEXT");
+  await run("ALTER TABLE whatsapp_templates MODIFY body_en LONGTEXT");
+  await run("ALTER TABLE whatsapp_logs MODIFY message LONGTEXT");
+  const { ensureWhatsappTemplates } = await import("./whatsapp");
+  await ensureWhatsappTemplates(db);
   try {
     const live = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NULL").first<{ n: number }>();
     const dead = await db.prepare("SELECT COUNT(*) n FROM products WHERE deleted_at IS NOT NULL").first<{ n: number }>();

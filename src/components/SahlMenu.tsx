@@ -82,7 +82,7 @@ export function SahlMenu() {
   return (
     <nav className="sahl-menu no-print" onMouseLeave={() => setOpen(null)}>
       {groups.map((g) => {
-        const items = g.items.filter((i) => can(i.perm));
+        const items = g.items.filter((i) => can(...(Array.isArray(i.perm) ? i.perm : [i.perm])));
         if (!items.length) return null;
         return (
           <div key={g.key} className="sahl-menu-item" onMouseEnter={() => setOpen(g.key)}>

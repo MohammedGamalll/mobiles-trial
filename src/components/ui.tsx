@@ -331,9 +331,10 @@ export function ExportBtn({ kind, query = "", className = "" }: { kind: string; 
   );
 }
 
-export function printPage(mode: "a4" | "thermal" = "a4") {
+export function printPage(mode: "a4" | "thermal" | "landscape" = "a4") {
   const html = document.documentElement;
   html.classList.toggle("print-thermal", mode === "thermal");
+  html.classList.toggle("print-landscape", mode === "landscape");
   let style = document.getElementById("print-page-size") as HTMLStyleElement | null;
   if (!style) {
     style = document.createElement("style");
@@ -342,14 +343,15 @@ export function printPage(mode: "a4" | "thermal" = "a4") {
   }
   style.textContent = mode === "thermal"
     ? "@page { size: 80mm auto; margin: 2mm; }"
-    : "@page { size: A4; margin: 12mm; }";
+    : mode === "landscape"
+      ? "@page { size: A4 landscape; margin: 8mm; }"
+      : "@page { size: A4; margin: 10mm; }";
   const cleanup = () => {
-    html.classList.remove("print-thermal");
+    html.classList.remove("print-thermal", "print-landscape");
     window.removeEventListener("afterprint", cleanup);
   };
   window.addEventListener("afterprint", cleanup);
   window.print();
-  window.setTimeout(cleanup, 1500);
 }
 
 export function PrintBtn({ className = "", thermal = false, onClick }: { className?: string; thermal?: boolean; onClick?: () => void | Promise<void> }) {
@@ -364,7 +366,7 @@ export function PrintBtn({ className = "", thermal = false, onClick }: { classNa
 
 export function PrintLetterhead({ title }: { title: string }) {
   const { settings, lang, tr } = useApp();
-  const now = new Date().toLocaleString(lang === "ar" ? "ar-EG" : "en-EG");
+  const now = new Date().toLocaleString(lang === "ar" ? "ar-EG-u-nu-latn" : "en-EG");
   return (
     <div className="print-only mb-5 border-b border-slate-300 pb-4">
       <div className="flex items-start justify-between gap-4">

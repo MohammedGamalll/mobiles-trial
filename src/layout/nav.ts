@@ -11,6 +11,7 @@ import {
   Tags,
   Smartphone,
   MapPin,
+  ClipboardCheck,
   ClipboardList,
   Wallet,
   BarChart3,
@@ -42,7 +43,7 @@ export type NavItem = {
   to: string;
   key: Msg;
   icon: any;
-  perm: string;
+  perm: string | string[];
   agentOnly?: boolean;
 };
 
@@ -72,6 +73,7 @@ export const modernNav: NavGroup[] = [
     items: [
       { to: "/courier", key: "myOrders", icon: Truck, perm: "delivery.view", agentOnly: true },
       { to: "/delivery", key: "delivery", icon: Truck, perm: "delivery.update" },
+      { to: "/delivery/settle", key: "settleCourier", icon: ClipboardCheck, perm: "delivery.settle" },
       { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.view" },
     ],
   },
@@ -91,7 +93,7 @@ export const modernNav: NavGroup[] = [
       { to: "/hr/attendance", key: "attendance", icon: Clock3, perm: "attendance.own" },
       { to: "/hr/shifts", key: "shifts", icon: AlarmClock, perm: "hr.manage" },
       { to: "/hr/leaves", key: "leaves", icon: CalendarDays, perm: "leaves.own" },
-      { to: "/hr/advances", key: "advances", icon: Banknote, perm: "hr.payroll" },
+      { to: "/hr/advances", key: "advances", icon: Banknote, perm: ["advances.own", "hr.payroll", "advances.manage"] },
       { to: "/hr/payroll", key: "payroll", icon: WalletCards, perm: "hr.payroll" },
     ],
   },

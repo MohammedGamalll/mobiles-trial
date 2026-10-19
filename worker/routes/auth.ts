@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
-import { audit, hashPassword, randomToken, type AppBindings, type AppVars, type AuthUser } from "../lib/helpers";
+import { audit, hashPassword, randomToken, type AppBindings, type AppVars } from "../lib/helpers";
 import { clearSessionCookie, destroySession, loadUserFromToken, loginUser, requireAuth, setSessionCookie } from "../lib/auth";
 
 export const authRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
@@ -23,31 +23,11 @@ authRoutes.post("/login", async (c) => {
   } catch {
     /* never block login */
   }
-  const user = await c.env.DB
-    .prepare(
-      `SELECT u.id, u.username, u.full_name, u.phone, u.role_id, r.slug as role_slug, r.name_ar as role_name_ar, r.name_en as role_name_en, u.delivery_agent_id, IFNULL(u.ui_layout, 'modern') as ui_layout
-       FROM users u JOIN roles r ON r.id = u.role_id WHERE u.username = ?`,
-    )
-    .bind(body.username.trim())
-    .first();
-  const perms = await c.env.DB
-    .prepare(
-      `SELECT p.code FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id JOIN users u ON u.role_id = rp.role_id WHERE u.username = ?`,
-    )
-    .bind(body.username.trim())
-    .all<{ code: string }>();
+  const user = await loadUserFromToken(c.env.DB, result.token);
   if (user) {
-    const row = user as { id: number; full_name?: string; username?: string };
-    await audit(
-      c.env.DB,
-      { id: Number(row.id), full_name: String(row.full_name || body.username) } as AuthUser,
-      "login",
-      "user",
-      Number(row.id),
-      String(row.username || body.username),
-    );
+    await audit(c.env.DB, user, "login", "user", user.id, user.username);
   }
-  return c.json({ user: { ...user, permissions: perms.results.map((p) => p.code) }, token: result.token });
+  return c.json({ user, token: result.token });
 });
 
 authRoutes.post("/logout", async (c) => {

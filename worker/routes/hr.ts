@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { audit, getSettings, paginate, round2, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { haversineMeters, workplaceFromSettings } from "../lib/geo";
-import { postAdvanceJournal, postExpenseJournal, reverseJournal } from "../lib/ledger";
+import { postAdvanceJournal, postAdvanceSettleJournal, postExpenseJournal, reverseJournal } from "../lib/ledger";
+import { isSuperAdmin, userHasPerm } from "../lib/user-permissions";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
 import { notifyAdmins, safeNotify, sendNotification, userIdForEmployee } from "../lib/notifications";
 import { applyAdvanceDeduction, netPay } from "../lib/invoice-math";
@@ -43,18 +44,29 @@ type SessionRow = {
   status: string;
 };
 
-async function settleAdvancesForEmployee(db: AppDb, employeeId: number, amount: number, runId: number) {
+async function settleAdvancesForEmployee(db: AppDb, employeeId: number, amount: number, runId: number, userId?: number | null) {
   const { results } = await db
     .prepare("SELECT id, remaining FROM salary_advances WHERE employee_id = ? AND status = 'open' ORDER BY date, id")
     .bind(employeeId)
     .all<{ id: number; remaining: number }>();
   const plan = applyAdvanceDeduction(results, amount);
+  let taken = 0;
   for (const row of plan) {
     if (row.take <= 0) continue;
+    taken = round2(taken + row.take);
     await db
       .prepare("UPDATE salary_advances SET remaining = ?, status = ?, payroll_run_id = ? WHERE id = ?")
       .bind(row.remaining, row.settled ? "settled" : "open", runId, row.id)
       .run();
+  }
+  if (taken > 0) {
+    await postAdvanceSettleJournal(db, {
+      runId,
+      employeeId,
+      amount: taken,
+      date: todayIso(),
+      userId,
+    });
   }
 }
 
@@ -762,7 +774,7 @@ hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {
           });
         }
         if (!s.advances_settled) {
-          await settleAdvancesForEmployee(tx, s.employee_id, Number(s.advances || 0), id);
+          await settleAdvancesForEmployee(tx, s.employee_id, Number(s.advances || 0), id, user.id);
           s.advances_settled = 1;
         }
         s.paid_amount = round2(Number(s.paid_amount || 0) + payNow);
@@ -964,7 +976,12 @@ hrRoutes.delete("/leaves/:id", requirePerm("leaves.manage", "leaves.own"), async
   return c.json({ ok: true });
 });
 
-hrRoutes.get("/advances", requirePerm("advances.manage", "hr.payroll", "hr.view"), async (c) => {
+function canManageAdvances(user: { id: number; role_slug: string; permissions: string[] }) {
+  return isSuperAdmin(user) || userHasPerm(user, "advances.manage", "hr.payroll", "hr.view");
+}
+
+hrRoutes.get("/advances", requirePerm("advances.own", "advances.manage", "hr.payroll", "hr.view"), async (c) => {
+  const user = c.get("user");
   const p = listParams(new URL(c.req.url));
   const where = ["1=1"];
   const params: (string | number)[] = [];
@@ -973,6 +990,12 @@ hrRoutes.get("/advances", requirePerm("advances.manage", "hr.payroll", "hr.view"
   applySearch(where, params, p.q, ["e.name", "e.code"]);
   applyRange(where, params, "a.amount", p.amount_min, p.amount_max);
   applyDate(where, params, "a.date", p);
+  if (!canManageAdvances(user)) {
+    const emp = await employeeForUser(c.env.DB, user.id);
+    if (!emp) return c.json({ data: [] });
+    where.push("a.employee_id = ?");
+    params.push(emp.id);
+  }
   const { results } = await c.env.DB
     .prepare(
       `SELECT a.*, e.name as employee_name, e.code as employee_code
@@ -1008,38 +1031,71 @@ async function ensureCourierEmployee(db: AppDb, agentId: number) {
   return r.meta.last_row_id;
 }
 
-hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (c) => {
+async function approveAdvance(
+  db: AppDb,
+  row: { id: number; employee_id: number; amount: number; date: string; status: string },
+  cashAccountId: number | null,
+  userId: number,
+) {
+  if (row.status !== "pending") throw new Error("not_pending");
+  const journalId = await postAdvanceJournal(db, {
+    id: row.id,
+    amount: round2(row.amount),
+    date: row.date,
+    description: `سلفة #${row.id}`,
+    cashAccountId,
+    userId,
+  });
+  await db
+    .prepare("UPDATE salary_advances SET status = 'open', remaining = amount, cash_account_id = ?, journal_id = COALESCE(?, journal_id) WHERE id = ?")
+    .bind(cashAccountId, journalId || null, row.id)
+    .run();
+}
+
+hrRoutes.post("/advances", requirePerm("advances.own", "advances.manage", "hr.payroll"), async (c) => {
   const b = await c.req.json<{ employee_id?: number; delivery_agent_id?: number; amount: number; date?: string; month?: string; notes?: string; cash_account_id?: number }>();
+  const user = c.get("user");
+  const manager = userHasPerm(user, "advances.manage", "hr.payroll");
   let employeeId = Number(b.employee_id || 0);
-  try {
-    if (!employeeId && b.delivery_agent_id) employeeId = await ensureCourierEmployee(c.env.DB, Number(b.delivery_agent_id));
-  } catch (e) {
-    const msg = String((e as Error)?.message || "error");
-    return c.json({ error: msg }, msg === "agent_not_found" ? 404 : 400);
+  if (!manager) {
+    const own = await employeeForUser(c.env.DB, user.id);
+    if (!own) return c.json({ error: "no_employee" }, 400);
+    employeeId = own.id;
+  } else {
+    try {
+      if (!employeeId && b.delivery_agent_id) employeeId = await ensureCourierEmployee(c.env.DB, Number(b.delivery_agent_id));
+    } catch (e) {
+      const msg = String((e as Error)?.message || "error");
+      return c.json({ error: msg }, msg === "agent_not_found" ? 404 : 400);
+    }
   }
   if (!employeeId || !b.amount) return c.json({ error: "missing" }, 400);
   const date = b.date || todayIso();
   const month = b.month || date.slice(0, 7);
   const cashAccountId = Number(b.cash_account_id || 0) || null;
-  const user = c.get("user");
+  const autoApprove = manager && Boolean(cashAccountId);
+  const status = autoApprove ? "open" : "pending";
+  const remaining = autoApprove ? round2(b.amount) : 0;
   let advanceId = 0;
   try {
     advanceId = await c.env.DB.transaction(async (tx) => {
       const r = await tx
-        .prepare("INSERT INTO salary_advances (employee_id, amount, remaining, date, month, status, notes, created_by, cash_account_id) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)")
-        .bind(employeeId, round2(b.amount), round2(b.amount), date, month, b.notes || null, user.id, cashAccountId)
+        .prepare("INSERT INTO salary_advances (employee_id, amount, remaining, date, month, status, notes, created_by, cash_account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(employeeId, round2(b.amount), remaining, date, month, status, b.notes || null, user.id, autoApprove ? cashAccountId : null)
         .run();
       const id = r.meta.last_row_id;
-      const journalId = await postAdvanceJournal(tx, {
-        id,
-        amount: round2(b.amount),
-        date,
-        description: `سلفة #${id}`,
-        cashAccountId,
-        userId: user.id,
-      });
-      if (journalId) {
-        await tx.prepare("UPDATE salary_advances SET journal_id = ? WHERE id = ?").bind(journalId, id).run();
+      if (autoApprove) {
+        const journalId = await postAdvanceJournal(tx, {
+          id,
+          amount: round2(b.amount),
+          date,
+          description: `سلفة #${id}`,
+          cashAccountId,
+          userId: user.id,
+        });
+        if (journalId) {
+          await tx.prepare("UPDATE salary_advances SET journal_id = ? WHERE id = ?").bind(journalId, id).run();
+        }
       }
       return id;
     });
@@ -1048,34 +1104,90 @@ hrRoutes.post("/advances", requirePerm("advances.manage", "hr.payroll"), async (
     if (msg === "ledger" || msg === "unbalanced_journal") return c.json({ error: "ledger" }, 500);
     throw e;
   }
-  await refreshUnpaidSlipsForEmployee(c.env.DB, employeeId);
-  await audit(c.env.DB, user, "create_advance", "advance", advanceId, String(b.amount));
+  if (autoApprove) await refreshUnpaidSlipsForEmployee(c.env.DB, employeeId);
+  await audit(c.env.DB, user, "create_advance", "advance", advanceId, `${status} ${b.amount}`);
   await safeNotify(async () => {
     const emp = await c.env.DB.prepare("SELECT name FROM employees WHERE id = ?").bind(employeeId).first<{ name: string }>();
     const amt = round2(b.amount);
     await notifyAdmins(c.env.DB, {
       type: "hr",
-      titleAr: "سلفة جديدة",
-      titleEn: "New advance",
-      bodyAr: `تم تسجيل سلفة بقيمة ${amt} للموظف ${emp?.name || ""}`,
-      bodyEn: `An advance of ${amt} was registered for ${emp?.name || "an employee"}`,
-      entityType: "advance",
-      entityId: Number(advanceId),
-      actionUrl: "/hr/advances",
-    });
-    const uid = await userIdForEmployee(c.env.DB, employeeId);
-    await sendNotification(c.env.DB, uid, {
-      type: "hr",
-      titleAr: "سلفة على حسابك",
-      titleEn: "Advance on your account",
-      bodyAr: `تم تسجيل سلفة بقيمة ${amt} على حسابك`,
-      bodyEn: `An advance of ${amt} has been registered to your account`,
+      titleAr: autoApprove ? "سلفة جديدة" : "طلب سلفة",
+      titleEn: autoApprove ? "New advance" : "Advance request",
+      bodyAr: autoApprove
+        ? `تم تسجيل سلفة بقيمة ${amt} للموظف ${emp?.name || ""}`
+        : `طلب سلفة بقيمة ${amt} من ${emp?.name || ""} بانتظار الاعتماد`,
+      bodyEn: autoApprove
+        ? `An advance of ${amt} was registered for ${emp?.name || "an employee"}`
+        : `${emp?.name || "An employee"} requested an advance of ${amt}`,
       entityType: "advance",
       entityId: Number(advanceId),
       actionUrl: "/hr/advances",
     });
   });
-  return c.json({ id: advanceId, employee_id: employeeId }, 201);
+  return c.json({ id: advanceId, employee_id: employeeId, status }, 201);
+});
+
+hrRoutes.post("/advances/:id/approve", requirePerm("advances.manage", "hr.payroll"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<{ cash_account_id?: number }>().catch(() => ({} as { cash_account_id?: number }));
+  const cashAccountId = Number(b.cash_account_id || 0) || null;
+  if (!cashAccountId) return c.json({ error: "missing" }, 400);
+  const row = await c.env.DB
+    .prepare("SELECT id, employee_id, amount, date, status FROM salary_advances WHERE id = ?")
+    .bind(id)
+    .first<{ id: number; employee_id: number; amount: number; date: string; status: string }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.status !== "pending") return c.json({ error: "not_pending" }, 400);
+  const user = c.get("user");
+  try {
+    await c.env.DB.transaction(async (tx) => {
+      await approveAdvance(tx, row, cashAccountId, user.id);
+    });
+  } catch (e) {
+    const msg = String((e as Error)?.message || "");
+    if (msg === "ledger" || msg === "unbalanced_journal") return c.json({ error: "ledger" }, 500);
+    if (msg === "not_pending") return c.json({ error: "not_pending" }, 400);
+    throw e;
+  }
+  await refreshUnpaidSlipsForEmployee(c.env.DB, row.employee_id);
+  await audit(c.env.DB, user, "approve_advance", "advance", id, String(row.amount));
+  await safeNotify(async () => {
+    const uid = await userIdForEmployee(c.env.DB, row.employee_id);
+    await sendNotification(c.env.DB, uid, {
+      type: "hr",
+      titleAr: "تم اعتماد السلفة",
+      titleEn: "Advance approved",
+      bodyAr: `تم اعتماد سلفتك بقيمة ${round2(row.amount)}`,
+      bodyEn: `Your advance of ${round2(row.amount)} was approved`,
+      entityType: "advance",
+      entityId: id,
+      actionUrl: "/hr/advances",
+    });
+  });
+  return c.json({ ok: true });
+});
+
+hrRoutes.post("/advances/:id/reject", requirePerm("advances.manage", "hr.payroll"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const row = await c.env.DB.prepare("SELECT status, employee_id FROM salary_advances WHERE id = ?").bind(id).first<{ status: string; employee_id: number }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.status !== "pending") return c.json({ error: "not_pending" }, 400);
+  await c.env.DB.prepare("UPDATE salary_advances SET status = 'rejected' WHERE id = ?").bind(id).run();
+  await audit(c.env.DB, c.get("user"), "reject_advance", "advance", id, String(row.employee_id));
+  await safeNotify(async () => {
+    const uid = await userIdForEmployee(c.env.DB, row.employee_id);
+    await sendNotification(c.env.DB, uid, {
+      type: "hr",
+      titleAr: "تحديث حالة الطلب",
+      titleEn: "Request update",
+      bodyAr: "تم رفض طلب السلفة",
+      bodyEn: "Your advance request was rejected",
+      entityType: "advance",
+      entityId: id,
+      actionUrl: "/hr/advances",
+    });
+  });
+  return c.json({ ok: true });
 });
 
 hrRoutes.post("/advances/:id/cancel", requirePerm("advances.manage", "hr.payroll"), async (c) => {

@@ -4,6 +4,7 @@ import {
   drawerCashForSale,
   drawerFlowSinceSql,
   isDrawerPayMethod,
+  isShiftCollectionPayment,
   saleDrawerForInvoice,
   planShiftClose,
   shiftExpected,
@@ -11,6 +12,14 @@ import {
   shouldSkipVaultTransfer,
   vaultTransferAmount,
 } from "../worker/lib/pos-shifts.ts";
+
+test("delivery COD is a collection, same-shift cash sale is not", () => {
+  assert.equal(isShiftCollectionPayment({ shift_id: 13, notes: "delivery settlement" }, { type: "delivery", shift_id: 13, payment_method: "cash" }), true);
+  assert.equal(isShiftCollectionPayment({ shift_id: null, notes: "" }, { type: "delivery", shift_id: 13, payment_method: "cash" }), true);
+  assert.equal(isShiftCollectionPayment({ shift_id: 13, notes: "" }, { type: "normal", shift_id: 13, payment_method: "cash" }), false);
+  assert.equal(isShiftCollectionPayment({ shift_id: 13, notes: "" }, { type: "normal", shift_id: 8, payment_method: "cash" }), true);
+  assert.equal(isShiftCollectionPayment({ shift_id: 13, notes: "" }, { type: "normal", shift_id: 13, payment_method: "credit" }), true);
+});
 
 test("expected cash is opening plus in minus out", () => {
   assert.equal(shiftExpected(1000, 400, 150), 1250);

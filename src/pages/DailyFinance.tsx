@@ -4,6 +4,7 @@ import { get } from "../lib/api";
 import { apiMessage } from "../lib/errors";
 import { money } from "../lib/format";
 import { ShiftFilter, ShiftWindowNote, toDatetimeLocalValue, type ShiftPick } from "../components/ShiftFilter";
+import { ProfitBreakdown, type ProfitBreakdownData } from "../components/ProfitBreakdown";
 import { Btn, ErrorNote, Field, PageLoading, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import { useLiveList } from "../hooks/useLiveList";
 
@@ -28,6 +29,7 @@ type Report = {
   outflow: Record<string, number>;
   expense_breakdown: { name_ar: string; name_en: string; total: number; count: number }[];
   revenue_breakdown: { key: string; name_ar: string; name_en: string; total: number }[];
+  profit_breakdown?: ProfitBreakdownData | null;
 };
 
 function localDay() {
@@ -88,7 +90,7 @@ export default function DailyFinance() {
     ["vouchers", data?.inflow.vouchers],
     ["purchaseReturns", data?.inflow.purchase_returns],
     ["otherRevenues", data?.inflow.other_revenues],
-    ["shiftOverage", data?.inflow.cash_overage],
+    ["shiftOverage", data?.inflow.shift_overage ?? data?.inflow.cash_overage],
   ] as const;
   const outflowRows = [
     ["purchases", data?.outflow.purchases],
@@ -97,6 +99,7 @@ export default function DailyFinance() {
     ["vouchers", data?.outflow.vouchers],
     ["salesReturns", data?.outflow.sales_returns],
     ["commissions", data?.outflow.commissions],
+    ["shiftShortage", data?.outflow.shift_shortage],
   ] as const;
 
   return (
@@ -197,6 +200,8 @@ export default function DailyFinance() {
               </div>
             </section>
           </div>
+
+          <ProfitBreakdown data={data.profit_breakdown} />
 
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">

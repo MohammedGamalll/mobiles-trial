@@ -7,7 +7,7 @@ import { Btn, PrintBtn, PrintLetterhead } from "../components/ui";
 import { OsmMap } from "../components/OsmMap";
 import { useCourierGps } from "../hooks/useCourierGps";
 
-const OPEN_DELIVERY = new Set(["held"]);
+const OPEN_DELIVERY = new Set(["held", "pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"]);
 const COLORS = ["#0f766e", "#1d4ed8", "#7c3aed", "#c2410c", "#be123c"];
 
 function pinCoords(lat: unknown, lng: unknown) {

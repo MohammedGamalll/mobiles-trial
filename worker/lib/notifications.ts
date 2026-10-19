@@ -82,10 +82,10 @@ export async function notifyAccountants(db: AppDb, payload: NotifyPayload) {
     .prepare(
       `SELECT DISTINCT u.id FROM users u
        JOIN roles r ON r.id = u.role_id
-       LEFT JOIN role_permissions rp ON rp.role_id = u.role_id
-       LEFT JOIN permissions p ON p.id = rp.permission_id
+       LEFT JOIN user_permissions up ON up.user_id = u.id
+       LEFT JOIN permissions p ON p.id = up.permission_id
        WHERE u.active = 1 AND u.deleted_at IS NULL
-         AND (r.slug = 'accountant' OR p.code = 'delivery.settle')`,
+         AND (r.slug = 'accountant' OR r.slug = 'admin' OR u.id = 1 OR p.code = 'delivery.settle')`,
     )
     .all<{ id: number }>();
   await notifyUsers(

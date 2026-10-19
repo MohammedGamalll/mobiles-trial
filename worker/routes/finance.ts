@@ -3,7 +3,8 @@ import { audit, paginate, todayIso, type AppBindings, type AppVars } from "../li
 import { requirePerm } from "../lib/auth";
 import { postExpenseJournal, postOtherRevenueJournal, reverseJournal, tryLedger } from "../lib/ledger";
 import { attachOpenShift } from "../lib/pos-shifts";
-import { applyDate, applyEq, applyRange, applySearch, listParams, sqlText } from "../lib/filters";
+import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates, sqlText } from "../lib/filters";
+import { loadProfitBreakdown } from "../lib/profit-breakdown";
 
 export const financeRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -89,24 +90,32 @@ financeRoutes.post("/expenses/:id/void", requirePerm("expenses.void", "expenses.
 });
 
 financeRoutes.get("/accounts", requirePerm("reports.view", "payments.view"), async (c) => {
-  const from = new URL(c.req.url).searchParams.get("from") || "2000-01-01";
-  const to = new URL(c.req.url).searchParams.get("to") || "2099-12-31";
-  const [sales, purchases, payments, credit, expenses, profit] = await c.env.DB.batch([
-    c.env.DB.prepare(`SELECT COALESCE(SUM(total),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('cancelled','draft') AND date BETWEEN ? AND ?`).bind(from, to),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND date BETWEEN ? AND ?`).bind(from, to),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM payments WHERE voided_at IS NULL AND date BETWEEN ? AND ?`).bind(from, to),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(remaining),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND remaining > 0 AND status NOT IN ('cancelled')`),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM expenses WHERE voided_at IS NULL AND date BETWEEN ? AND ?`).bind(from, to),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('cancelled','draft','pending_delivery','out_for_delivery') AND date BETWEEN ? AND ?`).bind(from, to),
+  const url = new URL(c.req.url);
+  const p = listParams(url);
+  const range = resolveDates(p);
+  const from = range.from || "2000-01-01";
+  const to = range.to || "2099-12-31";
+  const [sales, purchases, payments, credit, expenses, invoiceProfit, breakdown] = await Promise.all([
+    c.env.DB.prepare(`SELECT COALESCE(SUM(total),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('cancelled','draft') AND date BETWEEN ? AND ?`).bind(from, to).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(total),0) as n FROM purchase_invoices WHERE deleted_at IS NULL AND status = 'approved' AND date BETWEEN ? AND ?`).bind(from, to).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM payments WHERE voided_at IS NULL AND date BETWEEN ? AND ?`).bind(from, to).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(remaining),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND remaining > 0 AND status NOT IN ('cancelled')`).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(amount),0) as n FROM expenses WHERE voided_at IS NULL AND date BETWEEN ? AND ?`).bind(from, to).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(profit),0) as n FROM sales_invoices WHERE deleted_at IS NULL AND status NOT IN ('cancelled','draft','held','quote','order','pending_delivery','out_for_delivery','pending_settlement') AND date BETWEEN ? AND ?`).bind(from, to).first<{ n: number }>(),
+    loadProfitBreakdown(c.env.DB, p),
   ]);
-  const n = (r: { results: unknown[] }) => Number((r.results[0] as { n: number })?.n || 0);
+  const n = (row: { n: number } | null) => Number(row?.n || 0);
   return c.json({
     sales: n(sales),
     purchases: n(purchases),
     payments: n(payments),
     credit: n(credit),
     expenses: n(expenses),
-    profit: n(profit),
+    profit: breakdown.net_profit,
+    invoice_profit: n(invoiceProfit),
+    profit_breakdown: breakdown,
+    from: breakdown.from,
+    to: breakdown.to,
   });
 });
 

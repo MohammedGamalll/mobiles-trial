@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { audit, getSettings, hashPassword, isDupEntry, like, paginate, randomToken, round2, todayIso, type AppBindings, type AppDb, type AppVars } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
+import { copyRolePermissionsToUser, replaceUserPermissions } from "../lib/user-permissions";
 import { applyEq, applyRange, applySearch, CUSTOMER_SORT, listParams, resolveDates, sortSql, sqlText } from "../lib/filters";
 import { postCollectionJournal, postOpeningPartyJournal } from "../lib/ledger";
 import { applyStandaloneReceipt, customerOpeningSigned, fxCurrency, fxRate, openingCreditAbs, supplierPayableEgp } from "../lib/party-money";
@@ -462,8 +463,39 @@ peopleRoutes.post("/users", requirePerm("users.manage"), async (c) => {
     .prepare("INSERT INTO users (username, password_hash, password_salt, full_name, phone, role_id, delivery_agent_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .bind(b.username, hash, salt, b.full_name, b.phone || null, b.role_id, b.delivery_agent_id || null)
     .run();
+  await copyRolePermissionsToUser(c.env.DB, r.meta.last_row_id, Number(b.role_id));
   await audit(c.env.DB, c.get("user"), "create_user", "user", r.meta.last_row_id, b.username);
   return c.json({ id: r.meta.last_row_id }, 201);
+});
+
+peopleRoutes.get("/users/:id/permissions", requirePerm("users.view", "users.manage"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const user = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND deleted_at IS NULL").bind(id).first<{ id: number }>();
+  if (!user) return c.json({ error: "not_found" }, 404);
+  const permissions = await c.env.DB.prepare("SELECT * FROM permissions ORDER BY module, code").all();
+  const selected = await c.env.DB
+    .prepare("SELECT permission_id FROM user_permissions WHERE user_id = ?")
+    .bind(id)
+    .all<{ permission_id: number }>();
+  return c.json({
+    user_id: id,
+    permissions: permissions.results,
+    permission_ids: (selected.results || []).map((r) => r.permission_id),
+  });
+});
+
+peopleRoutes.put("/users/:id/permissions", requirePerm("users.manage"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const user = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND deleted_at IS NULL").bind(id).first<{ id: number }>();
+  if (!user) return c.json({ error: "not_found" }, 404);
+  const prev = await c.env.DB.prepare("SELECT permission_id FROM user_permissions WHERE user_id = ?").bind(id).all<{ permission_id: number }>();
+  const b = await c.req.json<{ permission_ids?: number[] }>();
+  await replaceUserPermissions(c.env.DB, id, b.permission_ids || []);
+  await audit(c.env.DB, c.get("user"), "edit_permissions", "user", id, "Update user permissions", {
+    old_value: (prev.results || []).map((r) => r.permission_id),
+    new_value: b.permission_ids || [],
+  });
+  return c.json({ ok: true });
 });
 
 peopleRoutes.put("/users/:id", requirePerm("users.manage"), async (c) => {

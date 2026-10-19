@@ -5,6 +5,34 @@ import { applyIssue, logMovement, maybeStockAlerts, releaseReserve, type Allocat
 
 export const ESCROW_STATUSES = ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"] as const;
 export const CUSTODY_STATUSES = ["out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"] as const;
+export const COURIER_OPEN_STATUSES = ["held", "pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"] as const;
+export const COURIER_MARKED_STATUSES = ["pending_settlement"] as const;
+export const COURIER_DONE_STATUSES = ["pending_settlement", "delivered", "completed"] as const;
+
+export function invoiceDeliveryState(status: string, deliveryStatus?: string | null) {
+  const st = String(status || "");
+  const ds = String(deliveryStatus || "");
+  if (st === "pending_settlement" || ds === "pending_settlement") return "marked" as const;
+  if (["delivered", "completed"].includes(st) || ["delivered", "completed"].includes(ds)) return "confirmed" as const;
+  if ((COURIER_OPEN_STATUSES as readonly string[]).includes(st) || (COURIER_OPEN_STATUSES as readonly string[]).includes(ds)) {
+    return "open" as const;
+  }
+  return "other" as const;
+}
+
+export function canMarkDelivered(status: string, deliveryStatus?: string | null) {
+  return invoiceDeliveryState(status, deliveryStatus) === "open";
+}
+
+export function courierOpenSql(alias = "si") {
+  const open = COURIER_OPEN_STATUSES.map((s) => `'${s}'`).join(",");
+  return `(${alias}.status IN (${open}) AND IFNULL(${alias}.delivery_status,'') NOT IN ('pending_settlement','delivered','completed'))`;
+}
+
+export function courierDoneSql(alias = "si") {
+  const done = COURIER_DONE_STATUSES.map((s) => `'${s}'`).join(",");
+  return `(${alias}.status IN (${done}) OR ${alias}.delivery_status IN (${done}))`;
+}
 
 export type SettlementOutcome = "delivered" | "rejected" | "damaged" | "returned";
 export type ChargeTo = "courier" | "customer" | "company";
@@ -57,6 +85,7 @@ type InvoiceRow = {
   stock_committed_at: string | null;
   finance_committed_at: string | null;
   settled_at: string | null;
+  shift_id?: number | null;
 };
 
 type ItemRow = {
@@ -222,8 +251,8 @@ export async function settleInvoice(
     await db.prepare("UPDATE product_serials SET status='sold' WHERE invoice_id=? AND status='reserved'").bind(inv.id).run();
     if (collected > 0) {
       await db
-        .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by) VALUES (?, ?, ?, ?, ?, 'delivery settlement', ?)")
-        .bind(inv.id, inv.customer_id, inv.payment_method || "cash", collected, todayIso(), opts.userId)
+        .prepare("INSERT INTO payments (invoice_id, customer_id, method, amount, date, notes, created_by, shift_id) VALUES (?, ?, ?, ?, ?, 'delivery settlement', ?, ?)")
+        .bind(inv.id, inv.customer_id, inv.payment_method || "cash", collected, todayIso(), opts.userId, inv.shift_id || null)
         .run();
     }
     if (inv.customer_id && remaining > 0) {

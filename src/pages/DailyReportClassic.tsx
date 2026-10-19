@@ -9,6 +9,7 @@ import { ShiftFilter, ShiftWindowNote, toDatetimeLocalValue, type ShiftPick } fr
 import { ErrorNote, PrintLetterhead } from "../components/ui";
 import { warehouseLocations } from "../lib/warehouses";
 import type { Msg } from "../i18n";
+import { ProfitBreakdown, type ProfitBreakdownData } from "../components/ProfitBreakdown";
 import { TablePager } from "../components/TablePager";
 import { usePagedRows } from "../hooks/usePagedRows";
 
@@ -64,6 +65,8 @@ type Summary = {
   opening_balance: number;
   net_movement: number;
   final_balance: number;
+  shift_shortage?: number;
+  shift_overage?: number;
 };
 
 type Report = {
@@ -71,6 +74,7 @@ type Report = {
   to?: string;
   shift?: ShiftPick | null;
   summary: Summary;
+  profit_breakdown?: ProfitBreakdownData | null;
   matrix?: Matrix;
   sales_lines: SalesLine[];
   return_lines: SalesLine[];
@@ -250,6 +254,8 @@ export default function DailyReportClassic() {
         },
         { key: "dailyRowPayment", value: s.vouchers_out },
         { key: "dailyInvoiceExpense", value: s.expenses },
+        { key: "shiftOverage", value: s.shift_overage || 0 },
+        { key: "shiftShortage", value: s.shift_shortage || 0 },
         { key: "dailyPrevBalance", value: s.opening_balance, yellow: true },
         { key: "dailyTreasuryNet", value: s.net_movement, bold: true },
         {
@@ -435,6 +441,11 @@ export default function DailyReportClassic() {
                 </tbody>
               </table>
             </div>
+            {data.profit_breakdown ? (
+              <div className="sahl-daily-treasury mt-4">
+                <ProfitBreakdown data={data.profit_breakdown} />
+              </div>
+            ) : null}
           </div>
         ) : null}
 

@@ -826,7 +826,11 @@ export function AdvancesPage() {
   const [emps, setEmps] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [otOpen, setOtOpen] = useState(false);
+  const [approveId, setApproveId] = useState(0);
+  const [approveCash, setApproveCash] = useState("");
   const [form, setForm] = useState({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", cash_account_id: "" });
+  const manageAdvances = can("advances.manage", "hr.payroll");
+  const requestOwn = can("advances.own");
   const cashAccounts = lookups?.cash_accounts || [];
   const [ot, setOt] = useState({ employee_id: "", hours: 1, date: new Date().toISOString().slice(0, 10), notes: "" });
   const { confirmDelete, dialog } = useConfirm();
@@ -850,15 +854,17 @@ export function AdvancesPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{tr("advances")}</h1>
         <div className="no-print flex gap-2">
-          {can("advances.manage", "hr.payroll") ? <Btn onClick={() => setOpen(true)}>{tr("newAdvance")}</Btn> : null}
+          {manageAdvances || requestOwn ? <Btn onClick={() => setOpen(true)}>{manageAdvances ? tr("newAdvance") : tr("requestAdvance")}</Btn> : null}
           {can("hr.payroll") ? <Btn kind="soft" onClick={() => setOtOpen(true)}>{tr("newOvertime")}</Btn> : null}
           <PrintBtn />
         </div>
       </div>
       <SmartFilter f={f} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [
+          { value: "pending", label: statusLabel("pending", lang) },
           { value: "open", label: statusLabel("open", lang) },
           { value: "settled", label: statusLabel("settled", lang) },
+          { value: "rejected", label: statusLabel("rejected", lang) },
           { value: "deducted", label: statusLabel("deducted", lang) },
           { value: "cancelled", label: statusLabel("cancelled", lang) },
         ] },
@@ -889,8 +895,14 @@ export function AdvancesPage() {
                   <td>{money(r.amount, lang)}</td>
                   <td>{money(r.remaining ?? (r.status === "open" ? r.amount : 0), lang)}</td>
                   <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
-                  <td>
-                    {r.status === "open" && can("advances.manage", "hr.payroll") ? (
+                  <td className="no-print">
+                    {r.status === "pending" && manageAdvances ? (
+                      <div className="flex gap-2">
+                        <button className="font-bold text-emerald-700" onClick={() => { setApproveId(r.id); setApproveCash(String(cashAccounts[0]?.id || "")); }}>{tr("approve")}</button>
+                        <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await post(`/api/hr/advances/${r.id}/reject`, {}); list.reload(); })}>{tr("reject")}</button>
+                      </div>
+                    ) : null}
+                    {r.status === "open" && manageAdvances ? (
                       <button className="font-bold text-rose-600" onClick={() => confirmDelete(r.employee_name, async () => { await post(`/api/hr/advances/${r.id}/cancel`, {}); list.reload(); })}>{tr("delete")}</button>
                     ) : null}
                   </td>
@@ -935,42 +947,62 @@ export function AdvancesPage() {
       </div>
       </ListGate>
       <ListPager f={f} total={advTotal} disabled={list.loading} />
-      <Modal open={open} title={tr("newAdvance")} onClose={() => setOpen(false)}>
+      <Modal open={open} title={manageAdvances ? tr("newAdvance") : tr("requestAdvance")} onClose={() => setOpen(false)}>
         <div className="space-y-3">
-          <Field label={tr("employees")}>
-            <select className={inputCls} value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value, delivery_agent_id: "" })}>
-              <option value="">-</option>
-              {emps.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.code})</option>)}
-            </select>
-          </Field>
-          <Field label={tr("couriers")}>
-            <select className={inputCls} value={form.delivery_agent_id} onChange={(e) => setForm({ ...form, delivery_agent_id: e.target.value, employee_id: "" })}>
-              <option value="">-</option>
-              {agents.map((a: any) => <option key={a.id} value={a.id}>{a.name} ({a.code})</option>)}
-            </select>
-          </Field>
+          {manageAdvances ? (
+            <>
+              <Field label={tr("employees")}>
+                <select className={inputCls} value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value, delivery_agent_id: "" })}>
+                  <option value="">-</option>
+                  {emps.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.code})</option>)}
+                </select>
+              </Field>
+              <Field label={tr("couriers")}>
+                <select className={inputCls} value={form.delivery_agent_id} onChange={(e) => setForm({ ...form, delivery_agent_id: e.target.value, employee_id: "" })}>
+                  <option value="">-</option>
+                  {agents.map((a: any) => <option key={a.id} value={a.id}>{a.name} ({a.code})</option>)}
+                </select>
+              </Field>
+            </>
+          ) : null}
           <Field label={tr("amount")}><input className={inputCls} type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>
-          <Field label={tr("date")}><input className={inputCls} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-          <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
-          <Field label={tr("cashBox")}>
-            <select className={inputCls} value={form.cash_account_id || String(cashAccounts[0]?.id || "")} onChange={(e) => setForm({ ...form, cash_account_id: e.target.value })}>
-              {cashAccounts.map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </Field>
+          {manageAdvances ? <Field label={tr("date")}><input className={inputCls} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field> : null}
+          <Field label={tr("advanceReason")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+          {manageAdvances ? (
+            <Field label={tr("cashBox")}>
+              <select className={inputCls} value={form.cash_account_id || String(cashAccounts[0]?.id || "")} onChange={(e) => setForm({ ...form, cash_account_id: e.target.value })}>
+                {cashAccounts.map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </Field>
+          ) : null}
           <Btn onClick={async () => {
             await post("/api/hr/advances", {
-              employee_id: form.employee_id ? Number(form.employee_id) : undefined,
-              delivery_agent_id: form.delivery_agent_id ? Number(form.delivery_agent_id) : undefined,
+              employee_id: manageAdvances && form.employee_id ? Number(form.employee_id) : undefined,
+              delivery_agent_id: manageAdvances && form.delivery_agent_id ? Number(form.delivery_agent_id) : undefined,
               amount: form.amount,
               date: form.date,
               notes: form.notes,
               month,
-              cash_account_id: Number(form.cash_account_id || cashAccounts[0]?.id || 0) || undefined,
+              cash_account_id: manageAdvances ? Number(form.cash_account_id || cashAccounts[0]?.id || 0) || undefined : undefined,
             });
             setOpen(false);
             setForm({ employee_id: "", delivery_agent_id: "", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", cash_account_id: "" });
             list.reload();
           }}>{tr("save")}</Btn>
+        </div>
+      </Modal>
+      <Modal open={approveId > 0} title={tr("approveAdvance")} onClose={() => setApproveId(0)}>
+        <div className="space-y-3">
+          <Field label={tr("cashBox")}>
+            <select className={inputCls} value={approveCash} onChange={(e) => setApproveCash(e.target.value)}>
+              {cashAccounts.map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </Field>
+          <Btn onClick={async () => {
+            await post(`/api/hr/advances/${approveId}/approve`, { cash_account_id: Number(approveCash || cashAccounts[0]?.id || 0) });
+            setApproveId(0);
+            list.reload();
+          }}>{tr("approve")}</Btn>
         </div>
       </Modal>
       <Modal open={otOpen} title={tr("newOvertime")} onClose={() => setOtOpen(false)}>

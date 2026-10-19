@@ -11,10 +11,11 @@ export const PARKED_INVOICE_STATUSES = [
   "out_for_delivery",
   "rescheduled",
   "customer_unavailable",
+  "pending_settlement",
 ] as const;
 
 export function parkedInvoiceSql(col = "status") {
-  return `${col} NOT IN ('cancelled','void','draft','held','quote','order','pending_delivery','out_for_delivery','rescheduled','customer_unavailable')`;
+  return `${col} NOT IN ('cancelled','void','draft','held','quote','order','pending_delivery','out_for_delivery','rescheduled','customer_unavailable','pending_settlement')`;
 }
 
 export function numAgg(v: unknown) {

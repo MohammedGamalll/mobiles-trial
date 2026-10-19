@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post } from "../lib/api";
-import { money, statusClass, statusLabel } from "../lib/format";
+import { collectDue, money, statusClass, statusLabel } from "../lib/format";
 import { Btn, ErrorNote, Field, PageLoading, inputCls } from "../components/ui";
 import { apiMessage } from "../lib/errors";
 
@@ -15,6 +15,7 @@ type Row = {
   delivery_status?: string;
   remaining?: number;
   total?: number;
+  paid?: number;
 };
 
 type Draft = {
@@ -50,14 +51,14 @@ export default function DeliverySettle() {
     setLoading(true);
     try {
       const r = await get<{ data: Row[] }>(`/api/delivery/orders?agent_id=${agentId}`);
-      const list = (r.data || []).filter((x) => CUSTODY.has(String(x.delivery_status || "")));
+      const list = (r.data || []).filter((x) => CUSTODY.has(String(x.delivery_status || "")) || CUSTODY.has(String(x.status || "")));
       setRows(list);
       setDrafts((prev) => {
         const next: Record<number, Draft> = {};
         for (const inv of list) {
           next[inv.id] = prev[inv.id] || {
             outcome: "delivered",
-            collected: Number(inv.remaining) || Number(inv.total) || 0,
+            collected: collectDue(inv),
             charge_to: "courier",
           };
         }
@@ -157,7 +158,7 @@ export default function DeliverySettle() {
                       <td><Link className="font-bold text-cyan-800" to={`/sales/${inv.id}`}>{inv.number}</Link></td>
                       <td>{inv.customer_name}</td>
                       <td><span className={statusClass(inv.delivery_status)}>{statusLabel(inv.delivery_status, lang)}</span></td>
-                      <td>{money(inv.remaining ?? inv.total, lang)}</td>
+                      <td>{money(collectDue(inv), lang)}</td>
                       <td>
                         <select className={inputCls} value={d.outcome} onChange={(e) => patch(inv.id, { outcome: e.target.value as Draft["outcome"] })}>
                           <option value="delivered">{tr("outcomeDelivered")}</option>

@@ -702,10 +702,15 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   }
 
   async function previewWa(invoiceId: number) {
-    const r = await get<any>(`/api/invoices/${invoiceId}/whatsapp?type=invoice_created&lang=${lang}`);
-    setWaPreview({ ...r, invoice_id: invoiceId });
-    setWaMsg(r.message || "");
-    setWaOpen(true);
+    try {
+      const r = await get<any>(`/api/invoices/${invoiceId}/whatsapp?type=invoice_created&lang=${lang}`);
+      setWaPreview({ ...r, invoice_id: invoiceId });
+      setWaMsg(r.message || "");
+      setWaOpen(true);
+    } catch (e) {
+      playSound("err");
+      setErr(apiMessage(tr, e));
+    }
   }
 
   function cartItems() {

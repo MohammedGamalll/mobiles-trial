@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Minus, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
+import { launchInvoiceWhatsApp } from "../lib/whatsapp";
 import {
   invoicePayStatus,
   money,
@@ -340,7 +341,7 @@ export default function POS() {
             <EndShiftButton className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-bold bg-rose-700 text-white" />
             <div className="ms-auto text-xs text-slate-500" tabIndex={-1}>
               <b>
-                {clock.toLocaleTimeString(lang === "ar" ? "ar-EG" : "en-GB", {
+                {clock.toLocaleTimeString(lang === "ar" ? "ar-EG-u-nu-latn" : "en-GB", {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
@@ -1801,16 +1802,14 @@ export default function POS() {
         />
         <div className="mt-3 flex flex-wrap gap-2">
           <Btn
-            onClick={async () => {
-              const phone = waPreview?.phone;
-              if (!phone || !waPreview?.invoice_id) return;
-              const intl = String(phone).replace(/\D/g, "").replace(/^0/, "20");
-              const link = `https://wa.me/${intl}?text=${encodeURIComponent(waMsg)}`;
-              await post(
-                `/api/invoices/${waPreview.invoice_id}/whatsapp/opened`,
-                { type: waPreview.type, message: waMsg, phone },
-              );
-              window.open(link, "_blank");
+            onClick={() => {
+              const ok = launchInvoiceWhatsApp({
+                invoiceId: Number(waPreview?.invoice_id),
+                phone: waPreview?.phone,
+                message: waMsg,
+                type: waPreview?.type,
+              });
+              if (!ok) setErr(tr("waNoPhone"));
             }}
           >
             {tr("openWhatsapp")}

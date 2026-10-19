@@ -158,6 +158,16 @@ test("cash journals fold into the treasury identity including hidden inflows", (
   assert.equal(explainedTreasuryNet(flow), -19566.67);
 });
 
+test("shift variance journals become shortage and overage lines", () => {
+  const flow = foldCashJournals([
+    { source: "shift_variance", n: 40 },
+    { source: "shift_variance", n: -25 },
+  ]);
+  assert.equal(flow.shift_overage, 40);
+  assert.equal(flow.shift_shortage, 25);
+  assert.equal(explainedTreasuryNet(flow), 15);
+});
+
 test("receipt and payment vouchers stay split instead of netting under one source", () => {
   const flow = foldCashJournals([
     { source: "voucher", n: 31.5 },

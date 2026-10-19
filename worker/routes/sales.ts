@@ -33,7 +33,7 @@ import {
   weightedCost,
   type Allocation,
 } from "../lib/stock";
-import { invoiceTemplateVars, renderTemplate, waLink } from "../lib/whatsapp";
+import { invoiceTemplateVars, loadWhatsappTemplate, renderTemplate, waLink } from "../lib/whatsapp";
 
 export const salesRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -369,7 +369,9 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
     return c.json({ error: "paid_range" }, 400);
   }
   const saleCashId = saleDrawerForInvoice(posShift, b.payment_method, b.cash_account_id, requestedPaid);
-  const split = hold ? { invoicePaid: 0, remaining: 0, surplus: 0 } : splitInvoiceCash(requestedPaid, total, surplusMode);
+  const split = hold
+    ? { invoicePaid: 0, remaining: type === "delivery" ? total : 0, surplus: 0 }
+    : splitInvoiceCash(requestedPaid, total, surplusMode);
   const paid = split.invoicePaid;
   const remaining = split.remaining;
   const surplus = split.surplus;
@@ -706,6 +708,7 @@ salesRoutes.post("/invoices/:id/finalize", requirePerm("sales.create"), async (c
     item_batches: { invoice_item_id: number; batch_id: number; qty: number; unit_cost: number }[];
   };
   if (row.status !== "held" && row.status !== "quote" && row.status !== "order") return c.json({ error: "not_held" }, 400);
+  if (row.type === "delivery") return c.json({ error: "use_delivery_settle" }, 400);
   const b = await c.req.json<{ payments?: { method: string; amount: number }[]; paid?: number; paid_amount?: number; amount_paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }>().catch(() => ({} as { payments?: { method: string; amount: number }[]; paid?: number; paid_amount?: number; amount_paid?: number; payment_method?: string; unpaid?: boolean; surplus_mode?: string; cash_account_id?: number }));
   const user = c.get("user");
   const wasReserved = row.status === "quote" || row.status === "order";
@@ -862,7 +865,7 @@ salesRoutes.post("/invoices/:id/cancel", requirePerm("sales.cancel", "sales.crea
           .filter((b) => b.invoice_item_id === item.id && b.qty > 0)
           .map((b) => ({ batch_id: b.batch_id, batch_code: "", qty: b.qty, unit_cost: b.unit_cost }));
         if (!alloc.length) continue;
-        if (row.type === "delivery" && ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"].includes(row.status)) {
+        if (row.type === "delivery" && ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"].includes(row.status)) {
           await releaseReserve(tx, alloc, item.product_id);
         } else if (row.type === "normal" || ["delivered", "partially_delivered", "completed", "partial"].includes(row.status)) {
           for (const a of alloc) await restockToBatch(tx, a.batch_id, item.product_id, a.qty);
@@ -1177,8 +1180,7 @@ salesRoutes.get("/invoices/:id/whatsapp", requirePerm("whatsapp.send", "sales.vi
     delivery_agent_phone: string | null;
     items: { product_name: string; quantity: number; delivered_qty: number; returned_qty: number }[];
   };
-  const tpl = await c.env.DB.prepare("SELECT * FROM whatsapp_templates WHERE code = ?").bind(type).first<{ body_ar: string; body_en: string }>();
-  if (!tpl) return c.json({ error: "template_missing" }, 404);
+  const tpl = await loadWhatsappTemplate(c.env.DB, type);
   const settings = await getSettings(c.env.DB);
   const vars = invoiceTemplateVars(inv, inv.items, settings.store_name || "المتميز", lang);
   const message = renderTemplate(lang === "en" ? tpl.body_en : tpl.body_ar, vars);
@@ -1186,13 +1188,35 @@ salesRoutes.get("/invoices/:id/whatsapp", requirePerm("whatsapp.send", "sales.vi
   return c.json({ message, phone, link: phone ? waLink(phone, message) : null, type });
 });
 
+async function logWhatsapp(db: AppBindings["DB"], opts: {
+  invoiceId: number;
+  userId: number;
+  type?: string;
+  phone?: string | null;
+  message?: string;
+  marked: number;
+}) {
+  try {
+    await db
+      .prepare("INSERT INTO whatsapp_logs (invoice_id, customer_id, user_id, message_type, phone, message, marked_sent) VALUES (?, (SELECT customer_id FROM sales_invoices WHERE id = ?), ?, ?, ?, ?, ?)")
+      .bind(opts.invoiceId, opts.invoiceId, opts.userId, opts.type || "invoice_created", opts.phone || null, opts.message || "", opts.marked)
+      .run();
+  } catch (err) {
+    console.warn("whatsapp_log_failed", err instanceof Error ? err.message : err);
+  }
+}
+
 salesRoutes.post("/invoices/:id/whatsapp/opened", requirePerm("whatsapp.send"), async (c) => {
   const id = Number(c.req.param("id"));
   const b = await c.req.json<{ type?: string; message?: string; phone?: string }>();
-  await c.env.DB
-    .prepare("INSERT INTO whatsapp_logs (invoice_id, customer_id, user_id, message_type, phone, message, marked_sent) VALUES (?, (SELECT customer_id FROM sales_invoices WHERE id = ?), ?, ?, ?, ?, 0)")
-    .bind(id, id, c.get("user").id, b.type || "invoice_created", b.phone || null, b.message || "")
-    .run();
+  await logWhatsapp(c.env.DB, {
+    invoiceId: id,
+    userId: c.get("user").id,
+    type: b.type,
+    phone: b.phone,
+    message: b.message,
+    marked: 0,
+  });
   return c.json({ ok: true });
 });
 
@@ -1202,10 +1226,14 @@ salesRoutes.post("/invoices/:id/whatsapp/mark-sent", requirePerm("whatsapp.send"
   if (b.log_id) {
     await c.env.DB.prepare("UPDATE whatsapp_logs SET marked_sent = 1 WHERE id = ?").bind(b.log_id).run();
   } else {
-    await c.env.DB
-      .prepare("INSERT INTO whatsapp_logs (invoice_id, customer_id, user_id, message_type, phone, message, marked_sent) VALUES (?, (SELECT customer_id FROM sales_invoices WHERE id = ?), ?, ?, ?, ?, 1)")
-      .bind(id, id, c.get("user").id, b.type || "invoice_created", b.phone || null, b.message || "")
-      .run();
+    await logWhatsapp(c.env.DB, {
+      invoiceId: id,
+      userId: c.get("user").id,
+      type: b.type,
+      phone: b.phone,
+      message: b.message,
+      marked: 1,
+    });
   }
   await audit(c.env.DB, c.get("user"), "whatsapp_mark_sent", "invoice", id, b.type || "invoice_created");
   return c.json({ ok: true });

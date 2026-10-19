@@ -6,8 +6,9 @@ import { apiMessage } from "../lib/errors";
 import { Btn, ErrorNote, Modal, PageLoading, PrintBtn, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { useConfirm } from "../components/Confirm";
-import { money, posExchangePath } from "../lib/format";
+import { deliveryAwaitingConfirm, money, posExchangePath } from "../lib/format";
 import { rememberResumeInvoice } from "../hooks/usePOSLogic";
+import { launchInvoiceWhatsApp } from "../lib/whatsapp";
 import { PaymentModal } from "../components/PaymentModal";
 
 export default function Invoice() {
@@ -34,13 +35,19 @@ export default function Invoice() {
 
   if (!inv) return <PageLoading />;
   const waEnabled = settings.whatsapp_enabled !== "0";
+  const isDelivery = inv.type === "delivery";
+  const awaitingConfirm = deliveryAwaitingConfirm(inv);
 
   async function preview(type = "invoice_created") {
-    const r = await get<any>(`/api/invoices/${id}/whatsapp?type=${type}&lang=${lang}`);
-    setWa(r);
-    setMsg(r.message);
-    setWaOpen(true);
-    setOpened(false);
+    try {
+      const r = await get<any>(`/api/invoices/${id}/whatsapp?type=${type}&lang=${lang}`);
+      setWa(r);
+      setMsg(r.message);
+      setWaOpen(true);
+      setOpened(false);
+    } catch (e) {
+      setMsg(apiMessage(tr, e));
+    }
   }
 
   return (
@@ -63,10 +70,15 @@ export default function Invoice() {
           {can("returns.create") && !["cancelled", "fully_returned", "held", "quote", "order"].includes(inv.status) ? (
             <Btn kind="ghost" onClick={() => setRetOpen(true)}>{tr("returnCreate")}</Btn>
           ) : null}
-          {["held", "quote", "order"].includes(inv.status) && can("sales.create") ? (
+          {isDelivery && awaitingConfirm && can("delivery.settle") ? (
+            <Link to={`/delivery/settle${inv.delivery_agent_id ? `?agent=${inv.delivery_agent_id}` : ""}`}>
+              <Btn kind="soft">{tr("confirmDelivery")}</Btn>
+            </Link>
+          ) : null}
+          {["held", "quote", "order"].includes(inv.status) && can("sales.create") && !isDelivery ? (
             <Btn onClick={() => { rememberResumeInvoice(inv.id); window.location.href = `/pos?held=${inv.id}`; }}>{tr("resumeHeld")}</Btn>
           ) : null}
-          {["held", "quote", "order"].includes(inv.status) && can("sales.create") ? (
+          {["held", "quote", "order"].includes(inv.status) && can("sales.create") && !isDelivery ? (
             <Btn kind="soft" onClick={() => {
               if (inv.status === "quote") setPayOpen(true);
               else post(`/api/invoices/${id}/finalize`, {}).then(() => reload()).catch((e) => setMsg(apiMessage(tr, e)));
@@ -106,12 +118,17 @@ export default function Invoice() {
         <div className="mt-3 flex flex-wrap gap-2">
           <Btn kind="ghost" onClick={async () => { await navigator.clipboard.writeText(msg); }}>{tr("copy")}</Btn>
           <Btn
-            onClick={async () => {
-              const phone = wa?.phone;
-              if (!phone) return;
-              const link = `https://wa.me/${String(phone).replace(/\D/g, "").replace(/^0/, "20")}?text=${encodeURIComponent(msg)}`;
-              await post(`/api/invoices/${id}/whatsapp/opened`, { type: wa?.type, message: msg, phone });
-              window.open(link, "_blank");
+            onClick={() => {
+              const ok = launchInvoiceWhatsApp({
+                invoiceId: Number(id),
+                phone: wa?.phone,
+                message: msg,
+                type: wa?.type,
+              });
+              if (!ok) {
+                setMsg(tr("waNoPhone"));
+                return;
+              }
               setOpened(true);
             }}
           >

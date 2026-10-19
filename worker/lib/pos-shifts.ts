@@ -36,6 +36,21 @@ export function isShiftErr(err: unknown) {
   return err instanceof ShiftError || (err instanceof Error && (err.message === "shift_required" || err.message === "shift_open" || err.message === "drawer_busy" || err.message === "shift_closed"));
 }
 
+/** Same-shift walk-in cash is a sale, not a later collection. Delivery COD is collection. */
+export function isShiftCollectionPayment(
+  payment: { shift_id?: number | null; notes?: string | null },
+  invoice?: { type?: string | null; shift_id?: number | null; payment_method?: string | null } | null,
+) {
+  if (String(payment.notes || "").toLowerCase().includes("delivery settlement")) return true;
+  if (String(invoice?.type || "") === "delivery") return true;
+  if (!invoice) return Boolean(payment.shift_id);
+  const payShift = Number(payment.shift_id || 0);
+  const invShift = Number(invoice.shift_id || 0);
+  if (payShift && invShift && payShift !== invShift) return true;
+  if (payShift && !invShift) return true;
+  return String(invoice.payment_method || "").toLowerCase() === "credit";
+}
+
 export function isDrawerPayMethod(method?: string | null) {
   const m = String(method || "cash").toLowerCase();
   return !["card", "visa", "bank", "transfer", "instapay", "wallet", "credit"].includes(m);
@@ -393,7 +408,7 @@ export async function shiftReport(db: AppDb, id: number) {
   };
   const sales = await db
     .prepare(
-      `SELECT id, number, date, customer_name, payment_method, total, paid, remaining, status
+      `SELECT id, number, date, type, customer_name, payment_method, total, paid, remaining, status
        FROM sales_invoices WHERE shift_id = ? AND deleted_at IS NULL ORDER BY id`,
     )
     .bind(id)
@@ -418,14 +433,34 @@ export async function shiftReport(db: AppDb, id: number) {
     )
     .bind(id)
     .all();
-  const collections = await db
+  const payments = await db
     .prepare(
-      `SELECT p.id, p.date, p.method, p.amount, p.notes, si.id as invoice_id, si.number as invoice_number
-       FROM payments p LEFT JOIN sales_invoices si ON si.id = p.invoice_id
-       WHERE p.shift_id = ? AND p.voided_at IS NULL ORDER BY p.id`,
+      `SELECT p.id, p.date, p.method, p.amount, p.notes, p.shift_id as payment_shift_id,
+              si.id as invoice_id, si.number as invoice_number, si.type as invoice_type,
+              si.shift_id as invoice_shift_id, si.payment_method as invoice_payment_method
+       FROM payments p
+       LEFT JOIN sales_invoices si ON si.id = p.invoice_id
+       WHERE p.voided_at IS NULL
+         AND (p.shift_id = ? OR si.shift_id = ?)
+       ORDER BY p.id`,
     )
-    .bind(id)
+    .bind(id, id)
     .all();
+  const collections = {
+    results: payments.results.filter((row) =>
+      isShiftCollectionPayment(
+        { shift_id: Number(row.payment_shift_id || 0) || null, notes: String(row.notes || "") },
+        {
+          type: String(row.invoice_type || ""),
+          shift_id: Number(row.invoice_shift_id || 0) || null,
+          payment_method: String(row.invoice_payment_method || ""),
+        },
+      ),
+    ),
+  };
+  const registerSales = {
+    results: sales.results.filter((row) => String(row.type || "") !== "delivery"),
+  };
   const sum = (rows: { results: Record<string, unknown>[] }, key: string) =>
     round2(rows.results.reduce((s, r) => s + Number(r[key] || 0), 0));
   return {
@@ -435,14 +470,14 @@ export async function shiftReport(db: AppDb, id: number) {
       cash_out: live.cashOut,
       expected_cash_balance: shift.status === "open" ? live.expected : shift.expected_cash_balance,
     },
-    sales: sales.results,
+    sales: registerSales.results,
     returns: returns.results,
     vouchers: vouchers.results,
     expenses: expenses.results,
     collections: collections.results,
     totals: {
-      sales: sum(sales, "total"),
-      sales_paid: sum(sales, "paid"),
+      sales: sum(registerSales, "total"),
+      sales_paid: sum(registerSales, "paid"),
       returns: sum(returns, "total"),
       vouchers_in: round2(vouchers.results.filter((v) => v.type === "receipt").reduce((s, v) => s + Number(v.amount || 0), 0)),
       vouchers_out: round2(vouchers.results.filter((v) => v.type !== "receipt").reduce((s, v) => s + Number(v.amount || 0), 0)),
@@ -452,6 +487,8 @@ export async function shiftReport(db: AppDb, id: number) {
       expected: shift.status === "open" ? live.expected : Number(shift.expected_cash_balance || 0),
       actual: shift.actual_cash_balance,
       variance: shift.status === "open" ? null : shift.variance,
+      shift_shortage: shift.status === "closed" && Number(shift.variance || 0) < -0.005 ? round2(Math.abs(Number(shift.variance))) : 0,
+      shift_overage: shift.status === "closed" && Number(shift.variance || 0) > 0.005 ? round2(Number(shift.variance)) : 0,
     },
   };
 }

@@ -3,31 +3,49 @@ import { audit, getSettings, notify, nowIso, round2, todayIso, type AppBindings,
 import { requirePerm } from "../lib/auth";
 import { accrueCommission } from "../lib/commission";
 import { applyDate, applyEq, applySearch, listParams } from "../lib/filters";
-import { CUSTODY_STATUSES, isCustodyStatus, normalizeOutcome, settleInvoice, type ChargeTo } from "../lib/delivery-pod";
+import { canMarkDelivered, courierDoneSql, courierOpenSql, normalizeOutcome, settleInvoice, type ChargeTo } from "../lib/delivery-pod";
 import { pingDistanceOk } from "../lib/geo";
 import { notifyAccountants, notifyAdmins, safeNotify, sendNotification, userIdForAgent } from "../lib/notifications";
 
 export const deliveryRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
 deliveryRoutes.get("/orders", requirePerm("delivery.view", "sales.view", "delivery.mark"), async (c) => {
-  const p = listParams(new URL(c.req.url));
+  const url = new URL(c.req.url);
+  const p = listParams(url);
   const user = c.get("user");
   const where = ["si.deleted_at IS NULL", "si.type = 'delivery'"];
   const params: (string | number)[] = [];
   if (user.role_slug === "delivery" && user.delivery_agent_id && !user.permissions.includes("delivery.all")) {
     where.push("si.delivery_agent_id = ?");
     params.push(user.delivery_agent_id);
-    where.push("si.status = 'held'");
   } else {
     applyEq(where, params, "si.delivery_agent_id", p.agent_id || p.sales_agent_id, true);
   }
-  applyEq(where, params, "si.status", p.status);
+  const tab = String(p.tab || "").toLowerCase();
+  if (tab === "open") where.push(courierOpenSql("si"));
+  else if (tab === "done") where.push(courierDoneSql("si"));
+  else if (p.status) {
+    where.push("(si.status = ? OR si.delivery_status = ?)");
+    params.push(p.status, p.status);
+  }
   if (p.area) {
     where.push("si.area LIKE ?");
     params.push(`%${p.area}%`);
   }
-  applySearch(where, params, p.q, ["si.number", "si.customer_name", "si.customer_phone", "IFNULL(si.area,'')", "IFNULL(si.delivery_agent_name,'')"]);
+  applySearch(where, params, p.q, ["si.number", "si.customer_name", "si.customer_phone", "IFNULL(si.area,'')", "IFNULL(si.address,'')", "IFNULL(si.delivery_agent_name,'')"]);
   applyDate(where, params, "si.date", p);
+  const countWhere = where.filter((w) => w !== courierOpenSql("si") && w !== courierDoneSql("si"));
+  const counts = await c.env.DB
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN ${courierOpenSql("si")} THEN 1 ELSE 0 END) AS open_count,
+         SUM(CASE WHEN ${courierDoneSql("si")} THEN 1 ELSE 0 END) AS done_count
+       FROM sales_invoices si
+       LEFT JOIN customers c ON c.id = si.customer_id
+       WHERE ${countWhere.join(" AND ")}`,
+    )
+    .bind(...params)
+    .first<{ open_count: number; done_count: number }>();
   const { results } = await c.env.DB
     .prepare(
       `SELECT si.*, c.lat AS dest_lat, c.lng AS dest_lng
@@ -37,7 +55,11 @@ deliveryRoutes.get("/orders", requirePerm("delivery.view", "sales.view", "delive
     )
     .bind(...params)
     .all();
-  return c.json({ data: results });
+  return c.json({
+    data: results,
+    open_count: Number(counts?.open_count || 0),
+    done_count: Number(counts?.done_count || 0),
+  });
 });
 
 deliveryRoutes.post("/orders/:id/status", requirePerm("delivery.update"), async (c) => {
@@ -121,14 +143,15 @@ deliveryRoutes.post("/orders/:id/mark-delivered", requirePerm("delivery.mark"), 
     }>();
   if (!inv || inv.type !== "delivery") return c.json({ error: "not_found" }, 404);
   if (inv.settled_at) return c.json({ error: "already_settled" }, 400);
-  if (inv.delivery_status === "pending_settlement") return c.json({ error: "already_marked" }, 400);
+  if (inv.status === "pending_settlement" || inv.delivery_status === "pending_settlement") {
+    return c.json({ error: "already_marked" }, 400);
+  }
   if (user.role_slug === "delivery") {
     if (!user.delivery_agent_id || Number(inv.delivery_agent_id || 0) !== Number(user.delivery_agent_id)) {
       return c.json({ error: "wrong_agent" }, 403);
     }
   }
-  const pendingWithAgent = !!inv.delivery_agent_id && (inv.status === "pending_delivery" || inv.delivery_status === "pending_delivery");
-  if (!isCustodyStatus(inv.status) && !isCustodyStatus(inv.delivery_status || "") && !pendingWithAgent) {
+  if (!canMarkDelivered(inv.status, inv.delivery_status)) {
     return c.json({ error: "not_in_custody" }, 400);
   }
   await c.env.DB

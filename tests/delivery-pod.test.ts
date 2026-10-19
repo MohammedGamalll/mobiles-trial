@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canMarkDelivered,
+  invoiceDeliveryState,
   isCustodyStatus,
   isEscrowStatus,
   normalizeOutcome,
@@ -49,5 +51,15 @@ test("parked invoice SQL excludes delivery escrow", () => {
   const sql = parkedInvoiceSql("si.status");
   assert.match(sql, /pending_delivery/);
   assert.match(sql, /out_for_delivery/);
+  assert.match(sql, /pending_settlement/);
   assert.match(sql, /held/);
+});
+
+test("courier can mark open invoices and they stay pending", () => {
+  assert.equal(canMarkDelivered("out_for_delivery", "out_for_delivery"), true);
+  assert.equal(canMarkDelivered("held", "pending_delivery"), true);
+  assert.equal(canMarkDelivered("pending_settlement", "pending_settlement"), false);
+  assert.equal(canMarkDelivered("held", "pending_settlement"), false);
+  assert.equal(invoiceDeliveryState("pending_settlement", "pending_settlement"), "marked");
+  assert.equal(invoiceDeliveryState("held", "pending_settlement"), "marked");
 });

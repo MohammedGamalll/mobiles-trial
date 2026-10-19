@@ -1,5 +1,5 @@
 import { useApp } from "../context";
-import { money, num, statusLabel } from "../lib/format";
+import { collectDue, deliveryDisplayStatus, money, num, statusLabel } from "../lib/format";
 
 export type InvoicePrintItem = {
   id?: number | string;
@@ -30,6 +30,7 @@ export type InvoicePrintModel = {
   date?: string | null;
   type?: string | null;
   status?: string | null;
+  delivery_status?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
   customer_whatsapp?: string | null;
@@ -126,7 +127,7 @@ export function InvoicePrint({
   const tax = Number(inv.tax_amount || 0);
   const total = Number(inv.total ?? subtotal - discount + tax + extra);
   const paid = Number(inv.paid || 0);
-  const remaining = Number(inv.remaining ?? Math.max(0, total - paid));
+  const remaining = isDelivery ? collectDue({ total, paid, remaining: inv.remaining }) : Number(inv.remaining ?? Math.max(0, total - paid));
   const returned = Number(inv.returned_total || 0);
   const customerName = inv.customer_name || tr("walkIn");
   const extraLabel = isDelivery ? tr("deliveryFee") : tr("extraAmount");
@@ -164,7 +165,7 @@ export function InvoicePrint({
               <b>{tr("invoiceDate")}:</b> {inv.date}
             </div>
           ) : null}
-          {inv.status ? <div>{statusLabel(inv.status, lang)}</div> : null}
+          {inv.status || inv.delivery_status ? <div>{statusLabel(deliveryDisplayStatus(inv), lang)}</div> : null}
           {inv.payment_method ? (
             <div>
               <b>{tr("payMethod")}:</b> {inv.payment_method}

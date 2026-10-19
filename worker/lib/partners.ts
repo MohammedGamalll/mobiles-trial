@@ -11,6 +11,8 @@ export type CompanyValuation = {
   revenues: number;
   cogs: number;
   expenses: number;
+  shift_overage: number;
+  shift_shortage: number;
 };
 
 export type PartnerShares = {
@@ -97,6 +99,8 @@ export function companyValuationFromTrial(rows: TrialValuationRow[]): CompanyVal
     revenues: round2(revenues),
     cogs: round2(cogs),
     expenses: round2(opex),
+    shift_overage: round2(rows.filter((r) => String(r.code) === "4210").reduce((s, r) => s + accountSignedBalance("revenue", r.net_balance), 0)),
+    shift_shortage: round2(rows.filter((r) => String(r.code) === "5215").reduce((s, r) => s + accountSignedBalance("expense", r.net_balance), 0)),
   };
 }
 
@@ -111,6 +115,31 @@ export function companyValuation(balancesByCode: Record<string, number>): Compan
   );
 }
 
+export function availableToWithdraw(netProfit: number, periodDraws: number) {
+  return round2((Number(netProfit) || 0) - (Number(periodDraws) || 0));
+}
+
+export function remainingShare(share: number, withdrawn: number) {
+  return round2(Math.max(0, (Number(share) || 0) - (Number(withdrawn) || 0)));
+}
+
+export function ownerProfitShare(netProfit: number, allocatedPercent: number) {
+  const left = round2(Math.max(0, 100 - (Number(allocatedPercent) || 0)));
+  return round2((Number(netProfit) || 0) * (left / 100));
+}
+
+export function withdrawCap(personalRemaining: number, companyAvailable: number) {
+  return round2(Math.max(0, Math.min(Number(personalRemaining) || 0, Number(companyAvailable) || 0)));
+}
+
+export function assertCanWithdraw(amount: number, available: number) {
+  const n = round2(amount);
+  const cap = round2(available);
+  if (!(n > 0)) throw new Error("missing_fields");
+  if (cap <= 0.005 || n > cap + 0.005) throw new Error("exceeds_available");
+  return n;
+}
+
 export function partnerLiveShares(opts: {
   percent: number;
   netProfit: number;
@@ -123,6 +152,6 @@ export function partnerLiveShares(opts: {
   return {
     profit_share,
     asset_share,
-    net_due: round2(profit_share - (Number(opts.withdrawals) || 0)),
+    net_due: remainingShare(profit_share, opts.withdrawals),
   };
 }

@@ -21,6 +21,7 @@ import {
   inputCls,
 } from "../components/ui";
 import type { Msg } from "../i18n";
+import { ProfitBreakdown, type ProfitBreakdownData } from "../components/ProfitBreakdown";
 import { TablePager } from "../components/TablePager";
 import { usePagedRows } from "../hooks/usePagedRows";
 
@@ -59,6 +60,8 @@ type Summary = {
   net_movement: number;
   other_movement: number;
   final_balance: number;
+  shift_shortage?: number;
+  shift_overage?: number;
 };
 
 type Report = {
@@ -66,6 +69,7 @@ type Report = {
   to: string;
   shift?: ShiftPick | null;
   users: { id: number; full_name: string }[];
+  profit_breakdown?: ProfitBreakdownData | null;
   summary: Summary;
   sales_lines: SalesLine[];
   return_lines: ReturnLine[];
@@ -147,13 +151,6 @@ function Kpi({
   );
 }
 
-function auditNum(n: number) {
-  return Number(n || 0).toLocaleString("en-EG", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
 function signedMoney(n: number, lang: "ar" | "en") {
   const abs = money(Math.abs(n), lang);
   if (Math.abs(n) < 0.005) return money(0, lang);
@@ -220,6 +217,8 @@ export default function DailyReport() {
         { key: "cashPurchases", signed: -(s.purchases || 0) },
         { key: "expenses", signed: -(s.expenses || 0) },
         { key: "vouchersOut", signed: -(s.vouchers_out || 0) },
+        { key: "shiftOverage", signed: s.shift_overage || 0 },
+        { key: "shiftShortage", signed: -(s.shift_shortage || 0) },
         { key: "otherTreasury", signed: s.other_movement },
       ]
     : [];
@@ -352,24 +351,21 @@ export default function DailyReport() {
                 <Kpi
                   label={tr("totalSales")}
                   value={money(salesTotal, lang)}
-                  hint={auditNum(salesTotal)}
                 />
                 <Kpi
                   label={tr("totalReturns")}
                   value={money(s?.sales_returns, lang)}
-                  hint={auditNum(s?.sales_returns || 0)}
                 />
                 <Kpi
                   label={tr("treasuryNet")}
                   value={money(s?.net_movement, lang)}
-                  hint={auditNum(s?.net_movement || 0)}
                 />
                 <Kpi
                   label={tr("finalBalance")}
                   value={money(s?.final_balance, lang)}
-                  hint={auditNum(s?.final_balance || 0)}
                 />
               </div>
+              <ProfitBreakdown data={data.profit_breakdown} />
               <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm">
                 <div className="table-wrap overflow-x-auto">
                   <table className="w-full">
@@ -392,13 +388,7 @@ export default function DailyReport() {
                         <tr key={row.key}>
                           <td>{tr(row.key)}</td>
                           <td className="tabular-nums text-end font-bold">
-                            <div>{signedMoney(row.signed, lang)}</div>
-                            <div
-                              className="text-xs font-semibold text-[var(--muted)]"
-                              dir="ltr"
-                            >
-                              {auditNum(row.signed)}
-                            </div>
+                            {signedMoney(row.signed, lang)}
                           </td>
                         </tr>
                       ))}
@@ -416,13 +406,7 @@ export default function DailyReport() {
                           </div>
                         </td>
                         <td className="tabular-nums text-end font-black">
-                          <div>{signedMoney(cashIdentity, lang)}</div>
-                          <div
-                            className="text-xs font-semibold text-[var(--muted)]"
-                            dir="ltr"
-                          >
-                            {auditNum(cashIdentity)}
-                          </div>
+                          {signedMoney(cashIdentity, lang)}
                         </td>
                       </tr>
                       <tr className="bg-[var(--surface-2)]">
@@ -437,13 +421,7 @@ export default function DailyReport() {
                         <tr key={row.key}>
                           <td>{tr(row.key)}</td>
                           <td className="tabular-nums text-end font-bold">
-                            <div>{money(row.value, lang)}</div>
-                            <div
-                              className="text-xs font-semibold text-[var(--muted)]"
-                              dir="ltr"
-                            >
-                              {auditNum(row.value)}
-                            </div>
+                            {money(row.value, lang)}
                           </td>
                         </tr>
                       ))}
@@ -451,13 +429,7 @@ export default function DailyReport() {
                         <tr key={row.key}>
                           <td>{tr(row.key)}</td>
                           <td className="tabular-nums text-end font-bold">
-                            <div>{money(row.value, lang)}</div>
-                            <div
-                              className="text-xs font-semibold text-[var(--muted)]"
-                              dir="ltr"
-                            >
-                              {auditNum(row.value)}
-                            </div>
+                            {money(row.value, lang)}
                           </td>
                         </tr>
                       ))}

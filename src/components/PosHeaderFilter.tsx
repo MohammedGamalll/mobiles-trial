@@ -128,7 +128,7 @@ export function PosHeaderFilter({
       >
         <span className="whitespace-nowrap">{label}</span>
         <span
-          className={`max-w-[8.5rem] truncate text-[11px] leading-tight ${
+          className={`no-print max-w-[8.5rem] truncate text-[11px] leading-tight ${
             value
               ? "rounded-md bg-amber-400 px-1.5 py-0.5 font-black text-black shadow-sm"
               : "font-semibold text-current opacity-75"

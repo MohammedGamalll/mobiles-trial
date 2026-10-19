@@ -1,9 +1,31 @@
+export function numberLocale(lang: "ar" | "en" = "ar") {
+  return lang === "ar" ? "ar-EG-u-nu-latn" : "en-EG";
+}
+
+function isolateNum(formatted: string) {
+  return `\u2066${formatted}\u2069`;
+}
+
+/** Cash the courier should collect. Held deliveries store remaining=0 even when total is due. */
+export function collectDue(inv: {
+  total?: number | string | null;
+  paid?: number | string | null;
+  remaining?: number | string | null;
+}) {
+  const total = Number(inv.total) || 0;
+  const paid = Number(inv.paid) || 0;
+  const remaining = Number(inv.remaining);
+  if (remaining > 0) return remaining;
+  if (paid > 0) return Math.max(0, total - paid);
+  return total;
+}
+
 export function money(n: number | string | null | undefined, lang: "ar" | "en" = "ar") {
   const v = Number(n || 0);
-  const formatted = v.toLocaleString(lang === "ar" ? "ar-EG" : "en-EG", {
+  const formatted = isolateNum(v.toLocaleString(numberLocale(lang), {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  });
+  }));
   return lang === "ar" ? `${formatted} ج.م` : `EGP ${formatted}`;
 }
 
@@ -20,7 +42,7 @@ export function supplierBalanceLabel(egp: number | string | null | undefined, cu
   const r = Number(rate || 50) || 50;
   const usd = String(currency || "EGP").toUpperCase() === "USD";
   const shown = usd ? stored / r : stored;
-  const formatted = Math.abs(shown).toLocaleString(lang === "ar" ? "ar-EG" : "en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const formatted = isolateNum(Math.abs(shown).toLocaleString(numberLocale(lang), { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
   const unit = usd ? (lang === "ar" ? `${formatted} $` : `USD ${formatted}`) : money(Math.abs(shown), lang);
   if (stored > 0.005) return lang === "ar" ? `${unit} ليه` : `${unit} we owe`;
   if (stored < -0.005) return lang === "ar" ? `${unit} عليه` : `${unit} they owe`;
@@ -28,7 +50,7 @@ export function supplierBalanceLabel(egp: number | string | null | undefined, cu
 }
 
 export function num(n: number | string | null | undefined, lang: "ar" | "en" = "ar") {
-  return Number(n || 0).toLocaleString(lang === "ar" ? "ar-EG" : "en-EG");
+  return isolateNum(Number(n || 0).toLocaleString(numberLocale(lang)));
 }
 
 export function statusClass(status?: string | null) {
@@ -50,7 +72,7 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     open: { ar: "مفتوحة", en: "Open" },
     pending_delivery: { ar: "بانتظار التوصيل", en: "Pending delivery" },
     out_for_delivery: { ar: "مع المندوب", en: "With courier" },
-    pending_settlement: { ar: "بانتظار التسوية", en: "Pending settlement" },
+    pending_settlement: { ar: "تم التوصيل وجاري التأكيد", en: "Delivered — pending confirm" },
     delivered: { ar: "تم التسليم", en: "Delivered" },
     damaged: { ar: "تالف/مفقود", en: "Damaged / lost" },
     partially_delivered: { ar: "تسليم جزئي", en: "Partially delivered" },
@@ -95,7 +117,6 @@ export function statusLabel(status: string | null | undefined, lang: "ar" | "en"
     settled: { ar: "مسوّاة", en: "Settled" },
     sale: { ar: "بيع", en: "Sale" },
     payment: { ar: "تحصيل", en: "Collection" },
-    expense: { ar: "مصروف", en: "Expense" },
     payroll: { ar: "رواتب", en: "Payroll" },
     opening: { ar: "افتتاحي", en: "Opening" },
     voucher: { ar: "سند", en: "Voucher" },
@@ -169,9 +190,26 @@ export function movementTypeLabel(type: string | null | undefined, lang: "ar" | 
   return statusLabel(MOVEMENT_TYPE_ALIAS[raw] || raw, lang);
 }
 
-export function invoicePayStatus(row: { status?: string | null; total?: number; paid?: number; remaining?: number }) {
+export function deliveryAwaitingConfirm(row: { status?: string | null; delivery_status?: string | null }) {
+  return row.status === "pending_settlement" || row.delivery_status === "pending_settlement";
+}
+
+export function deliveryDisplayStatus(row: { status?: string | null; delivery_status?: string | null }) {
+  if (deliveryAwaitingConfirm(row)) return "pending_settlement";
+  return row.delivery_status || row.status || "";
+}
+
+export function invoicePayStatus(row: {
+  status?: string | null;
+  delivery_status?: string | null;
+  total?: number;
+  paid?: number;
+  remaining?: number;
+}) {
   const s = (row.status || "").toLowerCase();
-  if (["cancelled", "void", "rejected", "held", "quote", "order", "fully_returned", "partially_returned"].includes(s)) return s;
+  if (["cancelled", "void", "rejected", "fully_returned", "partially_returned"].includes(s)) return s;
+  if (deliveryAwaitingConfirm(row)) return "pending_settlement";
+  if (["held", "quote", "order", "pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"].includes(s)) return s;
   const remaining = Number(row.remaining || 0);
   const paid = Number(row.paid || 0);
   const total = Number(row.total || 0);

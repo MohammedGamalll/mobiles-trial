@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
+import { launchInvoiceWhatsApp } from "../lib/whatsapp";
 import { customerBalanceLabel, invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, inputCls } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
@@ -856,13 +857,14 @@ export default function POSClassic() {
         <textarea className={`${inputCls} min-h-40`} value={waMsg} onChange={(e) => setWaMsg(e.target.value)} />
         <div className="mt-3 flex flex-wrap gap-2">
           <Btn
-            onClick={async () => {
-              const phone = waPreview?.phone;
-              if (!phone || !waPreview?.invoice_id) return;
-              const intl = String(phone).replace(/\D/g, "").replace(/^0/, "20");
-              const link = `https://wa.me/${intl}?text=${encodeURIComponent(waMsg)}`;
-              await post(`/api/invoices/${waPreview.invoice_id}/whatsapp/opened`, { type: waPreview.type, message: waMsg, phone });
-              window.open(link, "_blank");
+            onClick={() => {
+              const ok = launchInvoiceWhatsApp({
+                invoiceId: Number(waPreview?.invoice_id),
+                phone: waPreview?.phone,
+                message: waMsg,
+                type: waPreview?.type,
+              });
+              if (!ok) setErr(tr("waNoPhone"));
             }}
           >
             {tr("openWhatsapp")}

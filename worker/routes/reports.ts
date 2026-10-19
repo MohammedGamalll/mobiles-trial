@@ -6,6 +6,7 @@ import { reconcile } from "../lib/reconcile";
 import { loadTrialBalance, splitClosingSides } from "../lib/trial-balance";
 import { loadDailyMovement } from "../lib/daily-movement";
 import { loadDailyFinance } from "../lib/daily-finance";
+import { loadProfitBreakdown, loadProfitBreakdownForMovement } from "../lib/profit-breakdown";
 import { applyDate, applyEq, applyInvoiceListFilters, applyRange, applySearch, listParams, resolveDates, sqlText } from "../lib/filters";
 import { listFilteredProducts } from "../lib/product-query";
 import { productToImportCells, productsImportWorkbook } from "../lib/product-import";
@@ -348,12 +349,25 @@ reportRoutes.get("/trial-balance", requirePerm("reports.view", "ledger.view"), a
 reportRoutes.get("/daily-movement", requirePerm("reports.view"), async (c) => {
   const user = c.get("user");
   const hideCost = user.role_slug !== "admin" && !user.permissions.includes("costs.view");
-  const data = await loadDailyMovement(c.env.DB, listParams(new URL(c.req.url)), { hideCost });
-  return c.json(data);
+  const p = listParams(new URL(c.req.url));
+  const [data, profit_breakdown] = await Promise.all([
+    loadDailyMovement(c.env.DB, p, { hideCost }),
+    loadProfitBreakdownForMovement(c.env.DB, p),
+  ]);
+  return c.json({ ...data, profit_breakdown });
 });
 
 reportRoutes.get("/daily-finance", requirePerm("reports.view"), async (c) => {
-  const data = await loadDailyFinance(c.env.DB, listParams(new URL(c.req.url)));
+  const p = listParams(new URL(c.req.url));
+  const [data, profit_breakdown] = await Promise.all([
+    loadDailyFinance(c.env.DB, p),
+    loadProfitBreakdownForMovement(c.env.DB, p),
+  ]);
+  return c.json({ ...data, profit_breakdown });
+});
+
+reportRoutes.get("/profit-breakdown", requirePerm("reports.view", "costs.view"), async (c) => {
+  const data = await loadProfitBreakdown(c.env.DB, listParams(new URL(c.req.url)));
   return c.json(data);
 });
 

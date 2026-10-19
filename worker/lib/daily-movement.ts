@@ -1,7 +1,7 @@
 import type { AppDb } from "./db";
 import type { ListQ } from "./filters";
 import { nowIso, round2, todayIso } from "./helpers";
-import { loadShift, SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE, type PosShiftRow } from "./pos-shifts";
+import { loadShift, SHIFT_CLOSE_SOURCE, type PosShiftRow } from "./pos-shifts";
 
 const DT_RE = /^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/;
 const LIVE_SALES = "si.status NOT IN ('cancelled','void','draft','held','quote','order')";
@@ -55,6 +55,8 @@ export type DailySummary = {
   net_movement: number;
   other_movement: number;
   final_balance: number;
+  shift_shortage: number;
+  shift_overage: number;
 };
 
 export type DailyMatrixCell = { count: number; total: number; cash: number; credit: number };
@@ -116,6 +118,8 @@ export type CashFlowSlice = {
   expenses: number;
   vouchers_out: number;
   other_movement: number;
+  shift_shortage: number;
+  shift_overage: number;
 };
 
 export function emptyCashFlow(): CashFlowSlice {
@@ -129,6 +133,8 @@ export function emptyCashFlow(): CashFlowSlice {
     expenses: 0,
     vouchers_out: 0,
     other_movement: 0,
+    shift_shortage: 0,
+    shift_overage: 0,
   };
 }
 
@@ -170,6 +176,10 @@ export function foldCashJournals(rows: Array<{ source?: string | null; n?: numbe
       case "voucher":
         if (n >= 0) acc.vouchers_in = round2(acc.vouchers_in + n);
         else acc.vouchers_out = round2(acc.vouchers_out - n);
+        break;
+      case "shift_variance":
+        if (n >= 0) acc.shift_overage = round2(acc.shift_overage + n);
+        else acc.shift_shortage = round2(acc.shift_shortage + Math.abs(n));
         break;
       default:
         acc.other_movement = round2(acc.other_movement + n);
@@ -416,6 +426,8 @@ export function explainedTreasuryNet(s: CashFlowSlice) {
     + (Number(s.purchase_returns) || 0)
     + (Number(s.vouchers_in) || 0)
     + (Number(s.other_movement) || 0)
+    + (Number(s.shift_overage) || 0)
+    - (Number(s.shift_shortage) || 0)
     - (Number(s.sales_returns) || 0)
     - (Number(s.purchases) || 0)
     - (Number(s.expenses) || 0)
@@ -569,8 +581,8 @@ export async function loadDailyMovement(db: AppDb, p: ListQ, opts?: { hideCost?:
   const cashPeriodWhere = ["c.active = 1"];
   const cashPeriodBinds: (string | number)[] = [];
   if (shiftId) {
-    cashPeriodWhere.push(`j.source NOT IN (?, ?)`);
-    cashPeriodBinds.push(SHIFT_CLOSE_SOURCE, SHIFT_VARIANCE_SOURCE);
+    cashPeriodWhere.push(`j.source <> ?`);
+    cashPeriodBinds.push(SHIFT_CLOSE_SOURCE);
     cashPeriodWhere.push(`(${shiftTaggedJournalSql("j")} OR (${cashStamp} >= ? AND ${cashStamp} <= ?))`);
     cashPeriodBinds.push(...shiftTaggedJournalBinds(shiftId), fromDt, toDt);
   } else {

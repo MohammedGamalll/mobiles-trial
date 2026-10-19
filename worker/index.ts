@@ -28,6 +28,7 @@ import { uploadRoutes, publicUploadRoutes } from "./routes/uploads";
 import { withLocationLabels } from "./lib/location-label";
 import { notificationRoutes } from "./routes/notifications";
 import { partnerRoutes } from "./routes/partners";
+import { loadProfitBreakdown } from "./lib/profit-breakdown";
 
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -128,18 +129,35 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     creditors: db.prepare(`SELECT COALESCE(SUM(balance),0) as n FROM suppliers WHERE deleted_at IS NULL AND COALESCE(balance,0) > 0`),
     lowCount: db.prepare(`SELECT COUNT(*) as n FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) > 0 AND (current_stock - reserved_stock) <= CASE WHEN COALESCE(reorder_point,0) > COALESCE(min_stock,0) THEN reorder_point ELSE min_stock END`),
     reps: db.prepare(`SELECT COUNT(*) as n FROM delivery_agents WHERE deleted_at IS NULL AND status = 'active'`),
+    shiftOverage: db.prepare(
+      `SELECT COALESCE(SUM(l.credit),0) as n
+       FROM journal_lines l
+       JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
+       JOIN ledger_accounts a ON a.id = l.account_id AND a.code = '4210'
+       WHERE j.source = 'shift_variance' AND LEFT(CAST(j.date AS CHAR), 10) BETWEEN ? AND ?`,
+    ).bind(from, to),
+    shiftShortage: db.prepare(
+      `SELECT COALESCE(SUM(l.debit),0) as n
+       FROM journal_lines l
+       JOIN journal_entries j ON j.id = l.entry_id AND j.status = 'posted'
+       JOIN ledger_accounts a ON a.id = l.account_id AND a.code = '5215'
+       WHERE j.source = 'shift_variance' AND LEFT(CAST(j.date AS CHAR), 10) BETWEEN ? AND ?`,
+    ).bind(from, to),
   };
   const keys = Object.keys(q) as (keyof typeof q)[];
   const map: Record<string, unknown> = {};
-  await Promise.all(
-    keys.map(async (k) => {
-      try {
-        map[k] = (await q[k].all()).results;
-      } catch {
-        map[k] = [];
-      }
-    }),
-  );
+  const [, profit_breakdown] = await Promise.all([
+    Promise.all(
+      keys.map(async (k) => {
+        try {
+          map[k] = (await q[k].all()).results;
+        } catch {
+          map[k] = [];
+        }
+      }),
+    ),
+    loadProfitBreakdown(db, { ...p, from, to }),
+  ]);
   const first = (k: string) => ((map[k] as { n?: unknown; c?: unknown }[]) || [])[0];
   return c.json({
     sales_today: numAgg(first("salesToday")?.n),
@@ -176,6 +194,10 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     creditors: numAgg(first("creditors")?.n),
     low_count: numAgg(first("lowCount")?.n),
     reps_count: numAgg(first("reps")?.n),
+    shift_overage: numAgg(first("shiftOverage")?.n),
+    shift_shortage: numAgg(first("shiftShortage")?.n),
+    net_profit: profit_breakdown.net_profit,
+    profit_breakdown,
     period: p.period || "this_month",
     period_from: from,
     period_to: to,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
-import { money, statusClass, statusLabel } from "../lib/format";
+import { deliveryAwaitingConfirm, deliveryDisplayStatus, money, statusClass, statusLabel } from "../lib/format";
 import { Btn, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
 import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
@@ -103,6 +103,11 @@ export function DeliveryBoard() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{tr("delivery")}</h1>
         <div className="no-print flex gap-2">
+          {can("delivery.settle") ? (
+            <Link className="rounded-xl bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800" to="/delivery/settle">
+              {tr("settleCourier")}
+            </Link>
+          ) : null}
           {can("delivery.view", "delivery.mark") ? (
             <Link className="rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-800" to="/delivery/track">
               {tr("liveTrack")}
@@ -122,7 +127,7 @@ export function DeliveryBoard() {
       {tab === "orders" ? (
         <>
           <SmartFilter f={f} fields={[
-            { key: "status", label: "status", type: "select", quick: true, options: ["held", "completed", "partial", "fully_returned", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
+            { key: "status", label: "status", type: "select", quick: true, options: ["held", "pending_delivery", "out_for_delivery", "pending_settlement", "completed", "rescheduled", "customer_unavailable", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
             { key: "agent_id", label: "agent", type: "select", quick: true, lookup: "delivery_agents" },
             { key: "area", label: "area", type: "text" },
           ]} />
@@ -142,7 +147,13 @@ export function DeliveryBoard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {rows.map((r) => {
+                      const showStatus = deliveryDisplayStatus(r);
+                      const awaiting = deliveryAwaitingConfirm(r);
+                      const canMark = ["held", "pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable"].includes(String(r.status || ""))
+                        && !awaiting
+                        && !["delivered", "completed"].includes(String(r.delivery_status || ""));
+                      return (
                       <tr key={r.id}>
                         <td><Link className="font-bold text-cyan-800" to={`/sales/${r.id}`}>{r.number}</Link></td>
                         <td>
@@ -152,10 +163,33 @@ export function DeliveryBoard() {
                         <td>{`${r.delivery_agent_name || ""} (${r.delivery_agent_code || ""})`}</td>
                         <td>{r.area}</td>
                         <td>{money(r.total, lang)}</td>
-                        <td><span className={statusClass(r.status)}>{statusLabel(r.status, lang)}</span></td>
-                        <td></td>
+                        <td><span className={statusClass(showStatus)}>{statusLabel(showStatus, lang)}</span></td>
+                        <td>
+                          {can("delivery.mark") && canMark ? (
+                            <Btn
+                              kind="soft"
+                              className="!px-2.5 !py-1 text-xs"
+                              onClick={async () => {
+                                await post(`/api/delivery/orders/${r.id}/mark-delivered`, {});
+                                orders.reload();
+                              }}
+                            >
+                              {tr("markDelivered")}
+                            </Btn>
+                          ) : awaiting ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-bold text-amber-700">{tr("courierAwaitConfirm")}</span>
+                              {can("delivery.settle") ? (
+                                <Link className="text-xs font-black text-cyan-800" to={`/delivery/settle${r.delivery_agent_id ? `?agent=${r.delivery_agent_id}` : ""}`}>
+                                  {tr("confirmDelivery")}
+                                </Link>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

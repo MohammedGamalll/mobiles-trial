@@ -401,9 +401,9 @@ export async function postAdvanceJournal(
   opts: { id: number; amount: number; date: string; description?: string | null; cashAccountId?: number | null; userId?: number | null },
 ) {
   if (await existingJournal(db, "advance", opts.id)) return;
-  const sal = await accountByCode(db, "5300");
+  const asset = await accountByCode(db, "1410");
   const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
-  if (!sal || !cash || opts.amount <= 0) throw new Error("ledger");
+  if (!asset || !cash || opts.amount <= 0) throw new Error("ledger");
   return postJournal(db, {
     date: opts.date,
     description: opts.description || `سلفة #${opts.id}`,
@@ -411,7 +411,52 @@ export async function postAdvanceJournal(
     sourceId: opts.id,
     userId: opts.userId,
     lines: [
-      { account_id: sal.id, debit: opts.amount },
+      { account_id: asset.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
+export async function postAdvanceSettleJournal(
+  db: AppDb,
+  opts: { runId: number; employeeId: number; amount: number; date: string; description?: string | null; userId?: number | null },
+) {
+  const amount = round2(opts.amount);
+  if (amount <= 0) return;
+  const sourceId = opts.runId * 1_000_000 + opts.employeeId;
+  if (await existingJournal(db, "advance_settle", sourceId)) return;
+  const sal = await accountByCode(db, "5300");
+  const asset = await accountByCode(db, "1410");
+  if (!sal || !asset) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: opts.description || `تسوية سلف موظف #${opts.employeeId}`,
+    source: "advance_settle",
+    sourceId,
+    userId: opts.userId,
+    lines: [
+      { account_id: sal.id, debit: amount },
+      { account_id: asset.id, credit: amount },
+    ],
+  });
+}
+
+export async function postProfitWithdrawJournal(
+  db: AppDb,
+  opts: { txId: number; amount: number; date: string; cashAccountId: number; description?: string | null; userId?: number | null },
+) {
+  if (await existingJournal(db, "profit_withdraw", opts.txId)) return;
+  const equity = await accountByCode(db, "3100");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!equity || !cash) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: opts.description || `سحب أرباح`,
+    source: "profit_withdraw",
+    sourceId: opts.txId,
+    userId: opts.userId,
+    lines: [
+      { account_id: equity.id, debit: opts.amount },
       { account_id: cash.account_id, credit: opts.amount },
     ],
   });

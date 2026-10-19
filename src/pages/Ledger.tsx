@@ -48,6 +48,10 @@ export function CashAccountsPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [xferOpen, setXferOpen] = useState(false);
+  const [profitOpen, setProfitOpen] = useState(false);
+  const [partners, setPartners] = useState<any[]>([]);
+  const [availableProfit, setAvailableProfit] = useState(0);
+  const [profit, setProfit] = useState({ amount: 0, cash_account_id: "", partner_id: "", note: "" });
   const [accounts, setAccounts] = useState<any[]>([]);
   const [form, setForm] = useState({ id: 0, kind: "cash", name: "", account_id: 1, account_number: "", opening_balance: 0 });
   const [xfer, setXfer] = useState({ from_id: "", to_id: "", amount: 0, notes: "" });
@@ -61,12 +65,30 @@ export function CashAccountsPage() {
     get<{ data: any[] }>("/api/ledger/accounts").then((r) => setAccounts(r.data || [])).catch(() => {});
   }, []);
   return (
-    <Page title={tr("cashBanks")} action={can("ledger.manage") ? (
+    <Page title={tr("cashBanks")} action={
       <div className="flex gap-2">
-        <Btn kind="soft" onClick={() => setXferOpen(true)}>{tr("cashTransfer")}</Btn>
-        <Btn onClick={() => setOpen(true)}>{tr("add")}</Btn>
+        {can("partners.manage") ? (
+          <Btn kind="soft" onClick={async () => {
+            try {
+              const r = await get<{ data: any[]; dashboard?: { available_profit?: number } }>("/api/partners?period=this_month");
+              setPartners(r.data || []);
+              setAvailableProfit(Number(r.dashboard?.available_profit || 0));
+            } catch {
+              setPartners([]);
+              setAvailableProfit(0);
+            }
+            setProfit({ amount: 0, cash_account_id: String(rows[0]?.id || ""), partner_id: "", note: "" });
+            setProfitOpen(true);
+          }}>{tr("profitWithdraw")}</Btn>
+        ) : null}
+        {can("ledger.manage") ? (
+          <>
+            <Btn kind="soft" onClick={() => setXferOpen(true)}>{tr("cashTransfer")}</Btn>
+            <Btn onClick={() => setOpen(true)}>{tr("add")}</Btn>
+          </>
+        ) : null}
       </div>
-    ) : null}>
+    }>
       <SmartFilter f={f} date={false} fields={[
         { key: "kind", label: "kind", type: "select", quick: true, options: [{ value: "cash", label: tr("cashBox") }, { value: "bank", label: tr("bank") }] },
       ]} />
@@ -134,6 +156,34 @@ export function CashAccountsPage() {
           <Btn onClick={async () => {
             await post("/api/ledger/cash-transfer", { from_id: Number(xfer.from_id), to_id: Number(xfer.to_id), amount: xfer.amount, notes: xfer.notes });
             setXferOpen(false);
+            list.reload();
+          }}>{tr("save")}</Btn>
+        </div>
+      </Modal>
+      <Modal open={profitOpen} title={tr("profitWithdraw")} onClose={() => setProfitOpen(false)}>
+        <div className="space-y-3">
+          <div className="text-sm font-bold">{tr("availableProfit")}: {money(availableProfit, lang)}</div>
+          <Field label={tr("cashBox")}>
+            <select className={inputCls} value={profit.cash_account_id} onChange={(e) => setProfit({ ...profit, cash_account_id: e.target.value })}>
+              {rows.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </Field>
+          <Field label={tr("partnersEquity")}>
+            <select className={inputCls} value={profit.partner_id} onChange={(e) => setProfit({ ...profit, partner_id: e.target.value })}>
+              <option value="">{tr("ownerDraw")}</option>
+              {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+          <Field label={tr("amount")}><input className={inputCls} type="number" value={profit.amount} onChange={(e) => setProfit({ ...profit, amount: Number(e.target.value) })} /></Field>
+          <Field label={tr("notes")}><input className={inputCls} value={profit.note} onChange={(e) => setProfit({ ...profit, note: e.target.value })} /></Field>
+          <Btn onClick={async () => {
+            await post("/api/partners/profit-withdraw?period=this_month", {
+              amount: profit.amount,
+              cash_account_id: Number(profit.cash_account_id || 0),
+              partner_id: profit.partner_id ? Number(profit.partner_id) : undefined,
+              note: profit.note || undefined,
+            });
+            setProfitOpen(false);
             list.reload();
           }}>{tr("save")}</Btn>
         </div>

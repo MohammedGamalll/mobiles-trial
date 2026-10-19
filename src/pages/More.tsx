@@ -4,10 +4,11 @@ import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { ListGate } from "../components/ListGate";
 import { useLiveList } from "../hooks/useLiveList";
-import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel, invoicePayStatus, posExchangePath } from "../lib/format";
+import { money, num, statusClass, statusLabel, customerBalanceLabel, supplierBalanceLabel, invoicePayStatus, posExchangePath, deliveryAwaitingConfirm } from "../lib/format";
 import { mergeWarehouseCards } from "../lib/warehouses";
 import { Btn, ErrorNote, ExportBtn, Field, FilterBar, Modal, PageLoading, PrintBtn, PrintLetterhead, SavedViews, Stat, inputCls, printPage } from "../components/ui";
 import { apiMessage, useActionError } from "../lib/errors";
+import { launchInvoiceWhatsApp } from "../lib/whatsapp";
 import { OsmMap } from "../components/OsmMap";
 import { PaymentModal } from "../components/PaymentModal";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
@@ -28,6 +29,7 @@ import { ListPager, TablePager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
 import { StaffForm } from "../components/StaffForm";
 import { auditActionOptions, formatAuditRow } from "../lib/audit-format";
+import { ProfitBreakdown } from "../components/ProfitBreakdown";
 
 export function SalesList() {
   const { tr, lang, can, warehouseId, settings } = useApp();
@@ -132,8 +134,9 @@ export function SalesList() {
           const payStatus = invoicePayStatus(r);
           const canReturn = can("returns.create") && !["cancelled", "fully_returned", "held", "quote", "order"].includes(r.status);
           const canPay = can("payments.create") && Number(r.remaining) > 0 && !["cancelled", "void", "held", "quote", "order", "draft"].includes(r.status);
-          const canResume = parked(r.status) && can("sales.create");
-          const canFinalize = parked(r.status) && can("sales.create");
+          const canResume = parked(r.status) && can("sales.create") && r.type !== "delivery";
+          const canFinalize = parked(r.status) && can("sales.create") && r.type !== "delivery";
+          const canConfirmDelivery = r.type === "delivery" && deliveryAwaitingConfirm(r) && can("delivery.settle");
           const canWa = waEnabled && can("whatsapp.send");
           const canVoid = can("sales.cancel") && !["cancelled", "fully_returned"].includes(r.status);
           return [
@@ -147,6 +150,7 @@ export function SalesList() {
           <div className="flex flex-wrap items-center gap-1.5">
             {canReturn ? <Btn kind="ghost" className="!px-2.5 !py-1 text-xs" onClick={() => openReturn(r.id)}>{tr("returnCreate")}</Btn> : null}
             {canPay ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => setPayRow(r)}>{tr("payInstallment")}</Btn> : null}
+            {canConfirmDelivery ? <Link className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800" to={`/delivery/settle${r.delivery_agent_id ? `?agent=${r.delivery_agent_id}` : ""}`}>{tr("confirmDelivery")}</Link> : null}
             {canResume ? <Btn kind="primary" className="!px-2.5 !py-1 text-xs" onClick={() => { rememberResumeInvoice(r.id); window.location.href = `/pos?held=${r.id}`; }}>{tr("resumeHeld")}</Btn> : null}
             {canFinalize ? <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={async () => {
               if (r.status === "quote") { setFinalizeRow(r); return; }
@@ -232,12 +236,17 @@ export function SalesList() {
         <div className="mt-3 flex flex-wrap gap-2">
           <Btn kind="ghost" onClick={async () => { await navigator.clipboard.writeText(waMsg); }}>{tr("copy")}</Btn>
           <Btn
-            onClick={async () => {
-              const phone = wa?.phone;
-              if (!phone) return;
-              const link = `https://wa.me/${String(phone).replace(/\D/g, "").replace(/^0/, "20")}?text=${encodeURIComponent(waMsg)}`;
-              await post(`/api/invoices/${wa.invoice_id || wa.id}/whatsapp/opened`, { type: wa?.type, message: waMsg, phone });
-              window.open(link, "_blank");
+            onClick={() => {
+              const ok = launchInvoiceWhatsApp({
+                invoiceId: Number(wa.invoice_id || wa.id),
+                phone: wa?.phone,
+                message: waMsg,
+                type: wa?.type,
+              });
+              if (!ok) {
+                act.fail(undefined, "waNoPhone");
+                return;
+              }
               setWaOpened(true);
             }}
           >
@@ -1646,8 +1655,16 @@ export function ReportsPage() {
         <Stat label={tr("accountPayments")} value={money(acc.payments, lang)} />
         <Stat label={tr("accountCredit")} value={money(acc.credit, lang)} />
         <Stat label={tr("accountExpenses")} value={money(acc.expenses, lang)} />
-        <Stat label={tr("accountProfit")} value={money(acc.profit, lang)} />
+        <Stat
+          label={tr("netProfit")}
+          value={money(acc.profit, lang)}
+          hint={acc.invoice_profit != null ? `${tr("invoiceProfit")} ${money(acc.invoice_profit, lang)}` : undefined}
+          accent="emerald"
+        />
       </div>
+      {showCost || acc.profit_breakdown ? (
+        <ProfitBreakdown data={acc.profit_breakdown} invoiceProfit={acc.invoice_profit} className="mb-4" />
+      ) : null}
       <div className="mb-4 flex flex-wrap gap-2 no-print">
         {tabs.map((t) => (
           <button
@@ -1666,7 +1683,13 @@ export function ReportsPage() {
         <Table cols={["", tr("invoicesCount"), tr("total"), ...(showCost ? [tr("profit")] : [])]} rows={(sales.data || []).map((r: any) => [r.label, num(r.invoices || r.qty, lang), money(r.total, lang), ...(showCost ? [money(r.profit, lang)] : [])])} />
       ) : null}
       {tab === "profit" && showCost ? (
-        <Table cols={[tr("invoiceNo"), tr("items"), tr("actualCost"), tr("sellingPrice"), tr("profit"), tr("profitMargin")]} rows={(profit.data || []).map((r: any) => [r.number, r.product_name, money(r.cost, lang), money(r.unit_price, lang), money(r.profit, lang), `${r.margin}%`])} />
+        <div className="space-y-4">
+          <ProfitBreakdown data={acc.profit_breakdown} invoiceProfit={acc.invoice_profit} />
+          <div>
+            <div className="mb-2 text-sm font-bold text-[var(--muted)]">{tr("invoiceProfit")}</div>
+            <Table cols={[tr("invoiceNo"), tr("items"), tr("actualCost"), tr("sellingPrice"), tr("profit"), tr("profitMargin")]} rows={(profit.data || []).map((r: any) => [r.number, r.product_name, money(r.cost, lang), money(r.unit_price, lang), money(r.profit, lang), `${r.margin}%`])} />
+          </div>
+        </div>
       ) : null}
       {tab === "inventory" ? (
         <Table cols={[tr("sku"), tr("name"), tr("available"), tr("reserved"), tr("minStock"), tr("location")]} rows={(inv.data || []).map((r: any) => [r.sku, lang === "ar" ? r.name_ar : r.name_en, num(r.available ?? r.current_stock, lang), num(r.reserved_stock, lang), num(r.min_stock, lang), r.location || "-"])} />
@@ -1735,7 +1758,6 @@ export function UsersPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [userTotal, setUserTotal] = useState(0);
   const [roles, setRoles] = useState<any>(null);
-  const [draft, setDraft] = useState<Record<number, number[]>>({});
   const [pq, setPq] = useState("");
   const [permBusy, setPermBusy] = useState(false);
   const [permMsg, setPermMsg] = useState("");
@@ -1743,6 +1765,7 @@ export function UsersPage() {
   const [open, setOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
   const [form, setForm] = useState({ id: 0, username: "", full_name: "", phone: "", role_id: 2, active: 1, password: "" });
+  const [userPermIds, setUserPermIds] = useState<number[]>([]);
   const { confirmDelete, dialog } = useConfirm();
   async function loadUsers() {
     const p = new URLSearchParams(f.qs);
@@ -1752,16 +1775,8 @@ export function UsersPage() {
     setUserTotal(inferredTotal(f.page, listPageSize(f.values), (r.data || []).length, r.total));
   }
   const list = useLiveList(loadUsers, [f.qs]);
-  function applyRoles(data: any) {
-    setRoles(data);
-    const next: Record<number, number[]> = {};
-    for (const role of data?.roles || []) {
-      next[role.id] = (data.role_permissions || []).filter((x: any) => x.role_id === role.id).map((x: any) => x.permission_id);
-    }
-    setDraft(next);
-  }
   useEffect(() => {
-    get("/api/roles").then(applyRoles);
+    get("/api/roles").then(setRoles);
   }, []);
   const manageRoles = can("users.manage");
   const perms = (roles?.permissions || []).filter((p: any) => !pq || `${p.code} ${p.name_ar} ${p.module}`.includes(pq));
@@ -1780,6 +1795,19 @@ export function UsersPage() {
     const ib = moduleOrder.indexOf(String(b));
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
+  async function openUser(u: any) {
+    setForm({ id: u.id, username: u.username, full_name: u.full_name || "", phone: u.phone || "", role_id: u.role_id, active: u.active ? 1 : 0, password: "" });
+    setPermMsg("");
+    setPermErr("");
+    setPq("");
+    setOpen(true);
+    try {
+      const data = await get<{ permission_ids?: number[] }>(`/api/users/${u.id}/permissions`);
+      setUserPermIds(data.permission_ids || []);
+    } catch {
+      setUserPermIds([]);
+    }
+  }
   return (
     <Page title={tr("users")} action={can("users.manage") ? <Btn onClick={() => setStaffOpen(true)}>{tr("addEmployee")}</Btn> : null}>
       <SmartFilter f={f} date={false} fields={[
@@ -1795,14 +1823,14 @@ export function UsersPage() {
           <ActionBtns
             canEdit
             canDelete
-            onEdit={() => { setForm({ id: u.id, username: u.username, full_name: u.full_name || "", phone: u.phone || "", role_id: u.role_id, active: u.active ? 1 : 0, password: "" }); setOpen(true); }}
+            onEdit={() => { void openUser(u); }}
             onDelete={() => confirmDelete(u.username, async () => { await del(`/api/users/${u.id}`); list.reload(); })}
           />
         ) : null,
       ])} />
       </ListGate>
       <ListPager f={f} total={userTotal} disabled={list.loading} />
-      <Modal open={open} title={form.id ? tr("edit") : tr("add")} onClose={() => setOpen(false)}>
+      <Modal open={open} title={form.id ? tr("edit") : tr("add")} onClose={() => setOpen(false)} wide>
         <div className="grid gap-3">
           <Field label={tr("username")}><input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></Field>
           <Field label={tr("name")}><input className={inputCls} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></Field>
@@ -1813,68 +1841,25 @@ export function UsersPage() {
             </select>
           </Field>
           <Field label={tr("newPassword")}><input className={inputCls} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
-          <Btn onClick={async () => {
-            const body: Record<string, unknown> = { username: form.username.trim(), full_name: form.full_name.trim(), phone: form.phone, role_id: form.role_id, active: form.active };
-            if (form.password) body.password = form.password;
-            await put(`/api/users/${form.id}`, body);
-            setOpen(false);
-            list.reload();
-          }}>{tr("save")}</Btn>
-        </div>
-      </Modal>
-      <Modal open={staffOpen} title={tr("addEmployee")} onClose={() => setStaffOpen(false)} wide>
-        <StaffForm onSaved={() => { setStaffOpen(false); list.reload(); }} onCancel={() => setStaffOpen(false)} />
-      </Modal>
-      {roles ? (
-        <div className="mt-6">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-bold">{tr("permissions")}</h3>
-            {manageRoles ? (
-              <Btn disabled={permBusy} onClick={async () => {
-                setPermBusy(true);
-                setPermErr("");
-                setPermMsg("");
-                try {
-                  for (const r of roles.roles || []) {
-                    const saved = (roles.role_permissions || []).filter((x: any) => x.role_id === r.id).map((x: any) => x.permission_id).sort().join(",");
-                    const next = [...(draft[r.id] || [])].sort().join(",");
-                    if (saved === next) continue;
-                    await put(`/api/roles/${r.id}/permissions`, { permission_ids: draft[r.id] || [] });
-                  }
-                  applyRoles(await get("/api/roles"));
-                  setPermMsg(tr("saved"));
-                } catch (e) {
-                  setPermErr(apiMessage(tr, e));
-                } finally {
-                  setPermBusy(false);
-                }
-              }}>{permBusy ? tr("loading") : tr("savePermissions")}</Btn>
-            ) : null}
-          </div>
-          <FilterBar>
-            <input className={`${inputCls} max-w-sm`} value={pq} onChange={(e) => setPq(e.target.value)} placeholder={tr("search")} />
-          </FilterBar>
-          {permMsg ? <div className="mb-3 text-sm font-bold text-emerald-700">{permMsg}</div> : null}
-          <ErrorNote message={permErr} />
-          {(roles.roles || []).map((r: any) => (
-            <details key={r.id} className="mt-2 rounded-xl bg-white p-3">
-              <summary className="cursor-pointer font-bold">{r.slug === "sales" ? tr("cashier") : r.name_ar}</summary>
+          <div>
+            <h3 className="mb-2 font-bold">{tr("userPermissions")}</h3>
+            <FilterBar>
+              <input className={`${inputCls} max-w-sm`} value={pq} onChange={(e) => setPq(e.target.value)} placeholder={tr("search")} />
+            </FilterBar>
+            {permMsg ? <div className="mb-2 text-sm font-bold text-emerald-700">{permMsg}</div> : null}
+            <ErrorNote message={permErr} />
+            <div className="max-h-72 overflow-auto rounded-xl border border-slate-100 p-2">
               {modules.map((mod) => (
-                <div key={String(mod)} className="mt-3">
+                <div key={String(mod)} className="mt-2">
                   <div className="text-xs font-bold uppercase text-slate-400">{moduleLabel(String(mod))}</div>
                   <div className="mt-1 grid gap-1 md:grid-cols-2">
                     {perms.filter((p: any) => p.module === mod).map((p: any) => {
-                      const on = (draft[r.id] || []).includes(p.id);
+                      const on = userPermIds.includes(p.id);
                       return (
                         <label key={p.id} className="flex items-center gap-2 text-sm">
                           <input type="checkbox" checked={on} disabled={!manageRoles} onChange={(e) => {
                             if (!manageRoles) return;
-                            setDraft((d) => {
-                              const cur = new Set(d[r.id] || []);
-                              if (e.target.checked) cur.add(p.id);
-                              else cur.delete(p.id);
-                              return { ...d, [r.id]: [...cur] };
-                            });
+                            setUserPermIds((cur) => e.target.checked ? [...new Set([...cur, p.id])] : cur.filter((id) => id !== p.id));
                           }} />
                           <span>{p.name_ar}<span className="ms-1 text-xs text-slate-400">{p.code}</span></span>
                         </label>
@@ -1883,10 +1868,31 @@ export function UsersPage() {
                   </div>
                 </div>
               ))}
-            </details>
-          ))}
+            </div>
+          </div>
+          <Btn disabled={permBusy} onClick={async () => {
+            setPermBusy(true);
+            setPermErr("");
+            setPermMsg("");
+            try {
+              const body: Record<string, unknown> = { username: form.username.trim(), full_name: form.full_name.trim(), phone: form.phone, role_id: form.role_id, active: form.active };
+              if (form.password) body.password = form.password;
+              await put(`/api/users/${form.id}`, body);
+              if (manageRoles) await put(`/api/users/${form.id}/permissions`, { permission_ids: userPermIds });
+              setPermMsg(tr("saved"));
+              setOpen(false);
+              list.reload();
+            } catch (e) {
+              setPermErr(apiMessage(tr, e));
+            } finally {
+              setPermBusy(false);
+            }
+          }}>{permBusy ? tr("loading") : tr("save")}</Btn>
         </div>
-      ) : null}
+      </Modal>
+      <Modal open={staffOpen} title={tr("addEmployee")} onClose={() => setStaffOpen(false)} wide>
+        <StaffForm onSaved={() => { setStaffOpen(false); list.reload(); }} onCancel={() => setStaffOpen(false)} />
+      </Modal>
       {dialog}
     </Page>
   );

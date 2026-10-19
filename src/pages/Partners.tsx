@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { useApp } from "../context";
 import { del, get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { money } from "../lib/format";
+import { money, num } from "../lib/format";
 import { TablePager } from "../components/TablePager";
 import { usePagedRows } from "../hooks/usePagedRows";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
+import { ProfitBreakdown, type ProfitBreakdownData } from "../components/ProfitBreakdown";
 import {
   Btn,
   ErrorNote,
@@ -23,11 +24,28 @@ type Dashboard = {
   total_liabilities: number;
   net_equity: number;
   net_profit: number;
+  available_profit?: number;
+  owner_available?: number;
+  period_draws?: number;
   total_wastage: number;
   revenues: number;
   expenses: number;
+  shift_overage?: number;
+  shift_shortage?: number;
+  profit_breakdown?: ProfitBreakdownData | null;
+  draws?: ProfitDraw[];
   from?: string;
   to?: string;
+};
+
+type ProfitDraw = {
+  id: number;
+  date: string;
+  source: string;
+  amount: number;
+  partner_name: string | null;
+  note: string;
+  user_name: string;
 };
 
 type Partner = {
@@ -39,13 +57,16 @@ type Partner = {
   profit_share: number;
   asset_share: number;
   net_due: number;
+  available?: number;
 };
 
-function auditNum(n: number) {
-  return Number(n || 0).toLocaleString("en-EG", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function clampAmount(raw: string, cap: number) {
+  if (raw === "" || raw === ".") return raw;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  if (n < 0) return "0";
+  if (n > cap) return String(cap);
+  return raw;
 }
 
 function AmountCell({
@@ -58,14 +79,9 @@ function AmountCell({
   strong?: boolean;
 }) {
   return (
-    <div className="flex flex-col items-center gap-0.5 leading-tight">
-      <span className={`tabular-nums ${strong ? "font-black" : "font-bold"}`}>
-        {money(n, lang as "ar" | "en")}
-      </span>
-      <span className="text-[11px] font-semibold tabular-nums text-[var(--muted)]">
-        {auditNum(n)}
-      </span>
-    </div>
+    <span className={`tabular-nums ${strong ? "font-black" : "font-bold"}`}>
+      {money(n, lang as "ar" | "en")}
+    </span>
   );
 }
 
@@ -119,6 +135,8 @@ export default function Partners() {
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState<Partner | null>(null);
   const [drawOpen, setDrawOpen] = useState<Partner | null>(null);
+  const [profitOpen, setProfitOpen] = useState(false);
+  const [profit, setProfit] = useState({ amount: "", cash_account_id: "", partner_id: "", note: "" });
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -204,7 +222,7 @@ export default function Partners() {
     setSaving(true);
     setErr("");
     try {
-      await post(`/api/partners/${drawOpen.id}/withdraw`, {
+      await post(`/api/partners/${drawOpen.id}/withdraw?${f.qs}`, {
         amount: Number(draw.amount || 0),
         cash_account_id: Number(draw.cash_account_id || 0),
         note: draw.note.trim() || undefined,
@@ -219,11 +237,38 @@ export default function Partners() {
     }
   }
 
+  async function withdrawProfit() {
+    setSaving(true);
+    setErr("");
+    try {
+      await post(`/api/partners/profit-withdraw?${f.qs}`, {
+        amount: Number(profit.amount || 0),
+        cash_account_id: Number(profit.cash_account_id || 0),
+        partner_id: profit.partner_id ? Number(profit.partner_id) : undefined,
+        note: profit.note.trim() || undefined,
+      });
+      setProfitOpen(false);
+      setProfit({ amount: "", cash_account_id: "", partner_id: "", note: "" });
+      await load();
+    } catch (e) {
+      setErr(apiMessage(tr, e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const pagedPartners = usePagedRows(rows, page, pageSize);
   const usedPct = rows.reduce(
     (s, r) => s + (Number(r.equity_percentage) || 0),
     0,
   );
+  const drawCap = drawOpen ? Number(drawOpen.available ?? drawOpen.net_due ?? 0) : 0;
+  const selectedProfit = profit.partner_id
+    ? rows.find((r) => String(r.id) === profit.partner_id)
+    : null;
+  const profitCap = selectedProfit
+    ? Number(selectedProfit.available ?? selectedProfit.net_due ?? 0)
+    : Number(dash?.owner_available ?? dash?.available_profit ?? 0);
 
   return (
     <div className="text-[var(--text)]">
@@ -233,9 +278,7 @@ export default function Partners() {
           <h1 className="text-2xl font-black">{tr("partnersEquity")}</h1>
           <div className="mt-1 text-sm text-[var(--muted)]">
             {tr("equityPercent")}:{" "}
-            {usedPct.toLocaleString(lang === "ar" ? "ar-EG" : "en-EG", {
-              maximumFractionDigits: 2,
-            })}
+            {num(usedPct, lang)}
             %
           </div>
           {dash?.from ? (
@@ -247,20 +290,37 @@ export default function Partners() {
         </div>
         <div className="no-print flex flex-wrap gap-2">
           {can("partners.manage") ? (
-            <Btn
-              onClick={() => {
-                setErr("");
-                setForm({
-                  name: "",
-                  equity_percentage: "",
-                  starting_balance: "",
-                  cash_account_id: String(cashAccounts[0]?.id || ""),
-                });
-                setAddOpen(true);
-              }}
-            >
-              {tr("addPartner")}
-            </Btn>
+            <>
+              <Btn
+                kind="soft"
+                onClick={() => {
+                  setErr("");
+                  setProfit({
+                    amount: "",
+                    cash_account_id: String(cashAccounts[0]?.id || ""),
+                    partner_id: "",
+                    note: "",
+                  });
+                  setProfitOpen(true);
+                }}
+              >
+                {tr("profitWithdraw")}
+              </Btn>
+              <Btn
+                onClick={() => {
+                  setErr("");
+                  setForm({
+                    name: "",
+                    equity_percentage: "",
+                    starting_balance: "",
+                    cash_account_id: String(cashAccounts[0]?.id || ""),
+                  });
+                  setAddOpen(true);
+                }}
+              >
+                {tr("addPartner")}
+              </Btn>
+            </>
           ) : null}
           <PrintBtn />
         </div>
@@ -274,21 +334,25 @@ export default function Partners() {
           <Kpi
             label={tr("netEquity")}
             value={money(dash.net_equity, lang)}
-            hint={auditNum(dash.net_equity)}
+          />
+          <Kpi
+            label={tr("availableProfit")}
+            value={money(dash.available_profit ?? dash.net_profit, lang)}
+            hint={`${tr("netProfit")} ${money(dash.net_profit, lang)} − ${tr("withdrawals")} ${money(dash.period_draws || 0, lang)}`}
           />
           <Kpi
             label={tr("netProfit")}
             value={money(dash.net_profit, lang)}
-            hint={`${auditNum(dash.net_profit)} · ${tr("profitAfterCosts")}`}
           />
           <Kpi
             label={tr("totalWastage")}
             value={money(dash.total_wastage, lang)}
-            hint={auditNum(dash.total_wastage)}
             warn
           />
         </div>
       ) : null}
+
+      {dash?.profit_breakdown ? <ProfitBreakdown data={dash.profit_breakdown} className="mb-4" /> : null}
 
       <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm">
         <div className="table-wrap overflow-x-auto">
@@ -309,7 +373,7 @@ export default function Partners() {
                 <th className="text-center">{tr("assetShare")}</th>
                 <th className="text-center">{tr("profitShare")}</th>
                 <th className="text-center">{tr("withdrawals")}</th>
-                <th className="text-center">{tr("netDue")}</th>
+                <th className="text-center">{tr("canWithdraw")}</th>
                 {can("partners.manage") ? (
                   <th className="no-print text-end">{tr("actions")}</th>
                 ) : null}
@@ -342,9 +406,7 @@ export default function Partners() {
                     {r.name}
                   </td>
                   <td className="whitespace-nowrap text-center font-bold tabular-nums">
-                    {Number(r.equity_percentage).toLocaleString(
-                      lang === "ar" ? "ar-EG" : "en-EG",
-                    )}
+                    {num(r.equity_percentage, lang)}
                     %
                   </td>
                   <td className="whitespace-nowrap text-center">
@@ -357,7 +419,7 @@ export default function Partners() {
                     <AmountCell n={r.total_withdrawals} lang={lang} />
                   </td>
                   <td className="whitespace-nowrap text-center">
-                    <AmountCell n={r.net_due} lang={lang} strong />
+                    <AmountCell n={r.available ?? r.net_due} lang={lang} strong />
                   </td>
                   {can("partners.manage") ? (
                     <td className="no-print whitespace-nowrap text-center">
@@ -406,6 +468,42 @@ export default function Partners() {
           </table>
         </div>
         <TablePager page={page} pageSize={pageSize} total={rows.length} disabled={loading} onPage={setPage} onPageSize={setPageSize} />
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+        <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-black">{tr("profitWithdrawals")}</div>
+        <div className="table-wrap overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr>
+                <th className="text-center">{tr("date")}</th>
+                <th className="text-center">{tr("beneficiary")}</th>
+                <th className="text-center">{tr("amount")}</th>
+                <th className="text-center">{tr("notes")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!(dash?.draws || []).length ? (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-[var(--muted)]">
+                    {tr("noData")}
+                  </td>
+                </tr>
+              ) : (
+                (dash?.draws || []).map((d) => (
+                  <tr key={d.id}>
+                    <td className="whitespace-nowrap font-bold tabular-nums">{d.date}</td>
+                    <td className=" font-bold">{d.partner_name || tr("owner")}</td>
+                    <td className="whitespace-nowrap ">
+                      <AmountCell n={d.amount} lang={lang} />
+                    </td>
+                    <td className=" text-[var(--muted)]">{d.note || "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {dialog}
@@ -523,6 +621,9 @@ export default function Partners() {
       >
         <div className="space-y-3">
           <div className="text-sm font-bold">{drawOpen?.name}</div>
+          <div className="text-sm font-bold">
+            {tr("canWithdraw")}: {money(drawCap, lang)}
+          </div>
           <Field label="cashBox">
             <select
               className={inputCls}
@@ -543,10 +644,12 @@ export default function Partners() {
             <input
               className={`${inputCls} tabular-nums`}
               type="number"
-              min={0.01}
+              min={0}
+              max={drawCap}
               step="0.01"
               value={draw.amount}
-              onChange={(e) => setDraw({ ...draw, amount: e.target.value })}
+              onChange={(e) => setDraw({ ...draw, amount: clampAmount(e.target.value, drawCap) })}
+              disabled={drawCap <= 0}
             />
           </Field>
           <Field label="notes">
@@ -560,9 +663,76 @@ export default function Partners() {
             <Btn kind="ghost" onClick={() => setDrawOpen(null)}>
               {tr("cancel")}
             </Btn>
-            <Btn loading={saving} onClick={() => void withdraw()}>
+            <Btn loading={saving} disabled={drawCap <= 0 || !(Number(draw.amount) > 0)} onClick={() => void withdraw()}>
               {tr("save")}
             </Btn>
+          </div>
+        </div>
+      </Modal>
+      <Modal open={profitOpen} title={tr("profitWithdraw")} onClose={() => setProfitOpen(false)}>
+        <div className="space-y-3">
+          <div className="text-sm font-bold">
+            {tr("availableProfit")}: {money(dash?.available_profit ?? 0, lang)}
+          </div>
+          <div className="text-sm font-bold">
+            {tr("canWithdraw")}: {money(profitCap, lang)}
+            {selectedProfit ? ` · ${selectedProfit.name}` : ` · ${tr("owner")}`}
+          </div>
+          <Field label="cashBox">
+            <select
+              className={inputCls}
+              value={profit.cash_account_id}
+              onChange={(e) => setProfit({ ...profit, cash_account_id: e.target.value })}
+            >
+              <option value="">{tr("cashBox")}</option>
+              {cashAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {lang === "ar" ? a.name : a.name_en || a.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={tr("partnersEquity")}>
+            <select
+              className={inputCls}
+              value={profit.partner_id}
+              onChange={(e) => {
+                const id = e.target.value;
+                const row = id ? rows.find((r) => String(r.id) === id) : null;
+                const cap = row
+                  ? Number(row.available ?? row.net_due ?? 0)
+                  : Number(dash?.owner_available ?? dash?.available_profit ?? 0);
+                setProfit({ ...profit, partner_id: id, amount: clampAmount(profit.amount, cap) });
+              }}
+            >
+              <option value="">{tr("ownerDraw")} — {money(dash?.owner_available ?? 0, lang)}</option>
+              {rows.map((r) => (
+                <option key={r.id} value={r.id}>{r.name} — {money(r.available ?? r.net_due, lang)}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="amount">
+            <input
+              className={`${inputCls} tabular-nums`}
+              type="number"
+              min={0}
+              max={profitCap}
+              step="0.01"
+              value={profit.amount}
+              onChange={(e) => setProfit({ ...profit, amount: clampAmount(e.target.value, profitCap) })}
+              disabled={profitCap <= 0}
+            />
+          </Field>
+          <Field label="notes">
+            <input
+              className={inputCls}
+              value={profit.note}
+              onChange={(e) => setProfit({ ...profit, note: e.target.value })}
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn kind="ghost" onClick={() => setProfitOpen(false)}>{tr("cancel")}</Btn>
+            <Btn loading={saving} disabled={profitCap <= 0 || !(Number(profit.amount) > 0)} onClick={() => void withdrawProfit()}>{tr("save")}</Btn>
           </div>
         </div>
       </Modal>

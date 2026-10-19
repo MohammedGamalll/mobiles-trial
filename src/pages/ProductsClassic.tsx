@@ -280,7 +280,10 @@ export default function ProductsClassic() {
             type="button"
             onClick={async () => {
               await cat.loadAllFiltered();
-              requestAnimationFrame(() => printPage());
+              await new Promise<void>((resolve) => {
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+              });
+              printPage("landscape");
             }}
           >
             <Printer size={14} /> {tr("invPrintList")}
@@ -317,7 +320,7 @@ export default function ProductsClassic() {
           <table>
             <thead>
               <tr>
-                <th></th>
+                <th className="no-print"></th>
                 <th>{tr("posColSku")}</th>
                 <th>{tr("posColName")}</th>
                 <th>{tr("actualGoodsBalance")}</th>
@@ -326,12 +329,12 @@ export default function ProductsClassic() {
                 <th>{tr("sellingPrice")}</th>
                 {cat.showCost ? <th>{tr("invAvgCost")}</th> : null}
                 {cat.showCost ? <th>{tr("invLastCost")}</th> : null}
-                <th>{tr("barcode")}</th>
-                <th>{tr("invCode1")}</th>
+                <th className="print-hide">{tr("barcode")}</th>
+                <th className="print-hide">{tr("invCode1")}</th>
                 <th>{tr("posColCategory")}</th>
                 <th>{tr("posColKind")}</th>
                 <th>{tr("posColBrand")}</th>
-                <th>{tr("supplier")}</th>
+                <th className="print-hide">{tr("supplier")}</th>
               </tr>
             </thead>
             <tbody>
@@ -342,7 +345,7 @@ export default function ProductsClassic() {
                   onClick={() => cat.setPicked(p.id)}
                   onDoubleClick={() => void openEdit(p.id)}
                 >
-                  <td>
+                  <td className="no-print">
                     <input
                       type="checkbox"
                       checked={cat.checked.includes(p.id)}
@@ -366,14 +369,14 @@ export default function ProductsClassic() {
                       )}
                     </td>
                   ) : null}
-                  <td>{p.barcode || ""}</td>
-                  <td>{p.extra_code1 || ""}</td>
+                  <td className="print-hide">{p.barcode || ""}</td>
+                  <td className="print-hide">{p.extra_code1 || ""}</td>
                   <td>{p.quality || ""}</td>
                   <td>
                     {(lang === "ar" ? p.part_type_ar : p.part_type_en) || ""}
                   </td>
                   <td>{(lang === "ar" ? p.brand_ar : p.brand_en) || ""}</td>
-                  <td>{lastSupplierName(p)}</td>
+                  <td className="print-hide">{lastSupplierName(p)}</td>
                 </tr>
               ))}
             </tbody>

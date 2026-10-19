@@ -1,11 +1,18 @@
 import type { AppDb } from "./db";
+import { ensureWhatsappTemplates } from "./whatsapp";
 
 export const KEEP_TABLES = new Set([
   "roles",
   "permissions",
   "role_permissions",
+  "user_permissions",
   "users",
   "sessions",
+  "customers",
+  "suppliers",
+  "delivery_agents",
+  "employees",
+  "work_shifts",
   "d1_migrations",
   "schema_migrations",
 ]);
@@ -38,6 +45,7 @@ const FACTORY_LEDGER: [number, string, string, string, string][] = [
   [12, "4210", "زيادة صندوق", "Cash overage", "revenue"],
   [13, "5215", "عجز صندوق", "Cash shortage", "expense"],
   [14, "1101", "الخزنة", "Safe cash", "asset"],
+  [15, "1410", "سلف الموظفين", "Employee advances", "asset"],
 ];
 
 export const FACTORY_CASH_ACCOUNTS: [string, string, string, string][] = [
@@ -113,6 +121,7 @@ async function restoreFactorySkeleton(db: AppDb) {
     db,
     "INSERT INTO payment_methods (code, name_ar, name_en, active, sort_order) VALUES ('credit', 'آجل', 'Credit', 1, 2)",
   );
+  await ensureWhatsappTemplates(db);
   const settings: [string, string][] = [
     ["store_name", "المتميز"],
     ["store_name_ar", "المتميز"],
@@ -145,6 +154,16 @@ async function restoreFactorySkeleton(db: AppDb) {
   );
 }
 
+async function zeroKeptBalances(db: AppDb) {
+  await tryExec(db, "UPDATE customers SET current_balance = 0");
+  await tryExec(db, "UPDATE customers SET opening_balance = 0");
+  await tryExec(db, "UPDATE suppliers SET balance = 0");
+  await tryExec(db, "UPDATE suppliers SET opening_balance = 0");
+  await tryExec(db, "UPDATE delivery_agents SET current_balance = 0");
+  await tryExec(db, "UPDATE delivery_agents SET balance = 0");
+  await tryExec(db, "UPDATE cash_accounts SET current_balance = 0, opening_balance = 0");
+}
+
 export async function wipeAllBusinessData(db: AppDb, keepUserId: number) {
   const tables = (await listTables(db)).filter(shouldWipeTable);
   await db.exec("SET FOREIGN_KEY_CHECKS=0");
@@ -152,23 +171,10 @@ export async function wipeAllBusinessData(db: AppDb, keepUserId: number) {
     for (const table of tables) {
       await db.exec(`DELETE FROM \`${table}\``);
     }
-    await tryExec(db, "UPDATE users SET delivery_agent_id = NULL");
-    await db
-      .prepare(
-        `DELETE FROM users WHERE id NOT IN (
-           SELECT id FROM (
-             SELECT u.id FROM users u
-             JOIN roles r ON r.id = u.role_id
-             WHERE r.slug = 'admin' OR u.id = ?
-           ) keep_users
-         )`,
-      )
-      .bind(keepUserId)
-      .run();
-    await db.prepare("DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)").run();
     await restoreFactorySkeleton(db);
+    await zeroKeptBalances(db);
   } finally {
     await db.exec("SET FOREIGN_KEY_CHECKS=1");
   }
-  return { wiped: tables.sort() };
+  return { wiped: tables.sort(), kept_user_id: keepUserId };
 }

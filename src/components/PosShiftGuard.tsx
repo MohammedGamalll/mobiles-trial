@@ -12,12 +12,13 @@ type CloseSale = {
   number: string;
   customer_name?: string;
   payment_method?: string;
+  type?: string;
   total: number;
   paid: number;
   remaining?: number;
 };
 type CloseReturn = { id: number; number: string; total: number; invoice_id?: number; invoice_number?: string };
-type ClosePay = { id: number; method: string; amount: number; invoice_id?: number; invoice_number?: string };
+type ClosePay = { id: number; method: string; amount: number; invoice_id?: number; invoice_number?: string; notes?: string; invoice_type?: string };
 type CloseVoucher = { id: number; number: string; type: string; amount: number; party_name?: string };
 type CloseExpense = { id: number; amount: number; description?: string; category_ar?: string };
 type CloseReport = {
@@ -206,8 +207,8 @@ export function CloseShiftModal({
 
   const counted = Number(actual);
   const sales = report?.sales || [];
-  const cashSales = sales.filter((s) => !isCreditMethod(s.payment_method));
-  const creditSales = sales.filter((s) => isCreditMethod(s.payment_method));
+  const cashSales = sales.filter((s) => s.type !== "delivery" && !isCreditMethod(s.payment_method));
+  const creditSales = sales.filter((s) => s.type !== "delivery" && isCreditMethod(s.payment_method));
   const cashSalesTotal = sumBy(cashSales, "total");
   const creditSalesTotal = sumBy(creditSales, "total");
   const creditRemaining = sumBy(creditSales, "remaining");
@@ -265,7 +266,7 @@ export function CloseShiftModal({
               </div>
               <CloseLines title="sales" rows={sales.map((r) => [
                 <Link key={r.id} className="font-extrabold text-cyan-800 underline underline-offset-2" to={`/sales/${r.id}`}>{r.number}</Link>,
-                `${r.customer_name || "—"} · ${isCreditMethod(r.payment_method) ? tr("creditSales") : tr("cashSales")}`,
+                `${r.customer_name || "—"} · ${r.type === "delivery" ? tr("delivery") : isCreditMethod(r.payment_method) ? tr("creditSales") : tr("cashSales")}`,
                 money(r.total, lang),
               ])} />
               <CloseLines title="salesReturns" rows={(report.returns || []).map((r) => [
@@ -275,7 +276,7 @@ export function CloseShiftModal({
               ])} />
               <CloseLines title="collect" rows={(report.collections || []).map((r) => [
                 r.invoice_number || "—",
-                r.method || "—",
+                r.invoice_type === "delivery" || String(r.notes || "").includes("delivery settlement") ? tr("delivery") : r.method || "—",
                 money(r.amount, lang),
               ])} />
               <CloseLines title="vouchersIn" rows={receipts.map((r) => [r.number, r.party_name || "—", money(r.amount, lang)])} />

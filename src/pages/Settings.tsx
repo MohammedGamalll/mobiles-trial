@@ -3,11 +3,19 @@ import { Database, FileText, MapPin, Settings2, Shield, Store } from "lucide-rea
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
+import { apiMessage } from "../lib/errors";
 import { Btn, Field, Modal, PageLoading, PrintLetterhead, Switch, inputCls } from "../components/ui";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { authHeaders } from "../lib/session";
 import { parseMapsCoords, looksLikeMapsUrl, isShortMapsUrl, formatMapsCoord } from "../lib/maps";
 import { StaffForm } from "../components/StaffForm";
+import {
+  applyDashboardLayout,
+  DASHBOARD_CARDS,
+  parseDashboardLayout,
+  stringifyDashboardLayout,
+  type DashboardCardKey,
+} from "../lib/dashboard-layout";
 
 const OsmMap = lazy(() => import("../components/OsmMap").then((m) => ({ default: m.OsmMap })));
 
@@ -36,6 +44,44 @@ const BOOL_KEYS = [
   "use_last_customer_price",
   "auto_backup_on_login",
 ] as const;
+
+const WA_VARS = [
+  { key: "customer_name", ar: "اسم العميل", en: "Customer" },
+  { key: "invoice_number", ar: "رقم الفاتورة", en: "Invoice no." },
+  { key: "products", ar: "المنتجات", en: "Products" },
+  { key: "total", ar: "الإجمالي", en: "Total" },
+  { key: "store_name", ar: "اسم المحل", en: "Store" },
+  { key: "order_type", ar: "نوع الطلب", en: "Order type" },
+  { key: "address", ar: "العنوان", en: "Address" },
+  { key: "agent_name", ar: "التيار", en: "Courier" },
+  { key: "agent_phone", ar: "هاتف التيار", en: "Courier phone" },
+  { key: "delivery_time", ar: "وقت التوصيل", en: "Delivery time" },
+] as const;
+
+const BLANK_WA_BODY_AR = `أهلاً {{customer_name}}
+
+فاتورة {{invoice_number}}
+{{products}}
+الإجمالي: {{total}} جنيه
+
+{{store_name}}`;
+
+const BLANK_WA_BODY_EN = `Hello {{customer_name}}
+
+Invoice {{invoice_number}}
+{{products}}
+Total: {{total}} EGP
+
+{{store_name}}`;
+
+type WaTpl = {
+  code: string;
+  name_ar: string;
+  name_en: string;
+  body_ar: string;
+  body_en: string;
+  active?: number;
+};
 
 const DELIVERY_PRESETS = [
   { value: "30 دقيقة", key: "delivery30m" as const },
@@ -248,7 +294,10 @@ function SettingsBody() {
   const isAdmin = user?.role_slug === "admin";
   const [tab, setTab] = useState<Tab>("general");
   const [form, setForm] = useState<Record<string, string>>({});
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<WaTpl[]>([]);
+  const [addTplOpen, setAddTplOpen] = useState(false);
+  const [addTpl, setAddTpl] = useState({ name_ar: "", name_en: "", body_ar: BLANK_WA_BODY_AR, body_en: BLANK_WA_BODY_EN });
+  const [addTplBusy, setAddTplBusy] = useState(false);
   const [backs, setBacks] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -335,6 +384,22 @@ function SettingsBody() {
     }
   }
 
+  async function reloadTemplates() {
+    const r = await get<{ templates: WaTpl[] }>("/api/settings");
+    setTemplates(r.templates || []);
+  }
+
+  function patchTpl(code: string, patch: Partial<WaTpl>) {
+    setTemplates((prev) => prev.map((x) => (x.code === code ? { ...x, ...patch } : x)));
+  }
+
+  function insertWaVar(code: string, field: "body_ar" | "body_en", key: string) {
+    const token = `{{${key}}}`;
+    setTemplates((prev) =>
+      prev.map((x) => (x.code === code ? { ...x, [field]: `${x[field] || ""}${x[field] ? " " : ""}${token}` } : x)),
+    );
+  }
+
   async function saveSettings() {
     if (!canEdit) return;
     setSaving(true);
@@ -345,10 +410,34 @@ function SettingsBody() {
         payload[key] = isOn(payload[key], key === "sound_enabled" || key === "auto_backup_on_login") ? "1" : "0";
       }
       await put("/api/settings", payload);
+      if (tab === "sales") {
+        for (const t of templates) {
+          await put(`/api/settings/whatsapp-templates/${encodeURIComponent(t.code)}`, t);
+        }
+      }
       refreshSettings();
       setMsg(tr("settingsSaved"));
+    } catch (e) {
+      setMsg(apiMessage(tr, e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function addWhatsappTemplate() {
+    if (!canEdit) return;
+    setAddTplBusy(true);
+    setMsg("");
+    try {
+      await post("/api/settings/whatsapp-templates", addTpl);
+      await reloadTemplates();
+      setAddTplOpen(false);
+      setAddTpl({ name_ar: "", name_en: "", body_ar: BLANK_WA_BODY_AR, body_en: BLANK_WA_BODY_EN });
+      setMsg(tr("saved"));
+    } catch (e) {
+      setMsg(apiMessage(tr, e));
+    } finally {
+      setAddTplBusy(false);
     }
   }
 
@@ -356,7 +445,7 @@ function SettingsBody() {
     setForm(settings);
     setCustomDelivery(!DELIVERY_PRESETS.some((p) => p.value === (settings.default_delivery_time || "")));
     setCustomRadius(!RADIUS_PRESETS.includes(Number(settings.geofence_meters || 0)));
-    get<{ templates: any[] }>("/api/settings").then((r) => setTemplates(r.templates || []));
+    get<{ templates: WaTpl[] }>("/api/settings").then((r) => setTemplates(r.templates || []));
     loadBackups().catch(() => {});
     loadDemo().catch(() => {});
   }, [settings]);
@@ -367,6 +456,60 @@ function SettingsBody() {
     <div>
       <PrintLetterhead title={tr("settings")} />
       {dialog}
+      <Modal
+        open={addTplOpen}
+        title={tr("addWaTemplate")}
+        onClose={() => { if (!addTplBusy) setAddTplOpen(false); }}
+      >
+        <div className="space-y-3">
+          <Field label={tr("nameAr")}>
+            <input
+              className={inputCls}
+              value={addTpl.name_ar}
+              onChange={(e) => setAddTpl((p) => ({ ...p, name_ar: e.target.value }))}
+            />
+          </Field>
+          <Field label={tr("nameEn")}>
+            <input
+              className={inputCls}
+              value={addTpl.name_en}
+              onChange={(e) => setAddTpl((p) => ({ ...p, name_en: e.target.value }))}
+            />
+          </Field>
+          <Field label={tr("waBodyAr")}>
+            <textarea
+              className={`${inputCls} min-h-28`}
+              value={addTpl.body_ar}
+              onChange={(e) => setAddTpl((p) => ({ ...p, body_ar: e.target.value }))}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-1.5">
+            {WA_VARS.map((v) => (
+              <button
+                key={v.key}
+                type="button"
+                className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] font-bold text-slate-600 hover:border-cyan-300"
+                onClick={() => setAddTpl((p) => ({ ...p, body_ar: `${p.body_ar}${p.body_ar ? " " : ""}{{${v.key}}}` }))}
+              >
+                {lang === "ar" ? v.ar : v.en}
+              </button>
+            ))}
+          </div>
+          <Field label={tr("waBodyEn")}>
+            <textarea
+              className={`${inputCls} min-h-20`}
+              value={addTpl.body_en}
+              onChange={(e) => setAddTpl((p) => ({ ...p, body_en: e.target.value }))}
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn kind="ghost" disabled={addTplBusy} onClick={() => setAddTplOpen(false)}>{tr("cancel")}</Btn>
+            <Btn disabled={addTplBusy || !addTpl.name_ar.trim()} onClick={() => void addWhatsappTemplate()}>
+              {addTplBusy ? tr("loading") : tr("save")}
+            </Btn>
+          </div>
+        </div>
+      </Modal>
       <div className="mb-5 flex items-center gap-3">
         <div className="grid size-11 place-items-center rounded-2xl bg-cyan-500/15 text-cyan-700">
           <Settings2 size={20} />
@@ -449,6 +592,16 @@ function SettingsBody() {
             </Card>
           ) : null}
 
+          {tab === "general" ? (
+            <Card title={tr("customizeDashboard")} hint={tr("customizeDashboardHint")}>
+              <DashboardLayoutEditor
+                value={form.dashboard_layout || ""}
+                onChange={(next) => setField("dashboard_layout", next)}
+                disabled={!canEdit}
+              />
+            </Card>
+          ) : null}
+
           {tab === "sales" ? (
             <>
               <Card title={tr("settingsSales")} hint={tr("settingsHintSales")}>
@@ -506,18 +659,79 @@ function SettingsBody() {
                 <Switch label={tr("allowNegative")} checked={isOn(form.allow_negative_stock)} onChange={(v) => setBool("allow_negative_stock", v)} />
                 <Switch label={tr("whatsappEnabled")} checked={isOn(form.whatsapp_enabled)} onChange={(v) => setBool("whatsapp_enabled", v)} />
               </Card>
-              <Card title={tr("waTemplates")}>
-                {templates.map((t) => (
-                  <div key={t.code} className="rounded-xl border border-[var(--border)] p-3">
-                    <div className="font-bold">{t.code}</div>
-                    <textarea
-                      className={`${inputCls} mt-2 min-h-28`}
-                      value={lang === "ar" ? t.body_ar : t.body_en}
-                      onChange={(e) => setTemplates(templates.map((x) => x.code === t.code ? { ...x, [lang === "ar" ? "body_ar" : "body_en"]: e.target.value } : x))}
-                    />
-                    {canEdit ? <Btn kind="ghost" className="mt-2" onClick={async () => { await put(`/api/settings/whatsapp-templates/${t.code}`, t); setMsg(tr("saved")); }}>{tr("save")}</Btn> : null}
+              <Card title={tr("waTemplates")} hint={tr("waTemplatesHint")}>
+                {canEdit ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Btn kind="soft" onClick={() => setAddTplOpen(true)}>{tr("addWaTemplate")}</Btn>
+                    <Btn
+                      kind="ghost"
+                      onClick={() =>
+                        confirm(tr("restoreWaTemplates"), tr("restoreWaTemplatesHint"), async () => {
+                          const r = await post<{ templates?: WaTpl[] }>("/api/settings/whatsapp-templates/restore", {});
+                          setTemplates(r.templates || []);
+                          if (!r.templates?.length) await reloadTemplates();
+                          setMsg(tr("saved"));
+                        })
+                      }
+                    >
+                      {tr("restoreWaTemplates")}
+                    </Btn>
                   </div>
-                ))}
+                ) : null}
+                {templates.length === 0 ? (
+                  <p className="text-sm font-bold text-slate-500">{tr("waTemplatesEmpty")}</p>
+                ) : (
+                  templates.map((t) => (
+                    <div key={t.code} className="rounded-xl border border-[var(--border)] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-black">{lang === "ar" ? t.name_ar : t.name_en || t.name_ar}</div>
+                          <div className="text-xs font-bold text-slate-500">{t.code}</div>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={t.active !== 0}
+                            disabled={!canEdit}
+                            onChange={(e) => patchTpl(t.code, { active: e.target.checked ? 1 : 0 })}
+                          />
+                          {tr("active")}
+                        </label>
+                      </div>
+                      <Field label={tr("waBodyAr")}>
+                        <textarea
+                          className={`${inputCls} mt-1 min-h-28`}
+                          value={t.body_ar || ""}
+                          disabled={!canEdit}
+                          onChange={(e) => patchTpl(t.code, { body_ar: e.target.value })}
+                        />
+                      </Field>
+                      <Field label={tr("waBodyEn")}>
+                        <textarea
+                          className={`${inputCls} mt-1 min-h-20`}
+                          value={t.body_en || ""}
+                          disabled={!canEdit}
+                          onChange={(e) => patchTpl(t.code, { body_en: e.target.value })}
+                        />
+                      </Field>
+                      {canEdit ? (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          <span className="w-full text-[11px] font-bold text-slate-500">{tr("waInsertVar")}</span>
+                          {WA_VARS.map((v) => (
+                            <button
+                              key={v.key}
+                              type="button"
+                              className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] font-bold text-slate-600 hover:border-cyan-300 hover:text-cyan-800"
+                              onClick={() => insertWaVar(t.code, "body_ar", v.key)}
+                            >
+                              {lang === "ar" ? v.ar : v.en}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                )}
               </Card>
             </>
           ) : null}
@@ -807,6 +1021,57 @@ function SettingsBody() {
           <Btn disabled={saving} onClick={saveSettings}>{saving ? tr("loading") : tr("save")}</Btn>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function DashboardLayoutEditor({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+}) {
+  const { tr } = useApp();
+  const layout = parseDashboardLayout(value);
+  const ordered = applyDashboardLayout(DASHBOARD_CARDS, { ...layout, hidden: [] }, true);
+  function commit(next: { order: DashboardCardKey[]; hidden: DashboardCardKey[] }) {
+    onChange(stringifyDashboardLayout(next));
+  }
+  function move(key: DashboardCardKey, dir: -1 | 1) {
+    const keys = ordered.map((c) => c.key);
+    const i = keys.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    const next = [...keys];
+    const tmp = next[i];
+    next[i] = next[j];
+    next[j] = tmp;
+    commit({ order: next, hidden: layout.hidden });
+  }
+  function toggle(key: DashboardCardKey) {
+    const hidden = layout.hidden.includes(key) ? layout.hidden.filter((k) => k !== key) : [...layout.hidden, key];
+    commit({ order: ordered.map((c) => c.key), hidden });
+  }
+  return (
+    <div className="space-y-2">
+      {ordered.map((card, i) => {
+        const hidden = layout.hidden.includes(card.key);
+        return (
+          <div key={card.key} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] px-3 py-2">
+            <label className="flex items-center gap-2 text-sm font-bold">
+              <input type="checkbox" checked={!hidden} disabled={disabled} onChange={() => toggle(card.key)} />
+              {tr(card.label)}
+            </label>
+            <div className="flex gap-1">
+              <button type="button" className="rounded-lg border px-2 py-1 text-xs font-bold" disabled={disabled || i === 0} onClick={() => move(card.key, -1)}>{tr("moveUp")}</button>
+              <button type="button" className="rounded-lg border px-2 py-1 text-xs font-bold" disabled={disabled || i === ordered.length - 1} onClick={() => move(card.key, 1)}>{tr("moveDown")}</button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

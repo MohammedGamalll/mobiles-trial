@@ -39,6 +39,8 @@ type Report = {
     expected: number;
     actual: number | null;
     variance: number | null;
+    shift_shortage?: number;
+    shift_overage?: number;
   };
 };
 
@@ -148,14 +150,12 @@ export default function PosShiftsPage() {
         </>
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-5">
             <Kpi label={tr("openingDrawer")} value={money(t?.opening || 0, lang)} />
             <Kpi label={tr("expectedCash")} value={money(t?.expected || 0, lang)} />
             <Kpi label={tr("countedCash")} value={t?.actual == null ? "—" : money(t.actual, lang)} />
-            <Kpi
-              label={variance != null && variance < 0 ? tr("shiftShortage") : variance != null && variance > 0 ? tr("shiftOverage") : tr("shiftVariance")}
-              value={variance == null ? "—" : money(variance, lang)}
-            />
+            <Kpi label={tr("shiftShortage")} value={money(t?.shift_shortage || (variance != null && variance < 0 ? Math.abs(variance) : 0), lang)} />
+            <Kpi label={tr("shiftOverage")} value={money(t?.shift_overage || (variance != null && variance > 0 ? variance : 0), lang)} />
           </div>
           <Section title={tr("sales")} rows={report.sales.map((r) => [<InvoiceLink key={r.id} id={r.id} label={r.number} />, r.customer_name || "", money(r.total, lang)])} />
           <Section title={tr("salesReturns")} rows={report.returns.map((r) => [r.number, <InvoiceLink key={r.id} id={r.invoice_id} label={r.invoice_number} />, money(r.total, lang)])} />

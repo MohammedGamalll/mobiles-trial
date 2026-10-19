@@ -1,6 +1,9 @@
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Context, Next } from "hono";
 import { hashPassword, nowIso, randomToken, type AppBindings, type AppVars, type AuthUser, type AppDb } from "./helpers";
+import { isSuperAdmin, permissionCodesForUser, userHasPerm } from "./user-permissions";
+
+export { isSuperAdmin, userHasPerm } from "./user-permissions";
 
 type HonoCtx = Context<{ Bindings: AppBindings; Variables: AppVars }>;
 
@@ -58,13 +61,8 @@ export async function loadUserFromToken(db: AppDb, token: string): Promise<AuthU
       ui_layout?: string | null;
     }>();
   if (!row) return null;
-  const { results } = await db
-    .prepare(
-      `SELECT p.code FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ?`,
-    )
-    .bind(row.role_id)
-    .all<{ code: string }>();
-  return { ...row, permissions: results.map((r) => r.code) };
+  const permissions = await permissionCodesForUser(db, row.id, row.role_slug);
+  return { ...row, permissions };
 }
 
 function requestHost(c: HonoCtx) {
@@ -110,12 +108,7 @@ export function requirePerm(...codes: string[]) {
   return async (c: HonoCtx, next: Next) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "unauthorized" }, 401);
-    if (user.role_slug === "admin") {
-      await next();
-      return;
-    }
-    const ok = codes.some((code) => user.permissions.includes(code));
-    if (!ok) return c.json({ error: "forbidden", required: codes }, 403);
+    if (!userHasPerm(user, ...codes)) return c.json({ error: "forbidden", required: codes }, 403);
     await next();
   };
 }
@@ -124,7 +117,7 @@ export function requireAdmin() {
   return async (c: HonoCtx, next: Next) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "unauthorized" }, 401);
-    if (user.role_slug !== "admin") return c.json({ error: "forbidden" }, 403);
+    if (!isSuperAdmin(user)) return c.json({ error: "forbidden" }, 403);
     await next();
   };
 }

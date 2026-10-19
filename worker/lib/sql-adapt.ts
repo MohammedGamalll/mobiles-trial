@@ -60,7 +60,7 @@ export function adaptSql(sql: string) {
   s = s.replace(/\bTEXT(\s+NOT NULL)?\s+DEFAULT CURRENT_TIMESTAMP/gi, "DATETIME$1 DEFAULT CURRENT_TIMESTAMP");
   s = s.replace(/\bTEXT(\s+NOT NULL)?\s+DEFAULT\s+/gi, "VARCHAR(191)$1 DEFAULT ");
   if (/^\s*(CREATE TABLE|ALTER TABLE)\b/i.test(s)) {
-    s = s.replace(/\b(notes|description|body_ar|body_en|body|address|extra_codes|specs|reject_reason)\s+TEXT\b/gi, "$1 LONGTEXT");
+    s = s.replace(/\b(notes|description|body_ar|body_en|body|address|extra_codes|specs|reject_reason|value|old_value|new_value|details|message)\s+TEXT\b/gi, "$1 LONGTEXT");
     s = s.replace(/\bTEXT\b/gi, "VARCHAR(191)");
   }
   if (/^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(s)) {
