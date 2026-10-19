@@ -99,7 +99,6 @@ export function SalesList() {
         fields={[
           { key: "status", label: "status", type: "select", quick: true, options: ["completed", "partial", "partially_returned", "fully_returned", "held", "quote", "order", "pending_delivery", "cancelled"].map((s) => ({ value: s, label: statusLabel(s, lang) })) },
           { key: "customer_id", label: "customers", type: "async", quick: true, asyncPath: "/api/customers" },
-          { key: "sales_agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
           { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
           { key: "model_id", label: "model", type: "select", lookup: "models" },
           { key: "warehouse", label: "warehouse", type: "locations" },
@@ -1047,12 +1046,11 @@ export function CustomerDetail() {
         {wa ? <a className="rounded-xl border border-emerald-200 px-3 py-2 text-sm font-bold text-emerald-700" href={`https://wa.me/${String(wa).replace(/\D/g, "").replace(/^0/, "20")}`} target="_blank" rel="noreferrer">{tr("whatsapp")}</a> : null}
       </div>
     }>
-      <div className="detail-strip mb-4 grid gap-3 md:grid-cols-5">
+      <div className="detail-strip mb-4 grid gap-3 md:grid-cols-4">
         <Stat label={tr("name")} value={d.name || "-"} />
         <Stat label={tr("code")} value={String(d.code || d.id)} />
         <Stat label={tr("phone")} value={d.phone || "-"} />
         <Stat label={tr("balance")} value={customerBalanceLabel(d.current_balance, lang)} accent={Number(d.current_balance) > 0 ? "rose" : "emerald"} />
-        <Stat label={tr("representative")} value={d.agent_name || d.sales_agent_name || "-"} />
       </div>
       <div className="mb-3 flex flex-wrap gap-2 page-tabs">
         {tabs.map(([k, label]) => (
@@ -1557,7 +1555,6 @@ export function PaymentsPage() {
       <Stat label={tr("total")} value={money(totals.total, lang)} />
       <SmartFilter f={f} fields={[
         { key: "customer_id", label: "customers", type: "async", quick: true, asyncPath: "/api/customers" },
-        { key: "sales_agent_id", label: "representative", type: "select", lookup: "delivery_agents" },
         { key: "payment_method", label: "payMethod", type: "select", lookup: "payment_methods" },
         { key: "amount", label: "amountRange", type: "range", minKey: "amount_min", maxKey: "amount_max" },
       ]} />
@@ -1630,7 +1627,6 @@ export function ReportsPage() {
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={list.loading && !Object.keys(acc).length} emptyFallback={<PageLoading />}>
       <SmartFilter f={f} search={false} fields={[
         { key: "customer_id", label: "customers", type: "async", quick: true, asyncPath: "/api/customers" },
-        { key: "sales_agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
         { key: "brand_id", label: "brand", type: "select", lookup: "brands" },
         { key: "model_id", label: "model", type: "select", lookup: "models" },
         { key: "warehouse", label: "warehouse", type: "locations" },
@@ -1779,7 +1775,11 @@ export function UsersPage() {
     get("/api/roles").then(setRoles);
   }, []);
   const manageRoles = can("users.manage");
-  const perms = (roles?.permissions || []).filter((p: any) => !pq || `${p.code} ${p.name_ar} ${p.module}`.includes(pq));
+  const perms = (roles?.permissions || []).filter((p: any) => {
+    const code = String(p.code || "");
+    if (code.startsWith("reps.") || code.startsWith("visits.") || code.startsWith("targets.")) return false;
+    return !pq || `${p.code} ${p.name_ar} ${p.module}`.includes(pq);
+  });
   const moduleOrder = ["sales", "delivery", "inventory", "finance", "reports", "hr", "settings", "users"];
   const moduleLabel = (mod: string) => {
     if (mod === "sales") return tr("permGroupSales");

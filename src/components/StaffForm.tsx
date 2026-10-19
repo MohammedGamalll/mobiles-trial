@@ -5,7 +5,7 @@ import { apiMessage } from "../lib/errors";
 import { saveStaff } from "../lib/staff-client";
 import { Btn, Field, inputCls } from "./ui";
 
-export const STAFF_KINDS = ["courier", "cashier", "warehouse", "accountant", "sales_rep"] as const;
+export const STAFF_KINDS = ["courier", "cashier", "warehouse", "accountant"] as const;
 export type StaffKind = (typeof STAFF_KINDS)[number];
 
 export type StaffSaved = {
@@ -16,12 +16,11 @@ export type StaffSaved = {
   name: string;
 };
 
-const KIND_LABEL: Record<StaffKind, "staffKindCourier" | "staffKindCashier" | "staffKindWarehouse" | "staffKindAccountant" | "staffKindSalesRep"> = {
+const KIND_LABEL: Record<StaffKind, "staffKindCourier" | "staffKindCashier" | "staffKindWarehouse" | "staffKindAccountant"> = {
   courier: "staffKindCourier",
   cashier: "staffKindCashier",
   warehouse: "staffKindWarehouse",
   accountant: "staffKindAccountant",
-  sales_rep: "staffKindSalesRep",
 };
 
 function emptyForm(kind: StaffKind) {
@@ -42,7 +41,7 @@ function emptyForm(kind: StaffKind) {
     shift_id: "" as number | "",
     commission_rate: 0,
     area: "",
-    agent_role: kind === "sales_rep" ? "sales" : "delivery",
+    agent_role: "delivery",
   };
 }
 
@@ -62,7 +61,7 @@ export function StaffForm({
   const [shifts, setShifts] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const needsAgent = form.kind === "courier" || form.kind === "sales_rep";
+  const needsAgent = form.kind === "courier";
 
   useEffect(() => {
     setForm(emptyForm(defaultKind));
@@ -84,7 +83,7 @@ export function StaffForm({
           value={form.kind}
           onChange={(e) => {
             const kind = e.target.value as StaffKind;
-            setForm({ ...form, kind, agent_role: kind === "sales_rep" ? "sales" : "delivery" });
+            setForm({ ...form, kind, agent_role: "delivery" });
           }}
         >
           {STAFF_KINDS.map((k) => (
@@ -136,13 +135,6 @@ export function StaffForm({
         </Field>
         {needsAgent ? (
           <>
-            <Field label={tr("roleType")}>
-              <select className={inputCls} value={form.agent_role} onChange={(e) => setForm({ ...form, agent_role: e.target.value })}>
-                <option value="delivery">{tr("roleDelivery")}</option>
-                <option value="sales">{tr("roleSales")}</option>
-                <option value="both">{tr("roleBoth")}</option>
-              </select>
-            </Field>
             <Field label={tr("commissionRate")}>
               <input className={inputCls} type="number" value={form.commission_rate} onChange={(e) => setForm({ ...form, commission_rate: Number(e.target.value) || 0 })} />
             </Field>

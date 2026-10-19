@@ -204,12 +204,6 @@ export function InvoicePrint({
               {tr("address")}: {inv.address}
             </div>
           ) : null}
-          {inv.sales_agent_name ? (
-            <div>
-              {tr("salesAgent")}: {inv.sales_agent_name}
-              {inv.sales_agent_code ? ` (${inv.sales_agent_code})` : ""}
-            </div>
-          ) : null}
         </section>
         {isDelivery ? (
           <section className="inv-print-box">

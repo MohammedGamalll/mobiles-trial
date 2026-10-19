@@ -18,7 +18,6 @@ import { hrRoutes } from "./routes/hr";
 import { shiftRoutes } from "./routes/shifts";
 import { stockOpsRoutes } from "./routes/stock-ops";
 import { commerceRoutes } from "./routes/commerce";
-import { repsRoutes } from "./routes/reps";
 import { ledgerRoutes } from "./routes/ledger";
 import { backupRoutes } from "./routes/backup";
 import { approvalRoutes } from "./routes/approvals";
@@ -128,7 +127,6 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     dueExp: db.prepare(`SELECT COUNT(*) as n FROM expenses WHERE voided_at IS NULL AND recurring = 1 AND next_due IS NOT NULL AND DATE(next_due) <= ?`).bind(today),
     creditors: db.prepare(`SELECT COALESCE(SUM(balance),0) as n FROM suppliers WHERE deleted_at IS NULL AND COALESCE(balance,0) > 0`),
     lowCount: db.prepare(`SELECT COUNT(*) as n FROM products WHERE deleted_at IS NULL AND COALESCE(kind,'product') != 'service' AND (current_stock - reserved_stock) > 0 AND (current_stock - reserved_stock) <= CASE WHEN COALESCE(reorder_point,0) > COALESCE(min_stock,0) THEN reorder_point ELSE min_stock END`),
-    reps: db.prepare(`SELECT COUNT(*) as n FROM delivery_agents WHERE deleted_at IS NULL AND status = 'active'`),
     shiftOverage: db.prepare(
       `SELECT COALESCE(SUM(l.credit),0) as n
        FROM journal_lines l
@@ -193,7 +191,6 @@ app.get("/api/dashboard", requirePerm("dashboard.view"), async (c) => {
     due_expenses: numAgg(first("dueExp")?.n),
     creditors: numAgg(first("creditors")?.n),
     low_count: numAgg(first("lowCount")?.n),
-    reps_count: numAgg(first("reps")?.n),
     shift_overage: numAgg(first("shiftOverage")?.n),
     shift_shortage: numAgg(first("shiftShortage")?.n),
     net_profit: profit_breakdown.net_profit,
@@ -310,7 +307,6 @@ app.route("/api/inventory", inventoryRoutes);
 app.route("/api/inventory", stockOpsRoutes);
 app.route("/api", salesRoutes);
 app.route("/api", commerceRoutes);
-app.route("/api", repsRoutes);
 app.route("/api/delivery", deliveryRoutes);
 app.route("/api", peopleRoutes);
 app.route("/api", financeRoutes);

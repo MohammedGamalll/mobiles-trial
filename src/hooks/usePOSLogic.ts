@@ -121,7 +121,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [method, setMethod] = useState("cash");
   const [cashAccountId, setCashAccountId] = useState<number | "">("");
   const [agentId, setAgentId] = useState<number | "">("");
-  const [salesAgentId, setSalesAgentId] = useState<number | "">("");
   const [address, setAddress] = useState("");
   const [area, setArea] = useState("");
   const [time, setTime] = useState("");
@@ -289,7 +288,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       setAddress(inv.address || "");
       setArea(inv.area || "");
       setAgentId(inv.delivery_agent_id || "");
-      setSalesAgentId(inv.sales_agent_id || "");
       setMethod(inv.payment_method === "credit" ? "credit" : (inv.payment_method || "cash"));
       setCart((inv.items || []).map((it: any) => {
         const pid = Number(it.product_id || 0);
@@ -580,7 +578,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const printTotal = printSnap?.total ?? total;
   const printExtra = Number(printSnap?.extra_amount ?? printSnap?.extra ?? extraAmount ?? 0);
   const agentRow = (lookups?.delivery_agents || []).find((a) => a.id === agentId);
-  const salesRow = (lookups?.delivery_agents || []).find((a) => a.id === salesAgentId);
   const printInvoice = printSnap || {
     number: doneInv?.number,
     date: doneInv?.date || invDate,
@@ -606,8 +603,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     delivery_agent_code: agentRow?.code,
     delivery_agent_phone: (agentRow as { phone?: string } | undefined)?.phone,
     expected_delivery_time: time,
-    sales_agent_name: salesRow?.name,
-    sales_agent_code: salesRow?.code,
   };
   const cartModelNames = new Set(cart.flatMap((l) => (l.models || []).map((m) => m.name)));
   const related = visible.filter((p) => !cart.some((c) => c.id === p.id) && (p.models || []).some((m) => cartModelNames.has(m.name))).slice(0, 8);
@@ -823,7 +818,6 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         address: address || party?.address,
         area: area || party?.area,
         delivery_agent_id: type === "delivery" ? agentId || null : null,
-        sales_agent_id: salesAgentId || null,
         expected_delivery_time: time || null,
         payment_method: payMethod,
         cash_account_id: cashAccountId || null,
@@ -964,7 +958,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         const hit = (lookups?.delivery_agents || []).find((a) =>
           a.name === name || String(a.id) === accountCode || a.code === accountCode,
         );
-        if (hit) setSalesAgentId(hit.id);
+        if (hit) setAgentId(hit.id);
         setWalkIn(name);
       } else {
         const r = await post<{ id: number }>("/api/customers", { name, phone: newCust.phone, address, area });
@@ -990,7 +984,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       return;
     }
     if (kind === "agent") {
-      setSalesAgentId(row.id);
+      setAgentId(row.id);
       setWalkIn(row.name || "");
       setAccountCode(String(row.code || row.id || ""));
       setNewCust((c) => ({ ...c, name: row.name || "", phone: row.phone || "" }));
@@ -1124,7 +1118,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     cart, setCart, sel, setSel, type, setType,
     customerQ, setCustomerQ, customers, custListOpen, setCustListOpen,
     customer, setCustomer, walkIn, setWalkIn, method, setMethod: setPayMethod,
-    cashAccountId, setCashAccountId, agentId, setAgentId, salesAgentId, setSalesAgentId,
+    cashAccountId, setCashAccountId, agentId, setAgentId,
     address, setAddress, area, setArea, time, setTime, paid, setPaid,
     discount, setDiscount, discMode, setDiscMode, invDate, setInvDate,
     extrasOpen, setExtrasOpen, extraAmount, setExtraAmount, notes, setNotes,

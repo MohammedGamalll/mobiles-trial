@@ -13,7 +13,6 @@ export type DashboardCardKey =
   | "low_count"
   | "invoices_today"
   | "present_now"
-  | "reps_count"
   | "sales_month"
   | "purchases"
   | "pending_delivery"
@@ -47,7 +46,6 @@ export const DASHBOARD_CARDS: DashboardCardDef[] = [
   { key: "low_count", label: "lowStock" },
   { key: "invoices_today", label: "invoicesCount" },
   { key: "present_now", label: "presentNow" },
-  { key: "reps_count", label: "reps" },
   { key: "sales_month", label: "salesMonth" },
   { key: "purchases", label: "totalPurchases" },
   { key: "pending_delivery", label: "pendingDelivery" },

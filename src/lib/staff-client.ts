@@ -6,7 +6,6 @@ const KIND_ROLE: Record<StaffKind, string> = {
   cashier: "sales",
   warehouse: "warehouse",
   accountant: "accountant",
-  sales_rep: "sales",
 };
 
 export type StaffPayload = {
@@ -49,7 +48,7 @@ function pickUnique(preferred: string, taken: string[]) {
 
 async function saveStaffLegacy(body: StaffPayload): Promise<StaffSaved> {
   const name = body.name.trim();
-  const needsAgent = body.kind === "courier" || body.kind === "sales_rep";
+  const needsAgent = body.kind === "courier";
   const suffix = Date.now().toString().slice(-6);
   const wantedCode = String(body.code || "").trim() || (needsAgent ? `T-${suffix}` : `E-${suffix}`);
   const wantedUser = String(body.username || "").trim() || slugName(name);
@@ -78,7 +77,7 @@ async function saveStaffLegacy(body: StaffPayload): Promise<StaffSaved> {
       code: agentCode,
       phone: body.phone || "",
       notes: body.notes || "",
-      role_type: body.agent_role || (body.kind === "sales_rep" ? "sales" : "delivery"),
+      role_type: body.agent_role || "delivery",
       commission_rate: Number(body.commission_rate || 0),
       area: body.area || "",
     });

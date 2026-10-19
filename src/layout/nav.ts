@@ -28,7 +28,6 @@ import {
   History,
   ListChecks,
   Recycle,
-  Target,
   BookOpen,
   Landmark,
   Hash,
@@ -75,15 +74,6 @@ export const modernNav: NavGroup[] = [
       { to: "/delivery", key: "delivery", icon: Truck, perm: "delivery.update" },
       { to: "/delivery/settle", key: "settleCourier", icon: ClipboardCheck, perm: "delivery.settle" },
       { to: "/delivery/track", key: "liveTrack", icon: Radio, perm: "delivery.view" },
-    ],
-  },
-  {
-    label: "reps",
-    items: [
-      { to: "/reps", key: "reps", icon: UserRound, perm: "reps.view" },
-      { to: "/reps/visits", key: "visits", icon: ClipboardList, perm: "visits.own" },
-      { to: "/reps/targets", key: "targets", icon: Target, perm: "targets.manage" },
-      { to: "/reps/commissions", key: "commissions", icon: Banknote, perm: "reps.view" },
     ],
   },
   {

@@ -35,7 +35,6 @@ import {
 } from "./pages/More";
 import { LocationsPage, TransferDetail, TransfersPage, StocktakeDetail, StocktakesPage, WastagePage } from "./pages/Stock";
 import { MovementsPage } from "./pages/Movements";
-import { RepsPage, RepDetail, VisitsPage, TargetsPage, CommissionsPage } from "./pages/Reps";
 import { CashAccountsPage, ChartPage, JournalPage, VouchersPage } from "./pages/Ledger";
 import TrialBalance from "./pages/TrialBalance";
 import DailyReport from "./pages/DailyReport";
@@ -112,11 +111,7 @@ function AppRoutes() {
         <Route path="delivery/settle" element={<PermGuard perm="delivery.settle"><DeliverySettle /></PermGuard>} />
         <Route path="delivery/track" element={<PermGuard perm={["delivery.mark", "delivery.view"]}><CourierTrack /></PermGuard>} />
         <Route path="settings" element={<PermGuard perm="settings.edit"><SettingsPage /></PermGuard>} />
-        <Route path="reps" element={<RepsPage />} />
-        <Route path="reps/visits" element={<VisitsPage />} />
-        <Route path="reps/targets" element={<TargetsPage />} />
-        <Route path="reps/commissions" element={<CommissionsPage />} />
-        <Route path="reps/:id" element={<RepDetail />} />
+        <Route path="reps/*" element={<Navigate to="/" replace />} />
         <Route path="hr/employees" element={<EmployeesPage />} />
         <Route path="hr/attendance" element={<AttendancePage />} />
         <Route path="hr/shifts" element={<ShiftsPage />} />

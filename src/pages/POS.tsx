@@ -69,8 +69,6 @@ export default function POS() {
     setCashAccountId,
     agentId,
     setAgentId,
-    salesAgentId,
-    setSalesAgentId,
     address,
     setAddress,
     area,
@@ -1435,30 +1433,6 @@ export default function POS() {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
               />
-            </label>
-            <label className="text-xs">
-              <span className="mb-1 block font-bold">{tr("salesAgent")}</span>
-              <select
-                className={inputCls}
-                value={salesAgentId}
-                onChange={(e) =>
-                  setSalesAgentId(e.target.value ? Number(e.target.value) : "")
-                }
-              >
-                <option value="">-</option>
-                {(lookups?.delivery_agents || [])
-                  .filter(
-                    (a) =>
-                      !a.role_type ||
-                      a.role_type === "sales" ||
-                      a.role_type === "both",
-                  )
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-              </select>
             </label>
             {method === "cash" || method === "treasury" ? (
               <label className="text-xs">

@@ -52,7 +52,6 @@ function ModernDashboard() {
     low_count: { value: num(data.low_count, lang), hint: "", accent: "amber", to: "/products?status=low" },
     invoices_today: { value: num(data.invoices_today, lang), hint: tr("salesToday"), accent: "indigo", to: "/sales" },
     present_now: { value: `${num(data.present_now, lang)} / ${num(data.staff_active, lang)}`, hint: tr("employees"), accent: "indigo", to: "/hr/attendance" },
-    reps_count: { value: num(data.reps_count, lang), hint: "", accent: "cyan", to: "/reps" },
     sales_month: { value: money(data.sales_month, lang), hint: vs(data.sales_month, data.prev_sales_month), accent: "indigo", to: "/reports" },
     purchases: { value: money(data.purchases, lang), hint: vs(data.purchases, data.prev_purchases), accent: "amber", to: "/purchases" },
     pending_delivery: { value: num(data.pending_delivery, lang), hint: "", accent: "amber", to: "/delivery" },
@@ -87,7 +86,6 @@ function ModernDashboard() {
       </div>
       <SmartFilter f={f} search={false} fields={[
         { key: "branch_id", label: "branch", type: "select", quick: true, lookup: "branches" },
-        { key: "sales_agent_id", label: "representative", type: "select", quick: true, lookup: "delivery_agents" },
         { key: "warehouse", label: "warehouse", type: "locations" },
       ]} />
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!d}>

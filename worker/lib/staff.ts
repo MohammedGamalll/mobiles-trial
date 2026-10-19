@@ -1,7 +1,7 @@
 import { audit, hashPassword, randomToken, todayIso, type AppDb, type AuthUser } from "./helpers";
 import { copyRolePermissionsToUser } from "./user-permissions";
 
-export const STAFF_KINDS = ["courier", "cashier", "warehouse", "accountant", "sales_rep"] as const;
+export const STAFF_KINDS = ["courier", "cashier", "warehouse", "accountant"] as const;
 export type StaffKind = (typeof STAFF_KINDS)[number];
 
 export type StaffInput = {
@@ -29,7 +29,6 @@ const KIND = {
   cashier: { roleSlug: "sales", workType: "office", agent: false, agentRole: "delivery" as const },
   warehouse: { roleSlug: "warehouse", workType: "office", agent: false, agentRole: "delivery" as const },
   accountant: { roleSlug: "accountant", workType: "office", agent: false, agentRole: "delivery" as const },
-  sales_rep: { roleSlug: "sales", workType: "office", agent: true, agentRole: "sales" as const },
 };
 
 function slugName(value: string) {

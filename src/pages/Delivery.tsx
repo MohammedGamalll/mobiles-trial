@@ -313,13 +313,6 @@ export function DeliveryBoard() {
                   <option value="inactive">{tr("inactive")}</option>
                 </select>
               </Field>
-              <Field label={tr("roleType")}>
-                <select className={inputCls} value={form.role_type} onChange={(e) => setForm({ ...form, role_type: e.target.value })}>
-                  <option value="delivery">{tr("roleDelivery")}</option>
-                  <option value="sales">{tr("roleSales")}</option>
-                  <option value="both">{tr("roleBoth")}</option>
-                </select>
-              </Field>
               <Field label={tr("commissionRate")}><input className={inputCls} type="number" value={form.commission_rate} onChange={(e) => setForm({ ...form, commission_rate: Number(e.target.value) })} /></Field>
               <Field label={tr("area")}><input className={inputCls} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} /></Field>
               <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
