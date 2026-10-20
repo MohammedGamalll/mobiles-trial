@@ -1,7 +1,7 @@
 import type { AppDb } from "./db";
 import { nextNumber, nowIso, round2, todayIso } from "./helpers";
 import { postDamageJournal, postSaleJournal } from "./ledger";
-import { applyIssue, logMovement, maybeStockAlerts, releaseReserve, type Allocation } from "./stock";
+import { applyIssue, availableBatches, logMovement, maybeStockAlerts, planAllocation, releaseReserve, type Allocation } from "./stock";
 
 export const ESCROW_STATUSES = ["pending_delivery", "out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"] as const;
 export const CUSTODY_STATUSES = ["out_for_delivery", "rescheduled", "customer_unavailable", "pending_settlement"] as const;
@@ -86,6 +86,7 @@ type InvoiceRow = {
   finance_committed_at: string | null;
   settled_at: string | null;
   shift_id?: number | null;
+  location_id?: number | null;
 };
 
 type ItemRow = {
@@ -144,6 +145,23 @@ function allocFor(itemId: number, batches: BatchRow[]): Allocation[] {
     .map((b) => ({ batch_id: b.batch_id, batch_code: "", qty: b.qty, unit_cost: b.unit_cost, location_id: b.location_id ?? null }));
 }
 
+async function resolveAlloc(db: AppDb, item: ItemRow, batches: BatchRow[], locationId?: number | null): Promise<{ alloc: Allocation[]; fromReserved: boolean }> {
+  const existing = allocFor(item.id, batches);
+  if (existing.length) return { alloc: existing, fromReserved: true };
+  if (item.item_kind === "service") return { alloc: [], fromReserved: false };
+  const qty = Number(item.quantity) || 0;
+  if (!(qty > 0)) return { alloc: [], fromReserved: false };
+  const avail = await availableBatches(db, item.product_id, locationId || undefined);
+  const alloc = planAllocation(avail, qty);
+  for (const a of alloc) {
+    await db
+      .prepare("INSERT INTO sales_item_batches (invoice_item_id, batch_id, qty, unit_cost) VALUES (?, ?, ?, ?)")
+      .bind(item.id, a.batch_id, a.qty, a.unit_cost)
+      .run();
+  }
+  return { alloc, fromReserved: false };
+}
+
 export async function settleInvoice(
   db: AppDb,
   opts: {
@@ -166,7 +184,8 @@ export async function settleInvoice(
   const pendingWithAgent =
     !!inv.delivery_agent_id &&
     (inv.status === "pending_delivery" || inv.delivery_status === "pending_delivery");
-  if (!isCustodyStatus(inv.status) && !isCustodyStatus(inv.delivery_status || "") && !pendingWithAgent) {
+  const heldWithAgent = inv.type === "delivery" && inv.status === "held" && Number(inv.delivery_agent_id || 0) === Number(opts.agentId);
+  if (!isCustodyStatus(inv.status) && !isCustodyStatus(inv.delivery_status || "") && !pendingWithAgent && !heldWithAgent) {
     throw new Error("not_in_custody");
   }
   if (Number(inv.delivery_agent_id || 0) !== Number(opts.agentId)) throw new Error("wrong_agent");
@@ -225,9 +244,9 @@ export async function settleInvoice(
         await db.prepare("UPDATE sales_invoice_items SET delivered_qty = ?, returned_qty = 0 WHERE id = ?").bind(item.quantity, item.id).run();
         continue;
       }
-      const alloc = allocFor(item.id, batches);
+      const { alloc, fromReserved } = await resolveAlloc(db, item, batches, inv.location_id);
       if (alloc.length) {
-        await applyIssue(db, alloc, item.product_id, true);
+        await applyIssue(db, alloc, item.product_id, fromReserved);
         costDelivered = round2(costDelivered + alloc.reduce((s, a) => s + a.qty * a.unit_cost, 0));
         for (const a of alloc) {
           await logMovement(db, {
@@ -302,9 +321,9 @@ export async function settleInvoice(
     let cost = 0;
     for (const item of items) {
       if (item.item_kind === "service") continue;
-      const alloc = allocFor(item.id, batches);
+      const { alloc, fromReserved } = await resolveAlloc(db, item, batches, inv.location_id);
       if (alloc.length) {
-        await applyIssue(db, alloc, item.product_id, true);
+        await applyIssue(db, alloc, item.product_id, fromReserved);
         for (const a of alloc) {
           cost = round2(cost + a.qty * a.unit_cost);
           const code = await nextNumber(db, "batch");

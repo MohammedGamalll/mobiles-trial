@@ -193,7 +193,7 @@ function settleHttpError(err: unknown) {
   return map[msg] || [500, msg];
 }
 
-deliveryRoutes.post("/settle", requirePerm("delivery.settle"), async (c) => {
+deliveryRoutes.post("/settle", requirePerm("delivery.settle", "sales.create"), async (c) => {
   const b = await c.req.json<{
     delivery_agent_id?: number;
     courier_id?: number;
@@ -597,4 +597,90 @@ deliveryRoutes.get("/agents/:id/report", requirePerm("reports.view", "delivery.v
     .bind(id)
     .first();
   return c.json({ data: { agent, stats } });
+});
+
+deliveryRoutes.get("/performance", requirePerm("delivery.view", "delivery.update", "delivery.settle"), async (c) => {
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT a.id, a.name, a.code, a.phone,
+        COALESCE(rt.avg_rating, 0) AS avg_rating,
+        COALESCE(rt.rating_count, 0) AS rating_count,
+        COALESCE(ok.success_orders, 0) AS success_orders,
+        COALESCE(st.failed_orders, 0) AS failed_orders,
+        COALESCE(st.collected, 0) AS collected,
+        COALESCE(cm.commissions, 0) AS commissions
+       FROM delivery_agents a
+       LEFT JOIN (
+         SELECT agent_id, AVG(rating) AS avg_rating, COUNT(*) AS rating_count
+         FROM courier_ratings GROUP BY agent_id
+       ) rt ON rt.agent_id = a.id
+       LEFT JOIN (
+         SELECT delivery_agent_id,
+           SUM(CASE
+             WHEN delivery_status IN ('delivered','completed')
+               OR (status IN ('completed','delivered') AND IFNULL(delivery_status,'') NOT IN ('damaged','customer_refused','returned_to_warehouse','cancelled'))
+             THEN 1 ELSE 0 END) AS success_orders
+         FROM sales_invoices
+         WHERE deleted_at IS NULL AND type = 'delivery' AND delivery_agent_id IS NOT NULL
+         GROUP BY delivery_agent_id
+       ) ok ON ok.delivery_agent_id = a.id
+       LEFT JOIN (
+         SELECT ds.delivery_agent_id,
+           SUM(CASE WHEN l.outcome IN ('rejected','returned','damaged') THEN 1 ELSE 0 END) AS failed_orders,
+           SUM(CASE WHEN l.outcome = 'delivered' THEN l.collected ELSE 0 END) AS collected
+         FROM delivery_settlements ds
+         JOIN delivery_settlement_lines l ON l.settlement_id = ds.id
+         GROUP BY ds.delivery_agent_id
+       ) st ON st.delivery_agent_id = a.id
+       LEFT JOIN (
+         SELECT agent_id, SUM(amount) AS commissions FROM sales_commissions GROUP BY agent_id
+       ) cm ON cm.agent_id = a.id
+       WHERE a.deleted_at IS NULL
+       ORDER BY a.code`,
+    )
+    .all();
+  return c.json({ data: results });
+});
+
+deliveryRoutes.get("/ratings", requirePerm("delivery.view", "delivery.settle", "delivery.update"), async (c) => {
+  const agentId = Number(c.req.query("agent_id") || 0);
+  const where = agentId ? "WHERE r.agent_id = ?" : "";
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT r.*, a.name AS agent_name, si.number AS invoice_number
+       FROM courier_ratings r
+       JOIN delivery_agents a ON a.id = r.agent_id
+       LEFT JOIN sales_invoices si ON si.id = r.invoice_id
+       ${where}
+       ORDER BY r.id DESC LIMIT 200`,
+    )
+    .bind(...(agentId ? [agentId] : []))
+    .all();
+  return c.json({ data: results });
+});
+
+deliveryRoutes.post("/ratings", requirePerm("delivery.settle", "delivery.update", "sales.create"), async (c) => {
+  const b = await c.req.json<{ agent_id: number; invoice_id?: number | null; rating: number; note?: string; on_time?: number | boolean }>();
+  const agentId = Number(b.agent_id || 0);
+  const rating = Math.min(5, Math.max(1, Math.round(Number(b.rating || 0))));
+  if (!agentId || !Number.isFinite(rating)) return c.json({ error: "missing_fields" }, 400);
+  const agent = await c.env.DB.prepare("SELECT id FROM delivery_agents WHERE id = ? AND deleted_at IS NULL").bind(agentId).first();
+  if (!agent) return c.json({ error: "not_found" }, 404);
+  const invoiceId = Number(b.invoice_id || 0) || null;
+  const onTime = b.on_time === 0 || b.on_time === false ? 0 : 1;
+  if (invoiceId) {
+    const existing = await c.env.DB.prepare("SELECT id FROM courier_ratings WHERE invoice_id = ?").bind(invoiceId).first<{ id: number }>();
+    if (existing) {
+      await c.env.DB
+        .prepare("UPDATE courier_ratings SET agent_id=?, rating=?, note=?, on_time=? WHERE id=?")
+        .bind(agentId, rating, b.note || null, onTime, existing.id)
+        .run();
+      return c.json({ id: existing.id });
+    }
+  }
+  const r = await c.env.DB
+    .prepare("INSERT INTO courier_ratings (agent_id, invoice_id, rating, note, on_time, created_by) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(agentId, invoiceId, rating, b.note || null, onTime, c.get("user").id)
+    .run();
+  return c.json({ id: r.meta.last_row_id }, 201);
 });

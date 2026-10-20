@@ -147,6 +147,10 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const [waPreview, setWaPreview] = useState<any>(null);
   const [waMsg, setWaMsg] = useState("");
   const [printSnap, setPrintSnap] = useState<any | null>(null);
+  const [holdPrintTick, setHoldPrintTick] = useState(0);
+  const [salePrintTick, setSalePrintTick] = useState(0);
+  const [holdShare, setHoldShare] = useState<any>(null);
+  const [courierGate, setCourierGate] = useState<any>(null);
   const [brandFilter, setBrandFilter] = useState<number | "">("");
   const [catFilter, setCatFilter] = useState<number | "">("");
   const [picked, setPicked] = useState<number | null>(null);
@@ -677,13 +681,96 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     }
   }
 
-  async function finalizeHeld(id: number, mode: "pay" | "credit" = "pay") {
+  function openCourierGate(inv: any) {
+    const agent = Number(inv?.delivery_agent_id || 0);
+    if (!agent) return false;
+    setCourierGate({
+      invoiceId: Number(inv.id),
+      agentId: agent,
+      number: inv.number || "",
+      total: Number(inv.total || 0),
+      phone: inv.customer_phone || inv.customer_whatsapp || "",
+      customerName: inv.customer_name || "",
+      outcome: "delivered",
+      collected: Number(inv.remaining > 0 ? inv.remaining : inv.total || 0),
+      rating: 5,
+      onTime: true,
+      chargeTo: "courier",
+    });
+    return true;
+  }
+
+  function shareSale(inv: any) {
+    const phone = inv?.customer_phone || inv?.customer_whatsapp;
+    if (!phone) return;
+    setHoldShare({ ...inv, customer_phone: phone, title: "فاتورة بيع" });
+  }
+
+  function printSale(inv: any) {
+    setPrintSnap({ ...(inv || {}), print_title: inv?.print_title });
+    setSalePrintTick((n) => n + 1);
+  }
+
+  async function saveCourierGate() {
+    if (!courierGate) return;
     setBusy(true);
     setErr("");
     try {
-      await post(`/api/invoices/${id}/finalize`, mode === "credit"
+      if (!courierGate.settled) {
+        await post("/api/delivery/settle", {
+          delivery_agent_id: courierGate.agentId,
+          cash_account_id: cashAccountId || null,
+          orders: [{
+            invoice_id: courierGate.invoiceId,
+            outcome: courierGate.outcome,
+            collected: courierGate.outcome === "delivered" ? Number(courierGate.collected || 0) : 0,
+            charge_to: courierGate.chargeTo,
+            cash_account_id: cashAccountId || null,
+          }],
+        });
+        setCourierGate({ ...courierGate, settled: true });
+      }
+      await post("/api/delivery/ratings", {
+        agent_id: courierGate.agentId,
+        invoice_id: courierGate.invoiceId,
+        rating: courierGate.rating,
+        on_time: courierGate.onTime ? 1 : 0,
+      });
+      const fresh = await get<{ data: any }>(`/api/invoices/${courierGate.invoiceId}`);
+      const data = { ...(fresh.data || {}), title: "فاتورة بيع" };
+      printSale(data);
+      shareSale(data);
+      setCourierGate(null);
+      setHeldOpen(false);
+      setStockTick((n) => n + 1);
+      await loadHeldList().catch(() => {});
+      await loadToday().catch(() => {});
+      playSound("done");
+    } catch (e) {
+      playSound("err");
+      setErr(apiMessage(tr, e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finalizeHeld(id: number, mode: "pay" | "credit" = "pay") {
+    const row = held.find((h) => Number(h.id) === id);
+    if (row && openCourierGate(row)) {
+      setHeldOpen(false);
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await post<{ data: any }>(`/api/invoices/${id}/finalize`, mode === "credit"
         ? { payment_method: "credit", unpaid: true, paid: 0, cash_account_id: cashAccountId || null }
         : { payment_method: "cash", cash_account_id: cashAccountId || null });
+      const data = { ...(res.data || {}), title: "فاتورة بيع" };
+      printSale(data);
+      shareSale(data);
+      setDoneInv(res.data);
+      setDoneOpen(true);
       playSound("done");
       setStockTick((n) => n + 1);
       await loadHeldList();
@@ -838,30 +925,53 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       const res = await post<{ data: any }>("/api/invoices", body);
       clientTokenRef.current = newClientToken();
       if (opts?.hold) {
+        const data = res.data || {};
+        const agent = (lookups?.delivery_agents || []).find((a) => a.id === Number(data.delivery_agent_id || agentId || 0));
+        const snap = {
+          ...data,
+          print_title: "فاتورة معلقة / بيان أسعار",
+          items: data.items?.length ? data.items : cart,
+          customer_name: data.customer_name || party?.name || walkIn || customerQ,
+          customer_phone: data.customer_phone || party?.phone || newCust.phone,
+          customer_whatsapp: data.customer_whatsapp || party?.whatsapp || party?.phone || newCust.phone,
+          delivery_agent_name: data.delivery_agent_name || agent?.name || null,
+          delivery_agent_code: data.delivery_agent_code || agent?.code || null,
+          delivery_agent_phone: data.delivery_agent_phone || agent?.phone || null,
+          subtotal: data.subtotal ?? subtotal,
+          discount: data.discount ?? discAmt,
+          total: data.total ?? total,
+        };
+        setPrintSnap(snap);
+        setHoldPrintTick((n) => n + 1);
+        const phone = snap.customer_phone || snap.customer_whatsapp;
+        setHoldShare(phone ? snap : null);
         playSound("ok");
         clearCart();
         void loadHeldList();
         return;
       }
       playSound("done");
-      setPrintSnap(res.data || {
-        items: cart,
-        total,
-        extra_amount: Number(extraAmount || 0),
-        subtotal,
-        discount: discAmt,
-        tax_amount: taxAmount,
-        type,
-        customer_name: party?.name || walkIn || customerQ,
-        customer_phone: party?.phone || newCust.phone,
-        customer_whatsapp: party?.whatsapp || party?.phone || newCust.phone,
-        address: address || party?.address,
-        area: area || party?.area,
-        city: (party as { city?: string } | null)?.city,
-        notes,
-        payment_method: payMethod,
-      });
-      setDoneInv(res.data);
+      const sold = {
+        ...(res.data || {}),
+        items: res.data?.items?.length ? res.data.items : cart,
+        total: res.data?.total ?? total,
+        extra_amount: res.data?.extra_amount ?? Number(extraAmount || 0),
+        subtotal: res.data?.subtotal ?? subtotal,
+        discount: res.data?.discount ?? discAmt,
+        tax_amount: res.data?.tax_amount ?? taxAmount,
+        type: res.data?.type || type,
+        customer_name: res.data?.customer_name || party?.name || walkIn || customerQ,
+        customer_phone: res.data?.customer_phone || party?.phone || newCust.phone,
+        customer_whatsapp: res.data?.customer_whatsapp || party?.whatsapp || party?.phone || newCust.phone,
+        address: res.data?.address || address || party?.address,
+        area: res.data?.area || area || party?.area,
+        city: res.data?.city || (party as { city?: string } | null)?.city,
+        notes: res.data?.notes || notes,
+        payment_method: res.data?.payment_method || payMethod,
+        title: "فاتورة بيع",
+      };
+      setPrintSnap(sold);
+      setDoneInv(res.data || sold);
       setStockTick((n) => n + 1);
       await loadToday().catch(() => {});
       if (party?.id) {
@@ -874,7 +984,8 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       }
       clearCart();
       setDoneOpen(true);
-      if (opts?.print) setTimeout(() => window.print(), 350);
+      if (opts?.print) setSalePrintTick((n) => n + 1);
+      shareSale(sold);
     } catch (e: any) {
       playSound("err");
       setErr(apiMessage(tr, e));
@@ -1137,7 +1248,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     searchRef, customerRef, qtyRef, priceRef, extraRef, custBlurRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, locLines, canSell, add, addFromSearch, clearCart,
     subtotal, discAmt, taxAmount, total, remaining, creditNeedCustomer, paidInvalid,
-    printRows, printTotal, printExtra, printInvoice, related, waEnabled, cartQty,
+    printRows, printTotal, printExtra, printInvoice, holdPrintTick, salePrintTick, holdShare, setHoldShare, courierGate, setCourierGate, saveCourierGate, related, waEnabled, cartQty,
     loadToday, loadHeldList, setStockTick, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
   };

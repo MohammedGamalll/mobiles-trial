@@ -903,7 +903,7 @@ export function CustomersPage() {
   }
   const list = useLiveList(load, [f.qs]);
   return (
-    <Page title={tr("customers")} action={<><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm(emptyCust()); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
+    <Page title={tr("customers")} action={<><Link className="rounded-xl px-3 py-2 text-sm font-bold" to="/customers/credit">{tr("customerCreditSheet")}</Link><ExportBtn kind="customers" query={f.qs} />{can("customers.create") ? <Btn onClick={() => { act.clear(); setForm(emptyCust()); setOpen(true); }}>{tr("addCustomer")}</Btn> : null}</>}>
       <ErrorNote message={act.message} />
       <div className="mb-3 grid gap-3 md:grid-cols-3">
         <Stat label={tr("customers")} value={String(totals.count || rows.length)} />
@@ -1104,7 +1104,7 @@ export function SuppliersPage() {
   }
   const list = useLiveList(load, [f.qs]);
   return (
-    <Page title={tr("suppliers")} action={<Btn onClick={() => { act.clear(); setForm(emptySup()); setOpen(true); }}>{tr("add")}</Btn>}>
+    <Page title={tr("suppliers")} action={<><Link className="rounded-xl px-3 py-2 text-sm font-bold" to="/suppliers/credit">{tr("supplierCreditSheet")}</Link><Btn onClick={() => { act.clear(); setForm(emptySup()); setOpen(true); }}>{tr("add")}</Btn></>}>
       <SmartFilter f={f} date={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [{ value: "active", label: tr("active") }, { value: "inactive", label: tr("inactive") }] },
         { key: "dues", label: "balance", type: "select", options: [{ value: "yes", label: tr("hasDues") }, { value: "no", label: tr("noDues") }] },
@@ -1479,6 +1479,12 @@ export function ExpensesPage() {
       setForm((prev) => ({ ...prev, cash_account_id: cashAccounts[0].id }));
     }
   }, [cashAccounts]);
+  useEffect(() => {
+    if (!cats.length) return;
+    if (!cats.some((c) => Number(c.id) === Number(form.category_id))) {
+      setForm((prev) => ({ ...prev, category_id: Number(cats[0].id) }));
+    }
+  }, [cats, form.category_id]);
   return (
     <Page title={tr("expenses")} action={<><ExportBtn kind="expenses" query={f.qs} /><Btn onClick={() => { clearExp(); setOpen(true); }}>{tr("newExpense")}</Btn></>}>
       <div className="mb-3 grid gap-3 md:grid-cols-4">
@@ -1521,7 +1527,11 @@ export function ExpensesPage() {
           {tr("recurring")}
         </label>
         {form.recurring ? <input className={`${inputCls} mt-2`} type="number" value={form.recur_every_days} onChange={(e) => setForm({ ...form, recur_every_days: Number(e.target.value) })} /> : null}
-        <Btn className="mt-3" onClick={async () => {
+        <Btn className="mt-3" disabled={!cats.length || !form.category_id} onClick={async () => {
+          if (!cats.some((c) => Number(c.id) === Number(form.category_id))) {
+            failExp(undefined, "errBadCategory");
+            return;
+          }
           try {
             await post("/api/expenses", form);
             setOpen(false);
@@ -1623,7 +1633,7 @@ export function ReportsPage() {
   ];
   const exportKind = tab === "compare" ? "sales" : tab === "inventory" ? "inventory" : tab;
   return (
-    <Page title={tr("reports")} action={<ExportBtn kind={exportKind} query={`${f.qs}&group=${group}`} />}>
+    <Page title={tr("reports")} action={<><Link className="rounded-xl px-3 py-2 text-sm font-bold" to="/customers/credit">{tr("customerCreditSheet")}</Link><Link className="rounded-xl px-3 py-2 text-sm font-bold" to="/suppliers/credit">{tr("supplierCreditSheet")}</Link><ExportBtn kind={exportKind} query={`${f.qs}&group=${group}`} /></>}>
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={list.loading && !Object.keys(acc).length} emptyFallback={<PageLoading />}>
       <SmartFilter f={f} search={false} fields={[
         { key: "customer_id", label: "customers", type: "async", quick: true, asyncPath: "/api/customers" },

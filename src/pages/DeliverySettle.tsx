@@ -13,6 +13,7 @@ type Row = {
   number: string;
   customer_name?: string;
   delivery_status?: string;
+  status?: string;
   remaining?: number;
   total?: number;
   paid?: number;
@@ -22,6 +23,9 @@ type Draft = {
   outcome: "delivered" | "rejected" | "damaged" | "returned";
   collected: number;
   charge_to: "courier" | "customer" | "company";
+  rating: number;
+  on_time: boolean;
+  note: string;
 };
 
 export default function DeliverySettle() {
@@ -60,6 +64,9 @@ export default function DeliverySettle() {
             outcome: "delivered",
             collected: collectDue(inv),
             charge_to: "courier",
+            rating: 5,
+            on_time: true,
+            note: "",
           };
         }
         return next;
@@ -97,6 +104,17 @@ export default function DeliverySettle() {
     setOk("");
     try {
       await post("/api/delivery/settle", { delivery_agent_id: Number(agentId), orders: ordersPayload });
+      for (const inv of rows) {
+        const d = drafts[inv.id];
+        if (!d || d.outcome !== "delivered" || !d.rating) continue;
+        await post("/api/delivery/ratings", {
+          agent_id: Number(agentId),
+          invoice_id: inv.id,
+          rating: d.rating,
+          on_time: d.on_time ? 1 : 0,
+          note: d.note,
+        });
+      }
       setOk(tr("settlementOk"));
       await load();
     } catch (e) {
@@ -148,11 +166,12 @@ export default function DeliverySettle() {
                   <th>{tr("remaining")}</th>
                   <th>{tr("deliveryResult")}</th>
                   <th>{tr("collect")}</th>
+                  <th>{tr("rateCourier")}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((inv) => {
-                  const d = drafts[inv.id] || { outcome: "delivered" as const, collected: 0, charge_to: "courier" as const };
+                  const d = drafts[inv.id] || { outcome: "delivered" as const, collected: 0, charge_to: "courier" as const, rating: 5, on_time: true, note: "" };
                   return (
                     <tr key={inv.id}>
                       <td><Link className="font-bold text-cyan-800" to={`/sales/${inv.id}`}>{inv.number}</Link></td>
@@ -178,6 +197,12 @@ export default function DeliverySettle() {
                             <option value="company">{tr("chargeCompany")}</option>
                           </select>
                         ) : null}
+                      </td>
+                      <td>
+                        <select className={inputCls} value={d.rating || 5} onChange={(e) => patch(inv.id, { rating: Number(e.target.value) })}>
+                          {[5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <label className="mt-1 flex items-center gap-1 text-xs"><input type="checkbox" checked={d.on_time !== false} onChange={(e) => patch(inv.id, { on_time: e.target.checked })} />{tr("onTime")}</label>
                       </td>
                     </tr>
                   );

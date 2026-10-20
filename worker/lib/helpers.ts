@@ -29,6 +29,31 @@ export function nowIso() {
   return new Date().toISOString().replace("T", " ").slice(0, 19);
 }
 
+function cairoParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Cairo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const g = (t: string) => parts.find((p) => p.type === t)?.value || "00";
+  const hour = g("hour") === "24" ? "00" : g("hour");
+  return { year: g("year"), month: g("month"), day: g("day"), hour, minute: g("minute"), second: g("second") };
+}
+
+export function cairoNow() {
+  const p = cairoParts();
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+}
+
+export function cairoToday() {
+  return cairoNow().slice(0, 10);
+}
+
 export function todayIso() {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, "0");

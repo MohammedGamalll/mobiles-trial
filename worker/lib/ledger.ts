@@ -498,6 +498,46 @@ export async function postCommissionJournal(db: AppDb, opts: { id: number; amoun
   });
 }
 
+export async function postSalaryPayoutJournal(db: AppDb, opts: { id: number; amount: number; date: string; description?: string | null; userId?: number | null; cashAccountId?: number | null }) {
+  if (await existingJournal(db, "expense", opts.id)) return;
+  const sal = await accountByCode(db, "5300");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!sal || !cash || opts.amount <= 0) throw new Error("ledger");
+  await postJournal(db, {
+    date: opts.date,
+    description: opts.description || `راتب #${opts.id}`,
+    source: "expense",
+    sourceId: opts.id,
+    userId: opts.userId,
+    lines: [
+      { account_id: sal.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
+export async function postBonusJournal(db: AppDb, opts: { id: number; amount: number; date: string; description?: string | null; userId?: number | null; cashAccountId?: number | null }) {
+  const existing = await db
+    .prepare("SELECT id FROM journal_entries WHERE source = 'bonus' AND source_id = ? AND status = 'posted'")
+    .bind(opts.id)
+    .first<{ id: number }>();
+  if (existing) return existing.id;
+  const sal = await accountByCode(db, "5300");
+  const cash = await cashAccountFor(db, "cash", opts.cashAccountId);
+  if (!sal || !cash || opts.amount <= 0) throw new Error("ledger");
+  return postJournal(db, {
+    date: opts.date,
+    description: opts.description || `مكافأة #${opts.id}`,
+    source: "bonus",
+    sourceId: opts.id,
+    userId: opts.userId,
+    lines: [
+      { account_id: sal.id, debit: opts.amount },
+      { account_id: cash.account_id, credit: opts.amount },
+    ],
+  });
+}
+
 export async function postPayrollJournal(db: AppDb, opts: { runId: number; month: string; total: number; userId?: number | null }) {
   if (await existingJournal(db, "payroll", opts.runId)) return;
   const sal = await accountByCode(db, "5300");

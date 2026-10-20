@@ -40,6 +40,7 @@ const ERR_KEYS: Record<string, Msg> = {
   no_employee: "errNoEmployee",
   invalid_percent: "errInvalidPercent",
   ledger: "errLedger",
+  bad_category: "errBadCategory",
   bad_excel: "errBadExcel",
   missing_headers: "errBadExcel",
   no_batch: "errNoBatch",

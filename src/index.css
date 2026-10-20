@@ -785,6 +785,24 @@ html[dir="rtl"] .sidebar-mobile-panel {
   background: var(--row-hover);
 }
 
+table.stack-cols {
+  width: 100%;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+table.stack-cols th,
+table.stack-cols td {
+  text-align: center;
+  vertical-align: middle;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+table.stack-cols td.stack-label {
+  text-align: start;
+}
+
 .held-act {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -996,6 +1014,35 @@ html.dark .hover\:bg-slate-50:hover {
   display: none;
 }
 
+button.pos-hold,
+html[data-ui="modern"] button.ui-btn.pos-hold,
+html[data-ui="modern"] button.ui-btn.pos-hold.bg-\[var\(--btn\)\],
+html[data-ui="modern"] button.ui-btn.pos-hold.bg-\[var\(--ink\)\] {
+  background: #dc2626 !important;
+  color: #fff !important;
+}
+
+button.pos-hold:hover,
+html[data-ui="modern"] button.ui-btn.pos-hold:hover,
+html[data-ui="modern"] button.ui-btn.pos-hold.bg-\[var\(--btn\)\]:hover,
+html[data-ui="modern"] button.ui-btn.pos-hold.bg-\[var\(--ink\)\]:hover {
+  background: #b91c1c !important;
+  color: #fff !important;
+}
+
+button.pos-held,
+html[data-ui="modern"] button.pos-held {
+  background: #059669 !important;
+  color: #fff !important;
+  border-color: #047857 !important;
+}
+
+button.pos-held:hover,
+html[data-ui="modern"] button.pos-held:hover {
+  background: #047857 !important;
+  color: #fff !important;
+}
+
 @media print {
   @page {
     margin: 10mm;
@@ -1028,7 +1075,8 @@ html.dark .hover\:bg-slate-50:hover {
   html.print-thermal .print-sheet table td.is-disc,
   html.print-thermal .print-sheet table th:nth-child(3),
   html.print-thermal .print-sheet table td:nth-child(3),
-  html.print-thermal .print-wide {
+  html.print-thermal .print-wide,
+  html.print-thermal .barcode-sheet {
     display: none !important;
   }
 
@@ -3637,15 +3685,31 @@ html[data-ui="modern"] .login-gold {
 .pos-classic-black button.is-hold {
   height: 32px;
   padding: 0 14px;
-  background: #e11d48;
-  color: #fff;
-  border: 1px solid #fb7185;
+  background: #dc2626 !important;
+  color: #fff !important;
+  border: 1px solid #f87171;
   font-size: 12px;
   font-weight: 900;
 }
 
 .pos-classic-black button.is-hold:hover {
-  background: #be123c;
+  background: #b91c1c !important;
+  color: #fff !important;
+}
+
+.pos-classic-black button.is-held,
+.pos-classic-black .pos-classic-rail-btn.is-held,
+.pos-classic-black .pos-classic-docs button.is-held {
+  background: #059669 !important;
+  color: #fff !important;
+  border-color: #047857 !important;
+}
+
+.pos-classic-black button.is-held:hover,
+.pos-classic-black .pos-classic-rail-btn.is-held:hover,
+.pos-classic-black .pos-classic-docs button.is-held:hover {
+  background: #047857 !important;
+  color: #fff !important;
 }
 
 .pos-classic-black button.is-hold:disabled {

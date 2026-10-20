@@ -26,6 +26,7 @@ export function DeliveryBoard() {
   const [liveErr, setLiveErr] = useState("");
   const [trailAgentId, setTrailAgentId] = useState<number | null>(null);
   const [agents, setAgents] = useState<any[]>([]);
+  const [perf, setPerf] = useState<Record<number, any>>({});
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 });
   const { confirmDelete, dialog } = useConfirm();
@@ -52,8 +53,15 @@ export function DeliveryBoard() {
   async function loadAgents() {
     const r = await get<{ data: any[] }>("/api/delivery/agents");
     setAgents(r.data);
+    try {
+      const p = await get<{ data: any[] }>("/api/delivery/performance");
+      const map: Record<number, any> = {};
+      for (const row of p.data || []) map[row.id] = row;
+      setPerf(map);
+    } catch {
+      setPerf({});
+    }
   }
-
   const orders = useLiveList(loadOrders, [f.qs]);
   const agentsList = useLiveList(async () => {
     if (tab !== "agents") return;
@@ -269,6 +277,10 @@ export function DeliveryBoard() {
                       <th>{tr("roleType")}</th>
                       <th>{tr("area")}</th>
                       <th>{tr("status")}</th>
+                      <th>{tr("avgStars")}</th>
+                      <th>{tr("successOrders")}</th>
+                      <th>{tr("successRate")}</th>
+                      <th>{tr("collectedCash")}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -281,6 +293,10 @@ export function DeliveryBoard() {
                         <td>{a.role_type === "sales" ? tr("roleSales") : a.role_type === "both" ? tr("roleBoth") : tr("roleDelivery")}</td>
                         <td>{a.area || "-"}</td>
                         <td><span className={statusClass(a.status === "active" ? "in" : "out")}>{a.status === "active" ? tr("active") : tr("inactive")}</span></td>
+                        <td>{Number(perf[a.id]?.avg_rating || 0).toFixed(1)} ({perf[a.id]?.rating_count || 0})</td>
+                        <td>{perf[a.id]?.success_orders || 0} / {Number(perf[a.id]?.failed_orders || 0)}</td>
+                        <td>{(() => { const ok = Number(perf[a.id]?.success_orders || 0); const bad = Number(perf[a.id]?.failed_orders || 0); return ok + bad ? `${Math.round((ok / (ok + bad)) * 100)}%` : "-"; })()}</td>
+                        <td>{money(perf[a.id]?.collected || 0, lang)}<div className="text-xs text-slate-400">{money(perf[a.id]?.commissions || 0, lang)}</div></td>
                         <td>
                           {can("settings.edit", "hr.manage") ? (
                             <ActionBtns

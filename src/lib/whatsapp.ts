@@ -16,6 +16,35 @@ export function waMeLink(phone: string | null | undefined, message: string) {
   return `https://wa.me/${intl}?text=${encodeURIComponent(message || "")}`;
 }
 
+export function heldInvoiceMessage(store: string, inv: {
+  title?: string;
+  number?: string;
+  customer_name?: string;
+  subtotal?: number;
+  discount?: number;
+  total?: number;
+  delivery_agent_name?: string | null;
+  delivery_agent_phone?: string | null;
+  items?: { product_name?: string; name_ar?: string; name?: string; quantity?: number; qty?: number; total?: number }[];
+}) {
+  const lines = (inv.items || []).map((it) => {
+    const name = it.product_name || it.name_ar || it.name || "";
+    const qty = it.quantity ?? it.qty ?? 1;
+    return `- ${name} × ${qty} = ${it.total ?? ""}`;
+  });
+  return [
+    store,
+    inv.title || "فاتورة معلقة / بيان أسعار",
+    inv.number ? `رقم الفاتورة: ${inv.number}` : "",
+    inv.customer_name ? `العميل: ${inv.customer_name}` : "",
+    ...lines,
+    `الإجمالي: ${inv.subtotal ?? ""}`,
+    `الخصم: ${inv.discount ?? 0}`,
+    `الصافي: ${inv.total ?? ""}`,
+    inv.delivery_agent_name ? `التيار: ${inv.delivery_agent_name}${inv.delivery_agent_phone ? ` - ${inv.delivery_agent_phone}` : ""}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 export function launchInvoiceWhatsApp(opts: {
   invoiceId: number;
   phone?: string | null;

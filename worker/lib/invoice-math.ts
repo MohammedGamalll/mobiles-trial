@@ -95,7 +95,11 @@ export function netPay(opts: {
   const manual = round2(Math.min(requestedManual, afterAdvances));
   const net = round2(Math.max(0, afterAdvances - manual));
   const deductions = round2(advances + manual);
-  return { deductions, net, advances, manual };
+  return { deductions, net, advances, manual, bonus: round2(bonus) };
+}
+
+export function accruedBonusTotal(rows: { amount: number; paid_immediately?: number | boolean }[]) {
+  return round2(rows.reduce((sum, row) => sum + (Number(row.paid_immediately) ? 0 : Number(row.amount || 0)), 0));
 }
 
 /** FIFO: take `amount` from open advances in order; leftover remaining stays open. */

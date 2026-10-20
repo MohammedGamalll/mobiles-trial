@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Minus, Plus, Search, ShoppingBag, X } from "lucide-react";
 import { get, post } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { launchInvoiceWhatsApp } from "../lib/whatsapp";
+import { heldInvoiceMessage, launchInvoiceWhatsApp } from "../lib/whatsapp";
 import {
   invoicePayStatus,
   money,
@@ -19,6 +19,7 @@ import {
   PrintBtn,
   Stat,
   inputCls,
+  printPage,
 } from "../components/ui";
 import { StaffForm } from "../components/StaffForm";
 import { binText, lastSupplierName } from "../lib/place";
@@ -35,6 +36,7 @@ import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PageSizeControl } from "../components/PageSizeControl";
 import { useApp } from "../context";
 import { EndShiftButton } from "../components/PosShiftGuard";
+import { CourierGateModal, type CourierGate } from "../components/CourierGateModal";
 import { CreditDownPayment } from "../components/CreditDownPayment";
 
 export default function POS() {
@@ -165,6 +167,13 @@ export default function POS() {
     paidInvalid,
     printRows,
     printInvoice,
+    holdPrintTick,
+    salePrintTick,
+    holdShare,
+    setHoldShare,
+    courierGate,
+    setCourierGate,
+    saveCourierGate,
     related,
     waEnabled,
     openHeld,
@@ -204,6 +213,16 @@ export default function POS() {
     [visible, headerFilters, lang, pickPrice],
   );
   const { settings } = useApp();
+  useEffect(() => {
+    if (!holdPrintTick) return;
+    const t = window.setTimeout(() => printPage("thermal"), 200);
+    return () => window.clearTimeout(t);
+  }, [holdPrintTick]);
+  useEffect(() => {
+    if (!salePrintTick) return;
+    const t = window.setTimeout(() => printPage("thermal"), 200);
+    return () => window.clearTimeout(t);
+  }, [salePrintTick]);
   const extraPriceCols = (["price_2", "price_3", "price_4"] as const).filter(
     (k) =>
       visible.some((p) => {
@@ -263,7 +282,7 @@ export default function POS() {
       <div className="print-sheet print-only">
         <InvoicePrint
           inv={printInvoice}
-          title={quoteMode ? tr("quoteMode") : tr("invoice")}
+          title={printInvoice.print_title || (quoteMode ? tr("quoteMode") : tr("invoice"))}
         />
       </div>
       <div className="print-only barcode-sheet">
@@ -323,7 +342,7 @@ export default function POS() {
             <button
               type="button"
               tabIndex={-1}
-              className="relative inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-bold"
+              className="pos-held relative inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-bold"
               onClick={() => void openHeld()}
             >
               {tr("heldInvoices")}
@@ -1274,8 +1293,7 @@ export default function POS() {
                 ) : null}
                 <div className="grid w-full grid-cols-1 gap-2">
                   <Btn
-                    kind="danger"
-                    className="w-full whitespace-nowrap"
+                    className="pos-hold w-full whitespace-nowrap"
                     disabled={busy || resuming || !cart.length}
                     onClick={holdInvoice}
                   >
@@ -1750,7 +1768,7 @@ export default function POS() {
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              <Btn onClick={() => window.print()}>{tr("print")}</Btn>
+              <Btn onClick={() => printPage("thermal")}>{tr("print")}</Btn>
               {waEnabled && can("whatsapp.send") ? (
                 <Btn kind="soft" onClick={() => void previewWa(doneInv.id)}>
                   {tr("sendWhatsapp")}
@@ -1792,6 +1810,32 @@ export default function POS() {
             {tr("cancel")}
           </Btn>
         </div>
+      </Modal>
+      <CourierGateModal
+        gate={courierGate}
+        busy={busy}
+        tr={tr}
+        onChange={(next: CourierGate) => setCourierGate(next)}
+        onClose={() => setCourierGate(null)}
+        onSave={() => void saveCourierGate()}
+      />
+      <Modal open={!!holdShare} title={tr("sendWhatsapp")} onClose={() => setHoldShare(null)}>
+        {holdShare ? (
+          <div className="space-y-3">
+            <pre className="whitespace-pre-wrap text-sm">{heldInvoiceMessage(settings.store_name_ar || settings.store_name || tr("app"), holdShare)}</pre>
+            <Btn onClick={() => {
+              const message = heldInvoiceMessage(settings.store_name_ar || settings.store_name || tr("app"), holdShare);
+              const ok = launchInvoiceWhatsApp({
+                invoiceId: Number(holdShare.id),
+                phone: holdShare.customer_phone || holdShare.customer_whatsapp,
+                message,
+                type: holdShare.title ? "invoice_created" : "held",
+              });
+              if (!ok) setErr(tr("waNoPhone"));
+              else setHoldShare(null);
+            }}>{tr("sendWhatsapp")}</Btn>
+          </div>
+        ) : null}
       </Modal>
       <Modal
         open={custOpen}

@@ -55,6 +55,8 @@ financeRoutes.post("/expenses", requirePerm("expenses.create"), async (c) => {
   if (nextDue) nextDue.setDate(nextDue.getDate() + days);
   const amount = Number(b.amount || 0);
   if (!(amount > 0) || !b.category_id) return c.json({ error: "missing_fields" }, 400);
+  const category = await c.env.DB.prepare("SELECT id FROM expense_categories WHERE id = ? AND active = 1").bind(b.category_id).first<{ id: number }>();
+  if (!category) return c.json({ error: "bad_category" }, 400);
   const shift = await attachOpenShift(c.env.DB, c.get("user").id);
   try {
     const id = await c.env.DB.transaction(async (tx) => {
@@ -77,6 +79,7 @@ financeRoutes.post("/expenses", requirePerm("expenses.create"), async (c) => {
   } catch (e) {
     const msg = (e as Error).message || "";
     if (msg === "ledger") return c.json({ error: "ledger" }, 400);
+    if (/category_id|foreign key/i.test(msg)) return c.json({ error: "bad_category" }, 400);
     throw e;
   }
 });

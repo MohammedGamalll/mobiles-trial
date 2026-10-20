@@ -207,6 +207,10 @@ export async function ensureAppSchema(db: AppDb) {
     ["vouchers", "invoice_id INTEGER"],
     ["salary_advances", "cash_account_id INTEGER"],
     ["salary_advances", "journal_id INTEGER"],
+    ["attendance_sessions", "approval_status TEXT NOT NULL DEFAULT 'pending'"],
+    ["attendance_sessions", "late_minutes INTEGER NOT NULL DEFAULT 0"],
+    ["attendance_sessions", "admin_notes TEXT"],
+    ["payslips", "bonus REAL NOT NULL DEFAULT 0"],
   ];
   for (const [table, def] of alters) await run(`ALTER TABLE ${table} ADD COLUMN ${def}`);
   await run(`INSERT OR IGNORE INTO payment_methods (code, name_ar, name_en, active, sort_order) VALUES
@@ -437,6 +441,32 @@ export async function ensureAppSchema(db: AppDb) {
   await run("ALTER TABLE whatsapp_templates MODIFY body_ar LONGTEXT");
   await run("ALTER TABLE whatsapp_templates MODIFY body_en LONGTEXT");
   await run("ALTER TABLE whatsapp_logs MODIFY message LONGTEXT");
+  await run(`CREATE TABLE IF NOT EXISTS employee_bonuses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    reason TEXT,
+    date TEXT NOT NULL,
+    month TEXT NOT NULL,
+    cash_account_id INTEGER,
+    paid_immediately INTEGER NOT NULL DEFAULT 0,
+    journal_id INTEGER,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run("CREATE INDEX idx_employee_bonuses_month ON employee_bonuses(employee_id, month)");
+  await run(`CREATE TABLE IF NOT EXISTS courier_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    invoice_id INTEGER,
+    rating INTEGER NOT NULL,
+    note TEXT,
+    on_time INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run("CREATE INDEX idx_courier_ratings_agent ON courier_ratings(agent_id)");
+  await run("CREATE INDEX idx_courier_ratings_invoice ON courier_ratings(invoice_id)");
   const { ensureWhatsappTemplates } = await import("./whatsapp");
   await ensureWhatsappTemplates(db);
   try {

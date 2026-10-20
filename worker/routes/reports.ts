@@ -605,3 +605,63 @@ reportRoutes.get("/reconcile", requirePerm("reports.view", "ledger.view"), async
   const data = await reconcile(c.env.DB);
   return c.json(data);
 });
+
+reportRoutes.get("/credit-sheet", requirePerm("reports.view", "customers.view", "suppliers.view"), async (c) => {
+  const party = c.req.query("party") === "supplier" ? "supplier" : "customer";
+  if (party === "supplier") {
+    const { results: people } = await c.env.DB
+      .prepare(
+        `SELECT s.id, s.name, s.phone, s.balance AS remaining,
+          (SELECT COUNT(*) FROM purchase_invoices p WHERE p.supplier_id = s.id AND p.deleted_at IS NULL AND p.remaining > 0.009 AND p.status NOT IN ('draft','cancelled','rejected')) AS open_count,
+          (SELECT COALESCE(SUM(p.total),0) FROM purchase_invoices p WHERE p.supplier_id = s.id AND p.deleted_at IS NULL AND p.status NOT IN ('draft','cancelled','rejected')) AS drawn,
+          (SELECT COALESCE(SUM(p.paid),0) FROM purchase_invoices p WHERE p.supplier_id = s.id AND p.deleted_at IS NULL AND p.status NOT IN ('draft','cancelled','rejected')) AS paid,
+          (SELECT MAX(pay.date) FROM payments pay WHERE pay.supplier_id = s.id AND pay.voided_at IS NULL) AS last_payment
+         FROM suppliers s
+         WHERE s.deleted_at IS NULL AND s.balance > 0.009
+         ORDER BY s.balance DESC`,
+      )
+      .all<{ id: number }>();
+    const { results: invoices } = await c.env.DB
+      .prepare(
+        `SELECT id, number, date, supplier_id, total, paid, remaining
+         FROM purchase_invoices
+         WHERE deleted_at IS NULL AND remaining > 0.009 AND supplier_id IS NOT NULL AND status NOT IN ('draft','cancelled','rejected')
+         ORDER BY date, id`,
+      )
+      .all<{ supplier_id: number }>();
+    const data = people.map((row) => ({
+      ...row,
+      code: row.id,
+      invoices: invoices.filter((inv) => inv.supplier_id === row.id),
+    }));
+    const total = data.reduce((sum, row) => sum + Number((row as { remaining?: number }).remaining || 0), 0);
+    return c.json({ data, total, party });
+  }
+  const { results: people } = await c.env.DB
+    .prepare(
+      `SELECT c.id, c.name, c.phone, c.current_balance AS remaining,
+        (SELECT COUNT(*) FROM sales_invoices si WHERE si.customer_id = c.id AND si.deleted_at IS NULL AND si.remaining > 0.009 AND si.status NOT IN ('cancelled','draft','quote')) AS open_count,
+        (SELECT COALESCE(SUM(si.total),0) FROM sales_invoices si WHERE si.customer_id = c.id AND si.deleted_at IS NULL AND si.status NOT IN ('cancelled','draft','quote','held')) AS drawn,
+        (SELECT COALESCE(SUM(pay.amount),0) FROM payments pay WHERE pay.customer_id = c.id AND pay.voided_at IS NULL) AS paid,
+        (SELECT MAX(pay.date) FROM payments pay WHERE pay.customer_id = c.id AND pay.voided_at IS NULL) AS last_payment
+       FROM customers c
+       WHERE c.deleted_at IS NULL AND c.current_balance > 0.009
+       ORDER BY c.current_balance DESC`,
+    )
+    .all<{ id: number }>();
+  const { results: invoices } = await c.env.DB
+    .prepare(
+      `SELECT id, number, date, customer_id, total, paid, remaining
+       FROM sales_invoices
+       WHERE deleted_at IS NULL AND remaining > 0.009 AND customer_id IS NOT NULL AND status NOT IN ('cancelled','draft','quote')
+       ORDER BY date, id`,
+    )
+    .all<{ customer_id: number }>();
+  const data = people.map((row) => ({
+    ...row,
+    code: row.id,
+    invoices: invoices.filter((inv) => inv.customer_id === row.id),
+  }));
+  const total = data.reduce((sum, row) => sum + Number((row as { remaining?: number }).remaining || 0), 0);
+  return c.json({ data, total, party });
+});

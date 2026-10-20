@@ -1,12 +1,12 @@
 import { Hono } from "hono";
-import { audit, getSettings, paginate, round2, todayIso, type AppBindings, type AppVars, type AppDb } from "../lib/helpers";
+import { audit, cairoNow, cairoToday, getSettings, paginate, round2, todayIso, type AppBindings, type AppVars, type AppDb, type AuthUser } from "../lib/helpers";
 import { requirePerm } from "../lib/auth";
 import { haversineMeters, workplaceFromSettings } from "../lib/geo";
-import { postAdvanceJournal, postAdvanceSettleJournal, postExpenseJournal, reverseJournal } from "../lib/ledger";
+import { postAdvanceJournal, postAdvanceSettleJournal, postBonusJournal, postSalaryPayoutJournal, reverseJournal } from "../lib/ledger";
 import { isSuperAdmin, userHasPerm } from "../lib/user-permissions";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
 import { notifyAdmins, safeNotify, sendNotification, userIdForEmployee } from "../lib/notifications";
-import { applyAdvanceDeduction, netPay } from "../lib/invoice-math";
+import { accruedBonusTotal, applyAdvanceDeduction, netPay } from "../lib/invoice-math";
 import { createStaff, STAFF_KINDS, type StaffInput } from "../lib/staff";
 
 export const hrRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
@@ -74,11 +74,29 @@ async function employeeForUser(db: AppDb, userId: number) {
   return db.prepare("SELECT * FROM employees WHERE user_id = ? AND deleted_at IS NULL").bind(userId).first<Employee>();
 }
 
-function isLate(clockInAt: string, shiftStart: string) {
+function wallMs(value: string) {
+  return Date.parse(String(value).trim().replace(" ", "T").replace(/Z$/, ""));
+}
+
+function minutesPastShift(clockInAt: string, shiftStart: string) {
   const t = clockInAt.slice(11, 16);
-  const [sh, sm] = shiftStart.split(":").map(Number);
+  const [sh, sm] = String(shiftStart || "09:00").split(":").map(Number);
   const [ch, cm] = t.split(":").map(Number);
-  return ch * 60 + cm > sh * 60 + sm + 15;
+  if (!Number.isFinite(sh) || !Number.isFinite(ch)) return 0;
+  return Math.max(0, ch * 60 + cm - (sh * 60 + sm));
+}
+
+function isLate(clockInAt: string, shiftStart: string) {
+  return minutesPastShift(clockInAt, shiftStart) > 15;
+}
+
+function seesAllPayroll(user: AuthUser) {
+  return user.role_slug === "admin" || user.id === 1 || user.permissions.includes("hr.payroll");
+}
+
+function cleanStamp(value: string) {
+  const s = String(value || "").trim().replace("T", " ").slice(0, 19);
+  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s) ? s : null;
 }
 
 function inclusiveDays(from: string, to: string) {
@@ -167,10 +185,16 @@ async function computeEmployeeSlip(db: AppDb, e: Employee, month: string, manual
     .bind(e.id)
     .first<{ n: number }>();
   const overtime = round2(Number(ot?.n || 0));
+  const { results: bonusRows } = await db
+    .prepare("SELECT amount, paid_immediately FROM employee_bonuses WHERE employee_id = ? AND month = ?")
+    .bind(e.id, month)
+    .all<{ amount: number; paid_immediately: number }>();
+  const bonus = accruedBonusTotal(bonusRows);
   const pay = netPay({
     basic: Number(e.basic_salary || 0),
     allowances: Number(e.allowances || 0),
     overtime,
+    bonus,
     advances: Number(adv?.n || 0),
     manualDeduction,
   });
@@ -182,6 +206,7 @@ async function computeEmployeeSlip(db: AppDb, e: Employee, month: string, manual
     paidLeave,
     unpaidLeave,
     overtime,
+    bonus: pay.bonus,
     advances: pay.advances,
     deductions: pay.manual,
     manual: pay.manual,
@@ -193,8 +218,8 @@ async function insertPayslip(db: AppDb, runId: number, emp: Employee, month: str
   const calc = await computeEmployeeSlip(db, emp, month);
   await db
     .prepare(
-      `INSERT INTO payslips (run_id, employee_id, basic, allowances, present_days, absent_days, late_days, outside_minutes, deductions, net, overtime, advances, leave_days, unpaid_days, paid_amount, advances_settled, manual_deduction)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
+      `INSERT INTO payslips (run_id, employee_id, basic, allowances, present_days, absent_days, late_days, outside_minutes, deductions, net, overtime, advances, leave_days, unpaid_days, bonus, paid_amount, advances_settled, manual_deduction)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
     )
     .bind(
       runId,
@@ -211,6 +236,7 @@ async function insertPayslip(db: AppDb, runId: number, emp: Employee, month: str
       calc.advances,
       calc.paidLeave,
       calc.unpaidLeave,
+      calc.bonus,
     )
     .run();
 }
@@ -243,7 +269,7 @@ async function refreshUnpaidSlips(db: AppDb, run: { id: number; month: string; s
     await db
       .prepare(
         `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
-         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=? WHERE id=?`,
+         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
       )
       .bind(
         emp.basic_salary,
@@ -259,6 +285,7 @@ async function refreshUnpaidSlips(db: AppDb, run: { id: number; month: string; s
         calc.paidLeave,
         calc.unpaidLeave,
         calc.manual,
+        calc.bonus,
         s.id,
       )
       .run();
@@ -282,7 +309,7 @@ async function refreshUnpaidSlipsForEmployee(db: AppDb, employeeId: number) {
     await db
       .prepare(
         `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
-         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=? WHERE id=?`,
+         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
       )
       .bind(
         emp.basic_salary,
@@ -298,6 +325,7 @@ async function refreshUnpaidSlipsForEmployee(db: AppDb, employeeId: number) {
         calc.paidLeave,
         calc.unpaidLeave,
         calc.manual,
+        calc.bonus,
         s.id,
       )
       .run();
@@ -450,15 +478,16 @@ hrRoutes.post("/attendance/clock-in", requirePerm("attendance.own"), async (c) =
   if (!wp.lat || !wp.lng) return c.json({ error: "workplace_missing" }, 400);
   const dist = haversineMeters(b.lat, b.lng, wp.lat, wp.lng);
   if (dist > wp.meters) return c.json({ error: "outside_geofence", distance: Math.round(dist), meters: wp.meters }, 400);
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = cairoNow();
   const shift = await shiftForEmployee(c.env.DB, emp);
-  const late = isLate(now, shift?.start_time || wp.shiftStart) ? 1 : 0;
+  const lateMin = minutesPastShift(now, shift?.start_time || wp.shiftStart);
+  const late = lateMin > 15 ? 1 : 0;
   const r = await c.env.DB
     .prepare(
-      `INSERT INTO attendance_sessions (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, distance_in, late, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'open')`,
+      `INSERT INTO attendance_sessions (employee_id, work_date, clock_in_at, clock_in_lat, clock_in_lng, distance_in, late, late_minutes, approval_status, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'open')`,
     )
-    .bind(emp.id, todayIso(), now, b.lat, b.lng, round2(dist), late)
+    .bind(emp.id, cairoToday(), now, b.lat, b.lng, round2(dist), late, lateMin)
     .run();
   const sid = r.meta.last_row_id;
   await c.env.DB
@@ -466,6 +495,16 @@ hrRoutes.post("/attendance/clock-in", requirePerm("attendance.own"), async (c) =
     .bind(sid, emp.id, b.lat, b.lng, round2(dist))
     .run();
   await audit(c.env.DB, c.get("user"), "clock_in", "employee", emp.id, `Clock in ${Math.round(dist)}m`);
+  await safeNotify(() => notifyAdmins(c.env.DB, {
+    type: "attendance",
+    titleAr: "الموظف وصل",
+    titleEn: "Employee arrived",
+    bodyAr: `${emp.name} — ${now.slice(11, 16)} — ${late ? `متأخر ${lateMin} د` : "في المعاد"} — ${Math.round(dist)} م`,
+    bodyEn: `${emp.name} — ${now.slice(11, 16)} — ${late ? `late ${lateMin} min` : "on time"} — ${Math.round(dist)} m`,
+    entityType: "attendance",
+    entityId: sid,
+    actionUrl: `/hr/attendance?session=${sid}`,
+  }));
   const session = await c.env.DB.prepare("SELECT * FROM attendance_sessions WHERE id = ?").bind(sid).first();
   return c.json({ data: { session, distance: round2(dist) } }, 201);
 });
@@ -479,13 +518,13 @@ hrRoutes.post("/attendance/clock-out", requirePerm("attendance.own"), async (c) 
     .first<SessionRow>();
   if (!session) return c.json({ error: "no_open_shift" }, 400);
   const b = await c.req.json<{ lat?: number; lng?: number }>();
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = cairoNow();
   let outside = session.outside_seconds;
   if (session.currently_outside && session.outside_started_at) {
-    outside += Math.max(0, (Date.parse(now.replace(" ", "T") + "Z") - Date.parse(session.outside_started_at.replace(" ", "T") + "Z")) / 1000);
+    outside += Math.max(0, (wallMs(now) - wallMs(session.outside_started_at)) / 1000);
   }
-  const start = Date.parse(session.clock_in_at.replace(" ", "T") + "Z");
-  const end = Date.parse(now.replace(" ", "T") + "Z");
+  const start = wallMs(session.clock_in_at);
+  const end = wallMs(now);
   const work = Math.max(0, Math.round((end - start) / 1000 - outside));
   const dist = b.lat != null && b.lng != null ? haversineMeters(b.lat, b.lng, (await workplaceFromSettings(await getSettings(c.env.DB))).lat, (await workplaceFromSettings(await getSettings(c.env.DB))).lng) : null;
   await c.env.DB
@@ -536,7 +575,7 @@ hrRoutes.post("/attendance/ping", requirePerm("attendance.own"), async (c) => {
   if (b.lat == null || b.lng == null) return c.json({ error: "gps_required" }, 400);
   const wp = workplaceFromSettings(await getSettings(c.env.DB));
   const dist = haversineMeters(b.lat, b.lng, wp.lat, wp.lng);
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = cairoNow();
   let outside = session.outside_seconds;
   let currently = session.currently_outside;
   let started = session.outside_started_at;
@@ -549,7 +588,7 @@ hrRoutes.post("/attendance/ping", requirePerm("attendance.own"), async (c) => {
       event = "left_zone";
     } else if (inside && currently) {
       if (started) {
-        outside += Math.max(0, (Date.parse(now.replace(" ", "T") + "Z") - Date.parse(started.replace(" ", "T") + "Z")) / 1000);
+        outside += Math.max(0, (wallMs(now) - wallMs(started)) / 1000);
       }
       currently = 0;
       started = null;
@@ -614,6 +653,46 @@ hrRoutes.get("/attendance", requirePerm("hr.view", "attendance.own", "hr.payroll
   return c.json({ data: results });
 });
 
+hrRoutes.put("/attendance/:id", requirePerm("hr.manage", "hr.payroll"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const row = await c.env.DB.prepare("SELECT * FROM attendance_sessions WHERE id = ?").bind(id).first<SessionRow & { approval_status?: string; late_minutes?: number; admin_notes?: string | null }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  const b = await c.req.json<{
+    approval_status?: string;
+    late?: number | boolean;
+    late_minutes?: number;
+    admin_notes?: string;
+    clock_in_at?: string;
+    clock_out_at?: string | null;
+  }>();
+  const approval = ["pending", "approved", "rejected"].includes(String(b.approval_status || "")) ? String(b.approval_status) : row.approval_status || "pending";
+  const clockIn = b.clock_in_at ? cleanStamp(b.clock_in_at) : row.clock_in_at;
+  if (!clockIn) return c.json({ error: "missing_fields" }, 400);
+  let clockOut = row.clock_out_at;
+  if (b.clock_out_at === null || b.clock_out_at === "") clockOut = null;
+  else if (b.clock_out_at) {
+    clockOut = cleanStamp(b.clock_out_at);
+    if (!clockOut) return c.json({ error: "missing_fields" }, 400);
+  }
+  const late = b.late == null ? row.late : b.late ? 1 : 0;
+  const lateMinutes = b.late_minutes == null ? Number(row.late_minutes || 0) : Math.max(0, Math.round(Number(b.late_minutes) || 0));
+  let work = row.work_seconds;
+  let status = row.status;
+  if (clockOut) {
+    work = Math.max(0, Math.round((wallMs(clockOut) - wallMs(clockIn)) / 1000 - Number(row.outside_seconds || 0)));
+    status = "closed";
+  }
+  await c.env.DB
+    .prepare(
+      `UPDATE attendance_sessions SET clock_in_at=?, clock_out_at=?, work_seconds=?, late=?, late_minutes=?, approval_status=?, admin_notes=?, status=?, work_date=? WHERE id=?`,
+    )
+    .bind(clockIn, clockOut, work, late, lateMinutes, approval, b.admin_notes ?? row.admin_notes ?? null, status, clockIn.slice(0, 10), id)
+    .run();
+  await audit(c.env.DB, c.get("user"), "attendance_review", "attendance", id, approval);
+  const updated = await c.env.DB.prepare("SELECT * FROM attendance_sessions WHERE id = ?").bind(id).first();
+  return c.json({ data: updated });
+});
+
 hrRoutes.get("/attendance/:id/events", requirePerm("hr.view", "attendance.own"), async (c) => {
   const id = Number(c.req.param("id"));
   const { results } = await c.env.DB
@@ -623,7 +702,116 @@ hrRoutes.get("/attendance/:id/events", requirePerm("hr.view", "attendance.own"),
   return c.json({ data: results });
 });
 
-hrRoutes.get("/payroll", requirePerm("hr.payroll", "hr.view"), async (c) => {
+hrRoutes.get("/me/pay", requirePerm("attendance.own", "hr.view", "hr.payroll"), async (c) => {
+  const emp = await employeeForUser(c.env.DB, c.get("user").id);
+  if (!emp) return c.json({ data: null });
+  const month = /^\d{4}-\d{2}$/.test(c.req.query("month") || "") ? String(c.req.query("month")) : cairoToday().slice(0, 7);
+  const calc = await computeEmployeeSlip(c.env.DB, emp, month);
+  const slip = await c.env.DB
+    .prepare(
+      `SELECT p.* FROM payslips p JOIN payroll_runs r ON r.id = p.run_id
+       WHERE p.employee_id = ? AND r.month = ? ORDER BY p.id DESC LIMIT 1`,
+    )
+    .bind(emp.id, month)
+    .first<{ basic: number; allowances: number; bonus: number; advances: number; manual_deduction: number; net: number; paid_amount: number }>();
+  const { results: bonuses } = await c.env.DB
+    .prepare("SELECT * FROM employee_bonuses WHERE employee_id = ? AND month = ? ORDER BY id DESC")
+    .bind(emp.id, month)
+    .all();
+  const basic = Number(slip?.basic ?? emp.basic_salary ?? 0);
+  const allowances = Number(slip?.allowances ?? emp.allowances ?? 0);
+  const bonus = Number(slip?.bonus ?? calc.bonus ?? 0);
+  const advances = Number(slip?.advances ?? calc.advances ?? 0);
+  const deductions = Number(slip?.manual_deduction ?? calc.manual ?? 0);
+  const net = Number(slip?.net ?? calc.net ?? 0);
+  const paid = Number(slip?.paid_amount || 0);
+  return c.json({
+    data: {
+      employee: { id: emp.id, name: emp.name, code: emp.code },
+      month,
+      basic,
+      allowances,
+      bonus,
+      advances,
+      deductions,
+      overtime: Number(calc.overtime || 0),
+      net,
+      paid,
+      remaining: round2(Math.max(0, net - paid)),
+      bonuses,
+    },
+  });
+});
+
+hrRoutes.get("/bonuses", requirePerm("hr.payroll", "hr.view", "attendance.own"), async (c) => {
+  const user = c.get("user");
+  const month = c.req.query("month") || "";
+  const where = ["1=1"];
+  const params: (string | number)[] = [];
+  if (/^\d{4}-\d{2}$/.test(month)) {
+    where.push("b.month = ?");
+    params.push(month);
+  }
+  if (!seesAllPayroll(user)) {
+    const emp = await employeeForUser(c.env.DB, user.id);
+    if (!emp) return c.json({ data: [] });
+    where.push("b.employee_id = ?");
+    params.push(emp.id);
+  }
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT b.*, e.name as employee_name, e.code as employee_code
+       FROM employee_bonuses b JOIN employees e ON e.id = b.employee_id
+       WHERE ${where.join(" AND ")} ORDER BY b.id DESC LIMIT 200`,
+    )
+    .bind(...params)
+    .all();
+  return c.json({ data: results });
+});
+
+hrRoutes.post("/bonuses", requirePerm("hr.payroll"), async (c) => {
+  const b = await c.req.json<{ employee_id: number; amount: number; reason?: string; date?: string; month?: string; cash_account_id?: number; paid_immediately?: number | boolean }>();
+  const amount = round2(Number(b.amount || 0));
+  const employeeId = Number(b.employee_id || 0);
+  if (!(amount > 0) || !employeeId) return c.json({ error: "missing_fields" }, 400);
+  const emp = await c.env.DB.prepare("SELECT id, name FROM employees WHERE id = ? AND deleted_at IS NULL").bind(employeeId).first<{ id: number; name: string }>();
+  if (!emp) return c.json({ error: "not_found" }, 404);
+  const date = b.date || cairoToday();
+  const month = /^\d{4}-\d{2}$/.test(b.month || "") ? String(b.month) : date.slice(0, 7);
+  const immediate = b.paid_immediately ? 1 : 0;
+  try {
+    const id = await c.env.DB.transaction(async (tx) => {
+      const r = await tx
+        .prepare(
+          `INSERT INTO employee_bonuses (employee_id, amount, reason, date, month, cash_account_id, paid_immediately, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(employeeId, amount, b.reason || null, date, month, b.cash_account_id || null, immediate, c.get("user").id)
+        .run();
+      const bonusId = r.meta.last_row_id;
+      if (immediate) {
+        const journalId = await postBonusJournal(tx, {
+          id: bonusId,
+          amount,
+          date,
+          description: `مكافأة ${emp.name}${b.reason ? ` — ${b.reason}` : ""}`,
+          userId: c.get("user").id,
+          cashAccountId: b.cash_account_id || null,
+        });
+        await tx.prepare("UPDATE employee_bonuses SET journal_id = ? WHERE id = ?").bind(journalId, bonusId).run();
+      }
+      return bonusId;
+    });
+    if (!immediate) await refreshUnpaidSlipsForEmployee(c.env.DB, employeeId);
+    await audit(c.env.DB, c.get("user"), "bonus", "employee", employeeId, `${amount} ${immediate ? "now" : "accrued"}`);
+    return c.json({ id }, 201);
+  } catch (e) {
+    if ((e as Error).message === "ledger") return c.json({ error: "ledger" }, 400);
+    throw e;
+  }
+});
+
+hrRoutes.get("/payroll", requirePerm("hr.payroll", "hr.view", "attendance.own"), async (c) => {
   const p = listParams(new URL(c.req.url));
   const where = ["1=1"];
   const params: (string | number)[] = [];
@@ -640,19 +828,37 @@ hrRoutes.get("/payroll", requirePerm("hr.payroll", "hr.view"), async (c) => {
   return c.json({ data: results });
 });
 
-hrRoutes.get("/payroll/:id", requirePerm("hr.payroll", "hr.view"), async (c) => {
+hrRoutes.get("/payroll/:id", requirePerm("hr.payroll", "hr.view", "attendance.own"), async (c) => {
   const id = Number(c.req.param("id"));
+  const user = c.get("user");
   const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first<{ id: number; month: string; status: string }>();
   if (!run) return c.json({ error: "not_found" }, 404);
-  await refreshUnpaidSlips(c.env.DB, run);
+  const all = seesAllPayroll(user);
+  if (all) await refreshUnpaidSlips(c.env.DB, run);
   const { results } = await c.env.DB
     .prepare(
-      `SELECT p.*, e.name as employee_name, e.code as employee_code, e.job_title, e.department
+      `SELECT p.*, e.name as employee_name, e.code as employee_code, e.job_title, e.department, e.user_id
        FROM payslips p JOIN employees e ON e.id = p.employee_id WHERE p.run_id = ? ORDER BY e.code`,
     )
     .bind(id)
-    .all();
-  return c.json({ data: { run, slips: results } });
+    .all<{ employee_id: number; user_id: number | null }>();
+  let slips = results;
+  if (!all) {
+    const emp = await employeeForUser(c.env.DB, user.id);
+    if (emp) await refreshUnpaidSlipsForEmployee(c.env.DB, emp.id);
+    slips = emp ? results.filter((s) => s.employee_id === emp.id) : [];
+    if (emp) {
+      const fresh = await c.env.DB
+        .prepare(
+          `SELECT p.*, e.name as employee_name, e.code as employee_code, e.job_title, e.department
+           FROM payslips p JOIN employees e ON e.id = p.employee_id WHERE p.run_id = ? AND p.employee_id = ?`,
+        )
+        .bind(id, emp.id)
+        .all();
+      slips = fresh.results;
+    }
+  }
+  return c.json({ data: { run, slips } });
 });
 
 hrRoutes.post("/payroll", requirePerm("hr.payroll"), async (c) => {
@@ -703,7 +909,7 @@ hrRoutes.post("/payroll/:id/deduct", requirePerm("hr.payroll"), async (c) => {
   await c.env.DB
     .prepare(
       `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
-       deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=? WHERE id=?`,
+       deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
     )
     .bind(
       emp.basic_salary,
@@ -719,6 +925,7 @@ hrRoutes.post("/payroll/:id/deduct", requirePerm("hr.payroll"), async (c) => {
       calc.paidLeave,
       calc.unpaidLeave,
       calc.manual,
+      calc.bonus,
       slip.id,
     )
     .run();
@@ -764,7 +971,7 @@ hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {
             .bind(catId, payNow, todayIso(), `راتب ${run.month} — ${emp?.name || s.employee_id}`, user.id, cashAccountId)
             .run();
           expenseId = exp.meta.last_row_id;
-          await postExpenseJournal(tx, {
+          await postSalaryPayoutJournal(tx, {
             id: expenseId,
             amount: payNow,
             date: todayIso(),

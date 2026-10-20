@@ -17,9 +17,10 @@ import {
 } from "lucide-react";
 import { get, post, put } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { launchInvoiceWhatsApp } from "../lib/whatsapp";
+import { heldInvoiceMessage, launchInvoiceWhatsApp } from "../lib/whatsapp";
+import { useApp } from "../context";
 import { customerBalanceLabel, invoicePayStatus, money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, inputCls } from "../components/ui";
+import { Btn, Field, Modal, inputCls, printPage } from "../components/ui";
 import { InvoicePrint } from "../components/InvoicePrint";
 import { Barcode } from "../components/Barcode";
 import { playSound } from "../lib/sounds";
@@ -31,6 +32,7 @@ import { StaffForm } from "../components/StaffForm";
 import { isOpenHeld, usePOSLogic, type Product } from "../hooks/usePOSLogic";
 import { PageSizeControl } from "../components/PageSizeControl";
 import { EndShiftButton } from "../components/PosShiftGuard";
+import { CourierGateModal, type CourierGate } from "../components/CourierGateModal";
 import { CreditDownPayment } from "../components/CreditDownPayment";
 import { PosHeaderFilter, applyPosHeaderFilters, uniqueFilterValues } from "../components/PosHeaderFilter";
 import { binText, lastSupplierName } from "../lib/place";
@@ -63,6 +65,7 @@ function ClassicDropUp({
 
 export default function POSClassic() {
   const pos = usePOSLogic("classic");
+  const { settings } = useApp();
   const {
     tr, lang, lookups, can, nav, quoteMode, exchangeMode, showCost,
     q, setQ, typeFilter, setTypeFilter,
@@ -85,7 +88,7 @@ export default function POSClassic() {
     searchRef, suggest,
     visible, offerDisc, pickPrice, pickProduct, add, addFromSearch, addPicked, clearCart,
     subtotal, discAmt, total, creditNeedCustomer, paidInvalid,
-    printRows, printInvoice, waEnabled, cartQty, applyParty, saveAccount,
+    printRows, printInvoice, holdPrintTick, salePrintTick, holdShare, setHoldShare, courierGate, setCourierGate, saveCourierGate, waEnabled, cartQty, applyParty, saveAccount,
     loadToday, loadHeldList, openHeld, cancelHeld, finalizeHeld, previewWa, submit, submitCredit, holdInvoice, submitInvoiceReturn,
     beginResumeHeld,
     forceGoods, setForceGoods, setStockTick,
@@ -116,6 +119,16 @@ export default function POSClassic() {
   useEffect(() => {
     setForceGoods(true);
   }, [setForceGoods]);
+  useEffect(() => {
+    if (!holdPrintTick) return;
+    const t = window.setTimeout(() => printPage("thermal"), 200);
+    return () => window.clearTimeout(t);
+  }, [holdPrintTick]);
+  useEffect(() => {
+    if (!salePrintTick) return;
+    const t = window.setTimeout(() => printPage("thermal"), 200);
+    return () => window.clearTimeout(t);
+  }, [salePrintTick]);
   useEffect(() => {
     if (cashAccountId || !cashAccounts.length) return;
     const main = cashAccounts.find((a) => /صندوق رئيسي|الصندوق الرئيسي|main drawer|main cash/i.test(a.name));
@@ -150,7 +163,7 @@ export default function POSClassic() {
   return (
     <div className="pos-classic">
       <div className="print-sheet print-only">
-        <InvoicePrint inv={printInvoice} title={quoteMode ? tr("quoteMode") : tr("invoice")} />
+        <InvoicePrint inv={printInvoice} title={printInvoice.print_title || (quoteMode ? tr("quoteMode") : tr("invoice"))} />
       </div>
       <div className="print-only barcode-sheet">
         {printRows.map((l: any) => (
@@ -178,7 +191,7 @@ export default function POSClassic() {
                 <span>{tr("posCurrentCart")}</span>
                 {cart.length ? <small>{cart.length}</small> : null}
               </button>
-              <button type="button" className={`pos-classic-rail-btn ${desk === "held" ? "is-on" : ""}`} onClick={() => openDesk("held")}>
+              <button type="button" className={`pos-classic-rail-btn is-held ${desk === "held" ? "is-on" : ""}`} onClick={() => openDesk("held")}>
                 <Pause size={18} />
                 <span>{tr("heldInvoices")}</span>
                 {heldOpenCount ? <small>{heldOpenCount}</small> : null}
@@ -296,7 +309,7 @@ export default function POSClassic() {
           <div className="pos-classic-docs">
             <button type="button" className={desk === "sale" ? "is-on" : ""} onClick={() => setDesk("sale")}>{tr("posBackDesk")}</button>
             <button type="button" className={desk === "cart" ? "is-on" : ""} onClick={() => openDesk("cart")}>{tr("posCurrentCart")}{cart.length ? ` (${cart.length})` : ""}</button>
-            <button type="button" className={desk === "held" ? "is-on" : ""} onClick={() => openDesk("held")}>{tr("heldInvoices")}{heldOpenCount ? ` (${heldOpenCount})` : ""}</button>
+            <button type="button" className={`is-held ${desk === "held" ? "is-on" : ""}`} onClick={() => openDesk("held")}>{tr("heldInvoices")}{heldOpenCount ? ` (${heldOpenCount})` : ""}</button>
             <button type="button" className={desk === "sold" ? "is-on" : ""} onClick={() => openDesk("sold")}>{tr("posSoldInvoices")}</button>
             <button type="button" className={desk === "control" ? "is-on" : ""} onClick={() => openDesk("control")}>{tr("posInvoiceControl")}</button>
           </div>
@@ -846,7 +859,7 @@ export default function POSClassic() {
               <InvoicePrint inv={printInvoice.number ? printInvoice : { ...printInvoice, ...doneInv }} screen title={quoteMode ? tr("quoteMode") : tr("invoice")} />
             </div>
             <div className="flex flex-wrap gap-2">
-              <Btn onClick={() => window.print()}>{tr("print")}</Btn>
+              <Btn onClick={() => printPage("thermal")}>{tr("print")}</Btn>
               {waEnabled && can("whatsapp.send") ? <Btn kind="soft" onClick={() => void previewWa(doneInv.id)}>{tr("sendWhatsapp")}</Btn> : null}
               <Btn kind="ghost" onClick={() => setDoneOpen(false)}>{tr("continueSale")}</Btn>
             </div>
@@ -870,6 +883,31 @@ export default function POSClassic() {
             {tr("openWhatsapp")}
           </Btn>
         </div>
+      </Modal>
+      <CourierGateModal
+        gate={courierGate}
+        busy={busy}
+        tr={tr}
+        onChange={(next: CourierGate) => setCourierGate(next)}
+        onClose={() => setCourierGate(null)}
+        onSave={() => void saveCourierGate()}
+      />
+      <Modal open={!!holdShare} title={tr("sendWhatsapp")} onClose={() => setHoldShare(null)}>
+        {holdShare ? (
+          <div className="space-y-3">
+            <pre className="whitespace-pre-wrap text-sm">{heldInvoiceMessage(settings.store_name_ar || settings.store_name || tr("app"), holdShare)}</pre>
+            <Btn onClick={() => {
+              const message = heldInvoiceMessage(settings.store_name_ar || settings.store_name || tr("app"), holdShare);
+              const ok = launchInvoiceWhatsApp({
+                invoiceId: Number(holdShare.id),
+                phone: holdShare.customer_phone || holdShare.customer_whatsapp,
+                message,
+                type: holdShare.title ? "invoice_created" : "held",
+              });
+              if (ok) setHoldShare(null);
+            }}>{tr("sendWhatsapp")}</Btn>
+          </div>
+        ) : null}
       </Modal>
       <Modal open={custOpen} title={tr("addCustomer")} onClose={() => setCustOpen(false)}>
         <div className="space-y-3">

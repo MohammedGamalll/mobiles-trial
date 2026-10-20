@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useApp } from "../context";
 import { get, post, put, del } from "../lib/api";
 import { money, num, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls } from "../components/ui";
+import { Btn, Field, Modal, PrintBtn, PrintLetterhead, Stat, inputCls, printPage } from "../components/ui";
 import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
 import { useLiveList } from "../hooks/useLiveList";
 import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
-import { formatDuration, getGps, haversineMeters } from "../lib/geo";
+import { formatDuration, getGps, haversineMeters, parseCairo } from "../lib/geo";
 import { ListPager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize } from "../hooks/usePagedRows";
 import { StaffForm } from "../components/StaffForm";
@@ -176,8 +177,24 @@ export function EmployeesPage() {
   );
 }
 
+function stampDate(value?: string | null) {
+  const s = String(value || "").replace("T", " ");
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : "";
+}
+function stampTime(value?: string | null) {
+  const s = String(value || "").replace("T", " ");
+  return s.length >= 16 ? s.slice(11, 16) : "";
+}
+function joinStamp(date: string, time: string) {
+  if (!date) return "";
+  const clock = time && time.length >= 5 ? `${time.slice(0, 5)}:00` : "00:00:00";
+  return `${date} ${clock}`;
+}
+
 export function AttendancePage() {
   const { tr, lang, can, settings } = useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openedReview = useRef(0);
   const f = useListQuery("attendance", { period: "today" });
   const [me, setMe] = useState<any>(null);
   const [rows, setRows] = useState<any[]>([]);
@@ -186,6 +203,8 @@ export function AttendancePage() {
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [edit, setEdit] = useState<any>(null);
+  const canReview = can("hr.manage") || can("hr.payroll");
 
   async function loadMe() {
     const r = await get<{ data: any }>("/api/hr/me");
@@ -210,17 +229,32 @@ export function AttendancePage() {
   const session = me?.session;
   const isDelivery = me?.employee?.work_type === "delivery";
 
-  let workSec = 0;
-  let outSec = Number(session?.outside_seconds || 0);
-  if (session?.status === "open") {
-    const start = Date.parse(String(session.clock_in_at).replace(" ", "T") + "Z");
-    if (session.currently_outside && session.outside_started_at) {
-      outSec += Math.max(0, (now - Date.parse(String(session.outside_started_at).replace(" ", "T") + "Z")) / 1000);
+  function openSeconds(row: { status?: string; clock_in_at?: string; clock_out_at?: string; outside_seconds?: number; currently_outside?: number; outside_started_at?: string; work_seconds?: number } | null) {
+    if (!row) return 0;
+    if (row.status !== "open" || !row.clock_in_at) return Number(row.work_seconds || 0);
+    const start = parseCairo(String(row.clock_in_at));
+    if (!Number.isFinite(start)) return Number(row.work_seconds || 0);
+    let out = Number(row.outside_seconds || 0);
+    if (row.currently_outside && row.outside_started_at) {
+      const left = parseCairo(String(row.outside_started_at));
+      if (Number.isFinite(left)) out += Math.max(0, (now - left) / 1000);
     }
-    workSec = Math.max(0, (now - start) / 1000 - outSec);
-  } else if (session) {
-    workSec = session.work_seconds;
+    return Math.max(0, (now - start) / 1000 - out);
   }
+  function clockLabel(value?: string | null) {
+    if (!value) return "-";
+    const s = String(value).replace("T", " ");
+    return s.length >= 19 ? s.slice(11, 19) : s;
+  }
+  function approvalLabel(status?: string) {
+    if (status === "approved") return tr("approvalApproved");
+    if (status === "rejected") return tr("approvalRejected");
+    return tr("approvalPending");
+  }
+  const workSec = openSeconds(session);
+  const outSec = session?.status === "open" && session?.currently_outside && session?.outside_started_at
+    ? Number(session.outside_seconds || 0) + Math.max(0, (now - parseCairo(String(session.outside_started_at))) / 1000)
+    : Number(session?.outside_seconds || 0);
 
   useEffect(() => {
     if (!session || session.status !== "open" || isDelivery) return;
@@ -243,6 +277,30 @@ export function AttendancePage() {
     }
     return () => { if (watch != null) navigator.geolocation.clearWatch(watch); };
   }, [session?.id, session?.status, isDelivery]);
+
+  function openReview(row: any) {
+    setEdit({
+      ...row,
+      admin_notes: row.admin_notes || "",
+      late: row.late ? 1 : 0,
+      late_minutes: row.late_minutes || 0,
+      approval_status: row.approval_status || "pending",
+      clock_in_at: String(row.clock_in_at || "").replace("T", " ").slice(0, 19),
+      clock_out_at: row.clock_out_at ? String(row.clock_out_at).replace("T", " ").slice(0, 19) : "",
+    });
+  }
+
+  const reviewId = Number(searchParams.get("session") || 0);
+  useEffect(() => {
+    if (!canReview || !reviewId || openedReview.current === reviewId) return;
+    const row = rows.find((r) => Number(r.id) === reviewId);
+    if (!row) return;
+    openedReview.current = reviewId;
+    openReview(row);
+    const next = new URLSearchParams(searchParams);
+    next.delete("session");
+    setSearchParams(next, { replace: true });
+  }, [canReview, reviewId, rows]);
 
   const dist = pos ? Math.round(haversineMeters(pos.lat, pos.lng, shop.lat, shop.lng)) : null;
 
@@ -302,7 +360,7 @@ export function AttendancePage() {
       <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!rows.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
         <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
           <div className="table-wrap">
-            <table>
+            <table className="stack-cols">
               <thead>
                 <tr>
                   <th>{tr("name")}</th>
@@ -312,6 +370,7 @@ export function AttendancePage() {
                   <th>{tr("shiftTimer")}</th>
                   <th>{tr("outsideTime")}</th>
                   <th>{tr("status")}</th>
+                  <th>{tr("approveAttendance")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -319,14 +378,19 @@ export function AttendancePage() {
                   <tr key={r.id}>
                     <td>{r.employee_name}<div className="text-xs text-slate-400">{r.employee_code}</div></td>
                     <td>{r.work_date}</td>
-                    <td className="text-xs">{r.clock_in_at}</td>
-                    <td className="text-xs">{r.clock_out_at || "-"}</td>
-                    <td>{formatDuration(r.status === "open" ? workSec : r.work_seconds)}</td>
+                    <td className="text-xs">{clockLabel(r.clock_in_at)}</td>
+                    <td className="text-xs">{clockLabel(r.clock_out_at)}</td>
+                    <td>{formatDuration(openSeconds(r))}</td>
                     <td>{formatDuration(r.outside_seconds)}</td>
                     <td>
                       <span className={statusClass(r.currently_outside ? "out" : r.late ? "low" : "in")}>
                         {r.currently_outside ? tr("leftZone") : r.late ? tr("late") : r.status === "open" ? tr("onShift") : tr("present")}
                       </span>
+                    </td>
+                    <td>
+                      <div className="text-xs">{approvalLabel(r.approval_status)}</div>
+                      {r.late ? <div className="text-xs text-amber-700">{tr("lateMinutes")}: {r.late_minutes || 0}</div> : null}
+                      {canReview ? <button className="text-xs font-bold text-cyan-800" onClick={() => openReview(r)}>{tr("edit")}</button> : null}
                     </td>
                   </tr>
                 ))}
@@ -336,6 +400,38 @@ export function AttendancePage() {
         </div>
       </ListGate>
       <ListPager f={f} total={attTotal} disabled={list.loading} />
+      <Modal open={!!edit} title={tr("approveAttendance")} onClose={() => setEdit(null)}>
+        {edit ? (
+          <div className="space-y-2">
+            <Field label={tr("date")}><input className={inputCls} type="date" value={stampDate(edit.clock_in_at)} onChange={(e) => setEdit({ ...edit, clock_in_at: joinStamp(e.target.value, stampTime(edit.clock_in_at) || "00:00") })} /></Field>
+            <Field label={tr("clockIn")}><input className={inputCls} type="time" value={stampTime(edit.clock_in_at)} onChange={(e) => setEdit({ ...edit, clock_in_at: joinStamp(stampDate(edit.clock_in_at), e.target.value) })} /></Field>
+            <Field label={tr("date")}><input className={inputCls} type="date" value={stampDate(edit.clock_out_at)} onChange={(e) => setEdit({ ...edit, clock_out_at: e.target.value ? joinStamp(e.target.value, stampTime(edit.clock_out_at) || "00:00") : "" })} /></Field>
+            <Field label={tr("clockOut")}><input className={inputCls} type="time" value={stampTime(edit.clock_out_at)} onChange={(e) => setEdit({ ...edit, clock_out_at: e.target.value ? joinStamp(stampDate(edit.clock_out_at) || stampDate(edit.clock_in_at), e.target.value) : "" })} /></Field>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.late} onChange={(e) => setEdit({ ...edit, late: e.target.checked ? 1 : 0 })} />{tr("late")}</label>
+            <Field label={tr("lateMinutes")}><input className={inputCls} dir="ltr" type="number" min={0} value={edit.late_minutes} onChange={(e) => setEdit({ ...edit, late_minutes: Number(e.target.value) })} /></Field>
+            <Field label={tr("status")}>
+              <select className={inputCls} value={edit.approval_status} onChange={(e) => setEdit({ ...edit, approval_status: e.target.value })}>
+                <option value="pending">{tr("approvalPending")}</option>
+                <option value="approved">{tr("approvalApproved")}</option>
+                <option value="rejected">{tr("approvalRejected")}</option>
+              </select>
+            </Field>
+            <Field label={tr("adminNotes")}><textarea className={inputCls} value={edit.admin_notes} onChange={(e) => setEdit({ ...edit, admin_notes: e.target.value })} /></Field>
+            <Btn onClick={async () => {
+              await put(`/api/hr/attendance/${edit.id}`, {
+                approval_status: edit.approval_status,
+                late: edit.late ? 1 : 0,
+                late_minutes: Number(edit.late_minutes || 0),
+                admin_notes: edit.admin_notes,
+                clock_in_at: String(edit.clock_in_at).replace("T", " "),
+                clock_out_at: edit.clock_out_at ? String(edit.clock_out_at).replace("T", " ") : null,
+              });
+              setEdit(null);
+              await list.reload();
+            }}>{tr("save")}</Btn>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
@@ -351,7 +447,20 @@ export function PayrollPage() {
   const [payouts, setPayouts] = useState<Record<number, string>>({});
   const [deducts, setDeducts] = useState<Record<number, string>>({});
   const [cashAccountId, setCashAccountId] = useState("");
+  const [mine, setMine] = useState<any>(null);
+  const [sheetOn, setSheetOn] = useState(false);
+  const [slipOn, setSlipOn] = useState<any>(null);
+  const [bonusOpen, setBonusOpen] = useState(false);
+  const [emps, setEmps] = useState<any[]>([]);
+  const [bonusForm, setBonusForm] = useState({ employee_id: "", amount: "", reason: "", paid_immediately: 0, cash_account_id: "" });
+  const [monthBonuses, setMonthBonuses] = useState<any[]>([]);
   const { confirm, dialog } = useConfirm();
+  const payrollAdmin = can("hr.payroll");
+
+  useEffect(() => {
+    if (payrollAdmin) return;
+    get<{ data: any }>("/api/hr/me/pay").then((r) => setMine(r.data)).catch(() => {});
+  }, [payrollAdmin]);
 
   function slipDue(s: any) {
     return Math.max(0, Math.round((Number(s.net || 0) - Number(s.paid_amount || 0)) * 100) / 100);
@@ -377,6 +486,10 @@ export function PayrollPage() {
     }
     setPayouts(next);
     setDeducts(nextDeduct);
+    if (can("hr.payroll")) {
+      const bonuses = await get<{ data: any[] }>(`/api/hr/bonuses?month=${r.data?.run?.month || ""}`);
+      setMonthBonuses(bonuses.data || []);
+    }
   }
 
   async function applyDeduction(slipId: number) {
@@ -408,19 +521,173 @@ export function PayrollPage() {
     await openRun(detail.run.id);
   }
 
+  function printSheet() {
+    setSlipOn(null);
+    setSheetOn(true);
+    window.setTimeout(() => printPage("a4"), 40);
+  }
+  function printSlip(s: any) {
+    setSheetOn(false);
+    setSlipOn(s);
+    window.setTimeout(() => printPage("thermal"), 40);
+  }
+  async function saveBonus() {
+    await post("/api/hr/bonuses", {
+      employee_id: Number(bonusForm.employee_id),
+      amount: Number(bonusForm.amount),
+      reason: bonusForm.reason,
+      paid_immediately: bonusForm.paid_immediately ? 1 : 0,
+      cash_account_id: Number(bonusForm.cash_account_id || cashAccountId || cashAccounts[0]?.id || 0) || undefined,
+      month: detail?.run?.month,
+    });
+    setBonusOpen(false);
+    if (detail?.run?.id) await openRun(detail.run.id);
+  }
+
   function runStatusLabel(status: string) {
     if (status === "paid") return tr("salaryPaid");
     if (status === "partial") return tr("salaryPartial");
     return tr("draft");
   }
 
+  const slips = detail?.slips || [];
+  const sum = (key: string) => slips.reduce((s: number, x: any) => s + Number(x[key] || 0), 0);
+  function immediateBonus(employeeId: number) {
+    return monthBonuses.reduce((s, b) => s + (Number(b.employee_id) === employeeId && Number(b.paid_immediately) ? Number(b.amount || 0) : 0), 0);
+  }
+  function splitBonuses(rows: any[]) {
+    return (rows || []).reduce((s, b) => {
+      const amount = Number(b.amount || 0);
+      if (Number(b.paid_immediately)) s.now += amount;
+      else s.later += amount;
+      return s;
+    }, { now: 0, later: 0 });
+  }
+
   return (
     <div className="space-y-4">
-      <PrintLetterhead title={tr("payroll")} />
+      {sheetOn && detail ? (
+        <div className="print-only">
+          <PrintLetterhead title={tr("payroll")} />
+          <h2 className="mb-2 font-black">{detail.run.month}</h2>
+          <table className="stack-cols w-full">
+            <thead>
+              <tr>
+                <th>{tr("name")}</th>
+                <th>{tr("basicSalary")}</th>
+                <th>{tr("allowances")}</th>
+                <th>{tr("bonusAccrued")}</th>
+                <th>{tr("bonusImmediate")}</th>
+                <th>{tr("overtime")}</th>
+                <th>{tr("advances")}</th>
+                <th>{tr("deductions")}</th>
+                <th>{tr("net")}</th>
+                <th>{tr("paidNow")}</th>
+                <th>{tr("remainingPay")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {slips.map((s: any) => (
+                <tr key={s.id}>
+                  <td>{s.employee_name}</td>
+                  <td>{money(s.basic, lang)}</td>
+                  <td>{money(s.allowances, lang)}</td>
+                  <td>{money(s.bonus, lang)}</td>
+                  <td>{money(immediateBonus(s.employee_id), lang)}</td>
+                  <td>{money(s.overtime, lang)}</td>
+                  <td>{money(s.advances, lang)}</td>
+                  <td>{money(s.manual_deduction, lang)}</td>
+                  <td>{money(s.net, lang)}</td>
+                  <td>{money(s.paid_amount, lang)}</td>
+                  <td>{money(slipDue(s), lang)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td className="font-black">{tr("total")}</td>
+                <td>{money(sum("basic"), lang)}</td>
+                <td>{money(sum("allowances"), lang)}</td>
+                <td>{money(sum("bonus"), lang)}</td>
+                <td>{money(slips.reduce((s: number, x: any) => s + immediateBonus(x.employee_id), 0), lang)}</td>
+                <td>{money(sum("overtime"), lang)}</td>
+                <td>{money(sum("advances"), lang)}</td>
+                <td>{money(sum("manual_deduction"), lang)}</td>
+                <td>{money(sum("net"), lang)}</td>
+                <td>{money(sum("paid_amount"), lang)}</td>
+                <td>{money(slips.reduce((s: number, x: any) => s + slipDue(x), 0), lang)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {slipOn ? (
+        <div className="print-only">
+          <div className="text-center font-black">{tr("printPayslip")}</div>
+          <div>{slipOn.employee_name}</div>
+          <div>{detail?.run?.month || mine?.month}</div>
+          <div>{tr("basicSalary")}: {money(slipOn.basic, lang)}</div>
+          <div>{tr("bonuses")}: {money(slipOn.bonus, lang)}</div>
+          <div>{tr("advances")}: {money(slipOn.advances, lang)}</div>
+          <div>{tr("deductions")}: {money(slipOn.manual_deduction ?? slipOn.deductions, lang)}</div>
+          <div>{tr("net")}: {money(slipOn.net, lang)}</div>
+          <div>{tr("paidNow")}: {money(slipOn.paid_amount ?? slipOn.paid, lang)}</div>
+          <div>{tr("remainingPay")}: {money(slipOn.remaining ?? slipDue(slipOn), lang)}</div>
+          <div className="mt-6">{tr("signatureLine")}: ........................</div>
+        </div>
+      ) : null}
+      <div className="no-print space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-black">{tr("payroll")}</h1>
-        <PrintBtn />
+        <div className="flex flex-wrap gap-2">
+          {payrollAdmin && detail ? <Btn kind="ghost" onClick={printSheet}>{tr("printPayrollSheet")}</Btn> : null}
+          {payrollAdmin ? <Btn kind="ghost" onClick={async () => {
+            if (!emps.length) {
+              const r = await get<{ data: any[] }>("/api/hr/employees?limit=200");
+              setEmps(r.data || []);
+            }
+            setBonusForm({ employee_id: "", amount: "", reason: "", paid_immediately: 0, cash_account_id: String(cashAccounts[0]?.id || "") });
+            setBonusOpen(true);
+          }}>{tr("addBonus")}</Btn> : null}
+        </div>
       </div>
+      {!payrollAdmin && mine ? (
+        <div className="rounded-2xl border border-slate-100 bg-white p-4">
+          <h2 className="mb-3 font-black">{mine.employee?.name} — {mine.month}</h2>
+          <div className="grid gap-3 md:grid-cols-4">
+            <Stat label={tr("basicSalary")} value={money(mine.basic, lang)} />
+            <Stat label={tr("bonusNowTotal")} value={money(splitBonuses(mine.bonuses).now, lang)} accent="emerald" />
+            <Stat label={tr("bonusLaterTotal")} value={money(splitBonuses(mine.bonuses).later, lang)} accent="emerald" />
+            <Stat label={tr("advances")} value={money(mine.advances, lang)} accent="rose" />
+            <Stat label={tr("deductions")} value={money(mine.deductions, lang)} accent="rose" />
+            <Stat label={tr("net")} value={money(mine.net, lang)} accent="emerald" />
+            <Stat label={tr("paidNow")} value={money(mine.paid, lang)} />
+            <Stat label={tr("remainingPay")} value={money(mine.remaining, lang)} />
+          </div>
+          <div className="mt-4 space-y-2 text-sm">
+            <div className="font-black">{tr("salaryDetails")}</div>
+            {[
+              [tr("basicSalary"), mine.basic],
+              [tr("allowances"), mine.allowances],
+              [tr("bonusNowTotal"), splitBonuses(mine.bonuses).now],
+              [tr("bonusLaterTotal"), splitBonuses(mine.bonuses).later],
+              [tr("overtime"), mine.overtime],
+              [tr("advances"), mine.advances],
+              [tr("deductions"), mine.deductions],
+              [tr("paidNow"), mine.paid],
+              [tr("remainingPay"), mine.remaining],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="flex items-center justify-between gap-3 border-b border-slate-100 py-1">
+                <span>{label}</span>
+                <span>{money(Number(value || 0), lang)}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-3 pt-2 text-lg font-black">
+              <span>{tr("net")}</span>
+              <span>{money(mine.net, lang)}</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {payrollAdmin ? <>
       <SmartFilter f={f} date={false} search={false} fields={[
         { key: "status", label: "status", type: "select", quick: true, options: [{ value: "draft", label: tr("draft") }, { value: "partial", label: tr("salaryPartial") }, { value: "paid", label: tr("salaryPaid") }] },
         { key: "month", label: "pickMonth", type: "text" },
@@ -441,7 +708,8 @@ export function PayrollPage() {
           }}>{tr("runPayroll")}</Btn>
         </div>
       ) : null}
-      <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-3">
         <ListGate loading={list.loading} err={list.err} onRetry={list.reload} empty={!runs.length} emptyFallback={<EmptyFilterState onClear={f.clear} />}>
           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
             <div className="table-wrap">
@@ -460,9 +728,10 @@ export function PayrollPage() {
           </div>
         </ListGate>
         <ListPager f={f} total={runTotal} disabled={list.loading} />
+        </div>
         {detail ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
+          <div className="min-w-0 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-black">{detail.run.month}</h2>
               {can("hr.payroll") && detail.run.status !== "paid" ? (
                 <div className="no-print flex flex-wrap items-center gap-2">
@@ -480,9 +749,20 @@ export function PayrollPage() {
               <Stat label={tr("advances")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.advances || 0), 0), lang)} accent="rose" />
               <Stat label={tr("deductions")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.manual_deduction || 0), 0), lang)} accent="rose" />
             </div>
+            {monthBonuses.length ? (
+              <div className="rounded-2xl border border-slate-100 bg-white p-3 text-sm">
+                <div className="mb-1 font-black">{tr("bonuses")}</div>
+                {monthBonuses.map((b) => (
+                  <div key={b.id} className="flex flex-wrap justify-between gap-2">
+                    <span>{b.employee_name} · {b.reason || tr("bonuses")} · {b.paid_immediately ? tr("bonusImmediate") : tr("bonusAccrued")}</span>
+                    <span dir="ltr">{money(b.amount, lang)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
               <div className="table-wrap">
-                <table>
+                <table className="w-full">
                   <thead>
                     <tr>
                       <th>{tr("code")}</th>
@@ -491,6 +771,7 @@ export function PayrollPage() {
                       <th>{tr("allowances")}</th>
                       <th>{tr("absentDays")}</th>
                       <th>{tr("overtime")}</th>
+                      <th>{tr("bonuses")}</th>
                       <th>{tr("advances")}</th>
                       <th>{tr("manualDeduction")}</th>
                       <th>{tr("net")}</th>
@@ -510,6 +791,7 @@ export function PayrollPage() {
                         <td dir="ltr">{money(s.allowances, lang)}</td>
                         <td dir="ltr">{s.absent_days || 0}</td>
                         <td dir="ltr">{money(s.overtime, lang)}</td>
+                        <td dir="ltr">{money(s.bonus, lang)}</td>
                         <td dir="ltr" className="font-bold text-rose-700">{money(s.advances, lang)}</td>
                         <td>
                           <span className="print:inline hidden" dir="ltr">{money(s.manual_deduction, lang)}</span>
@@ -533,8 +815,10 @@ export function PayrollPage() {
                         <td dir="ltr">{money(s.paid_amount, lang)}</td>
                         <td dir="ltr">{money(due, lang)}</td>
                         <td className="no-print">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => printSlip(s)}>{tr("printPayslip")}</Btn>
                           {detail.run.status !== "paid" && can("hr.payroll") && (due > 0 || !s.advances_settled) ? (
-                            <div className="flex flex-wrap items-center gap-1">
+                            <>
                               <input
                                 className={`${inputCls} w-24`}
                                 dir="ltr"
@@ -545,8 +829,9 @@ export function PayrollPage() {
                                 onChange={(e) => setPayouts((prev) => ({ ...prev, [s.id]: e.target.value }))}
                               />
                               <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => payRun(s.id)}>{tr("payThisCycle")}</Btn>
-                            </div>
+                            </>
                           ) : null}
+                          </div>
                         </td>
                       </tr>
                       );
@@ -556,9 +841,37 @@ export function PayrollPage() {
               </div>
             </div>
           </div>
-        ) : <div className="rounded-2xl bg-white p-6 text-slate-400">{tr("noData")}</div>}
+        ) : <div className="min-w-0 rounded-2xl bg-white p-6 text-slate-400">{tr("noData")}</div>}
       </div>
+      </> : null}
+      <Modal open={bonusOpen} title={tr("addBonus")} onClose={() => setBonusOpen(false)}>
+        <div className="space-y-2">
+          <Field label={tr("employees")}>
+            <select className={inputCls} value={bonusForm.employee_id} onChange={(e) => setBonusForm({ ...bonusForm, employee_id: e.target.value })}>
+              <option value="">{tr("employees")}</option>
+              {emps.map((e) => <option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+            </select>
+          </Field>
+          <Field label={tr("amount")}><input className={inputCls} dir="ltr" type="number" min={0} value={bonusForm.amount} onChange={(e) => setBonusForm({ ...bonusForm, amount: e.target.value })} /></Field>
+          <Field label={tr("reason")}><input className={inputCls} value={bonusForm.reason} onChange={(e) => setBonusForm({ ...bonusForm, reason: e.target.value })} /></Field>
+          <Field label={tr("bonuses")}>
+            <select className={inputCls} value={bonusForm.paid_immediately} onChange={(e) => setBonusForm({ ...bonusForm, paid_immediately: Number(e.target.value) })}>
+              <option value={0}>{tr("bonusAccrued")}</option>
+              <option value={1}>{tr("bonusImmediate")}</option>
+            </select>
+          </Field>
+          {bonusForm.paid_immediately ? (
+            <Field label={tr("cashAccount")}>
+              <select className={inputCls} value={bonusForm.cash_account_id} onChange={(e) => setBonusForm({ ...bonusForm, cash_account_id: e.target.value })}>
+                {cashAccounts.map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </Field>
+          ) : null}
+          <Btn onClick={() => void saveBonus()}>{tr("save")}</Btn>
+        </div>
+      </Modal>
       {dialog}
+      </div>
     </div>
   );
 }

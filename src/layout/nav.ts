@@ -64,6 +64,7 @@ export const modernNav: NavGroup[] = [
       { to: "/pos/shifts", key: "posShift", icon: Clock3, perm: "sales.view" },
       { to: "/sales", key: "sales", icon: FileText, perm: "sales.view" },
       { to: "/customers", key: "customers", icon: Users, perm: "customers.view" },
+      { to: "/customers/credit", key: "customerCreditSheet", icon: ScrollText, perm: "customers.view" },
       { to: "/price-lists", key: "priceLists", icon: Tags, perm: "prices.view" },
     ],
   },
@@ -84,7 +85,7 @@ export const modernNav: NavGroup[] = [
       { to: "/hr/shifts", key: "shifts", icon: AlarmClock, perm: "hr.manage" },
       { to: "/hr/leaves", key: "leaves", icon: CalendarDays, perm: "leaves.own" },
       { to: "/hr/advances", key: "advances", icon: Banknote, perm: ["advances.own", "hr.payroll", "advances.manage"] },
-      { to: "/hr/payroll", key: "payroll", icon: WalletCards, perm: "hr.payroll" },
+      { to: "/hr/payroll", key: "payroll", icon: WalletCards, perm: ["hr.payroll", "hr.view", "attendance.own"] },
     ],
   },
   {
@@ -92,6 +93,7 @@ export const modernNav: NavGroup[] = [
     items: [
       { to: "/purchases", key: "purchases", icon: ClipboardList, perm: "purchases.view" },
       { to: "/suppliers", key: "suppliers", icon: Users, perm: "suppliers.view" },
+      { to: "/suppliers/credit", key: "supplierCreditSheet", icon: ScrollText, perm: "suppliers.view" },
     ],
   },
   {

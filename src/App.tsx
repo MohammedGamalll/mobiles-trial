@@ -44,6 +44,7 @@ import OtherRevenues from "./pages/OtherRevenues";
 import Partners from "./pages/Partners";
 import { SerialsPage, ChequesPage, InstallmentsPage } from "./pages/Sahl";
 import CourierDashboard from "./pages/CourierDashboard";
+import CreditSheet from "./pages/CreditSheet";
 import { SettingsPage } from "./pages/Settings";
 import PosShiftsPage from "./pages/PosShifts";
 import { PosShiftGuard } from "./components/PosShiftGuard";
@@ -126,8 +127,10 @@ function AppRoutes() {
         <Route path="purchases/new" element={<PermGuard perm="purchases.create"><PurchaseInvoiceForm /></PermGuard>} />
         <Route path="purchases" element={<PermGuard perm="purchases.view"><PurchasesPage /></PermGuard>} />
         <Route path="purchases/:id" element={<PermGuard perm="purchases.view"><PurchaseDetail /></PermGuard>} />
+        <Route path="customers/credit" element={<PermGuard perm="customers.view"><CreditSheet party="customer" /></PermGuard>} />
         <Route path="customers" element={<PermGuard perm="customers.view"><CustomersPage /></PermGuard>} />
         <Route path="customers/:id" element={<PermGuard perm="customers.view"><CustomerDetail /></PermGuard>} />
+        <Route path="suppliers/credit" element={<PermGuard perm="suppliers.view"><CreditSheet party="supplier" /></PermGuard>} />
         <Route path="suppliers" element={<SuppliersPage />} />
         <Route path="suppliers/:id" element={<SupplierDetail />} />
         <Route path="price-lists" element={<PermGuard perm={["prices.view", "sales.create", "prices.manage"]}><PriceListsPage /></PermGuard>} />

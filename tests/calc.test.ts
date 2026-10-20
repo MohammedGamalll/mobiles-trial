@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableQty, applyAdvanceDeduction, creditLimitBlocked, fifoUnitCost, grossProfit, invoiceTotals, netPay, returnLineNet, settleReturn } from "../worker/lib/invoice-math.ts";
+import { accruedBonusTotal, availableQty, applyAdvanceDeduction, creditLimitBlocked, fifoUnitCost, grossProfit, invoiceTotals, netPay, returnLineNet, settleReturn } from "../worker/lib/invoice-math.ts";
 import { planAllocation } from "../worker/lib/stock.ts";
 import { applyTransferQtys, applyTransferQtysAtomic, stocktakeAbsVarianceValue, stocktakeLineValue, stocktakeUnitCost, wastageFromVariance } from "../worker/lib/stock-transfer.ts";
 import { asIsoDay, resolveDates } from "../worker/lib/filters.ts";
@@ -174,6 +174,18 @@ test("open advances reduce net even when passed as mysql decimal strings", () =>
   assert.equal(advances, 150);
   assert.equal(net, 7350);
   assert.equal(deductions, 150);
+});
+
+test("accrued bonus is in net and an immediate bonus is left out of that sum", () => {
+  const rows = [
+    { amount: 400, paid_immediately: 0 },
+    { amount: 250, paid_immediately: 1 },
+  ];
+  assert.equal(accruedBonusTotal(rows), 400);
+  const withAccrued = netPay({ basic: 10000, allowances: 1000, overtime: 500, bonus: accruedBonusTotal(rows), manualDeduction: 300, advances: 2000, daily: 0 });
+  assert.equal(withAccrued.net, 9600);
+  const withoutImmediate = netPay({ basic: 10000, allowances: 1000, overtime: 500, bonus: 0, manualDeduction: 300, advances: 2000, daily: 0 });
+  assert.equal(withoutImmediate.net, 9200);
 });
 
 test("payroll caps advances so net is never negative", () => {
