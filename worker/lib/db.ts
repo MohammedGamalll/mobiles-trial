@@ -237,6 +237,7 @@ export async function ensureAppSchema(db: AppDb) {
     ["attendance_sessions", "approval_status TEXT NOT NULL DEFAULT 'pending'"],
     ["attendance_sessions", "late_minutes INTEGER NOT NULL DEFAULT 0"],
     ["attendance_sessions", "admin_notes TEXT"],
+    ["attendance_sessions", "out_approval_status TEXT NOT NULL DEFAULT 'pending'"],
     ["payslips", "bonus REAL NOT NULL DEFAULT 0"],
   ];
   for (const [table, def] of alters) await run(`ALTER TABLE ${table} ADD COLUMN ${def}`);
@@ -435,6 +436,16 @@ export async function ensureAppSchema(db: AppDb) {
   )`);
   await run("CREATE INDEX idx_other_revenues_date ON other_revenues(date)");
   await run("CREATE INDEX idx_vouchers_invoice ON vouchers(invoice_id)");
+  await run(`CREATE TABLE IF NOT EXISTS payslip_deductions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payslip_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL,
+    edited INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run("CREATE INDEX idx_payslip_deductions_slip ON payslip_deductions(payslip_id)");
   await ensureExpenseCategories(db);
   await run(`INSERT OR IGNORE INTO revenue_categories (id, name_ar, name_en, active) VALUES
     (1, 'إيجار معرّض', 'Display rent', 1),

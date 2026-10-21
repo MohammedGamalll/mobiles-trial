@@ -82,6 +82,7 @@ export function netPay(opts: {
   daily?: number;
   advances?: number;
   manualDeduction?: number;
+  absenceDeduction?: number;
 }) {
   const basic = Number(opts.basic || 0);
   const allowances = Number(opts.allowances || 0);
@@ -91,11 +92,14 @@ export function netPay(opts: {
   const requested = round2(Math.max(0, Number(opts.advances || 0)));
   const advances = round2(Math.min(requested, Math.max(0, gross)));
   const afterAdvances = round2(Math.max(0, gross - advances));
+  const requestedAbsence = round2(Math.max(0, Number(opts.absenceDeduction || 0)));
+  const absence = round2(Math.min(requestedAbsence, afterAdvances));
+  const afterAbsence = round2(Math.max(0, afterAdvances - absence));
   const requestedManual = round2(Math.max(0, Number(opts.manualDeduction || 0)));
-  const manual = round2(Math.min(requestedManual, afterAdvances));
-  const net = round2(Math.max(0, afterAdvances - manual));
-  const deductions = round2(advances + manual);
-  return { deductions, net, advances, manual, bonus: round2(bonus) };
+  const manual = round2(Math.min(requestedManual, afterAbsence));
+  const net = round2(Math.max(0, afterAbsence - manual));
+  const deductions = round2(advances + absence + manual);
+  return { deductions, net, advances, manual, absence, bonus: round2(bonus) };
 }
 
 export function accruedBonusTotal(rows: { amount: number; paid_immediately?: number | boolean }[]) {

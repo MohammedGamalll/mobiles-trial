@@ -632,7 +632,7 @@ reportRoutes.get("/credit-sheet", requirePerm("reports.view", "customers.view", 
     const data = people.map((row) => ({
       ...row,
       code: row.id,
-      invoices: invoices.filter((inv) => inv.supplier_id === row.id),
+      invoices: invoices.filter((inv) => Number(inv.supplier_id) === Number(row.id)),
     }));
     const total = data.reduce((sum, row) => sum + Number((row as { remaining?: number }).remaining || 0), 0);
     return c.json({ data, total, party });
@@ -660,7 +660,7 @@ reportRoutes.get("/credit-sheet", requirePerm("reports.view", "customers.view", 
   const data = people.map((row) => ({
     ...row,
     code: row.id,
-    invoices: invoices.filter((inv) => inv.customer_id === row.id),
+    invoices: invoices.filter((inv) => Number(inv.customer_id) === Number(row.id)),
   }));
   const total = data.reduce((sum, row) => sum + Number((row as { remaining?: number }).remaining || 0), 0);
   return c.json({ data, total, party });

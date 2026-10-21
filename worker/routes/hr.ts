@@ -158,11 +158,11 @@ async function computeEmployeeSlip(db: AppDb, e: Employee, month: string, manual
   const until = through && through < to ? through : to;
   const stats = await db
     .prepare(
-      `SELECT COUNT(*) as present, SUM(late) as late, SUM(outside_seconds) as outside
+      `SELECT COUNT(*) as present, SUM(late) as late, SUM(late_minutes) as late_minutes, SUM(outside_seconds) as outside
        FROM attendance_sessions WHERE employee_id = ? AND work_date BETWEEN ? AND ? AND status = 'closed'`,
     )
     .bind(e.id, from, until)
-    .first<{ present: number; late: number; outside: number }>();
+    .first<{ present: number; late: number; late_minutes: number; outside: number }>();
   const present = Number(stats?.present || 0);
   const { results: leaves } = await db
     .prepare("SELECT type, date_from, date_to FROM leave_requests WHERE employee_id = ? AND status = 'approved' AND date_from <= ? AND date_to >= ?")
@@ -190,28 +190,98 @@ async function computeEmployeeSlip(db: AppDb, e: Employee, month: string, manual
     .bind(e.id, month)
     .all<{ amount: number; paid_immediately: number }>();
   const bonus = accruedBonusTotal(bonusRows);
+  const basic = Number(e.basic_salary || 0);
+  const allowances = Number(e.allowances || 0);
+  const absenceAuto = expected > 0 ? round2(((basic + allowances) / expected) * absent) : 0;
   const pay = netPay({
-    basic: Number(e.basic_salary || 0),
-    allowances: Number(e.allowances || 0),
+    basic,
+    allowances,
     overtime,
     bonus,
     advances: Number(adv?.n || 0),
+    absenceDeduction: 0,
     manualDeduction,
   });
   return {
     present,
     absent,
+    expected,
     late: Number(stats?.late || 0),
+    lateMinutes: Number(stats?.late_minutes || 0),
     outsideMinutes: Math.round(Number(stats?.outside || 0) / 60),
     paidLeave,
     unpaidLeave,
     overtime,
     bonus: pay.bonus,
     advances: pay.advances,
+    absenceAuto,
     deductions: pay.manual,
     manual: pay.manual,
     net: pay.net,
   };
+}
+
+type DeductionLine = { id: number; payslip_id: number; kind: string; amount: number; reason: string; edited: number };
+
+async function loadDeductionLines(db: AppDb, slipIds: number[]) {
+  if (!slipIds.length) return [] as DeductionLine[];
+  const { results } = await db
+    .prepare(`SELECT * FROM payslip_deductions WHERE payslip_id IN (${slipIds.map(() => "?").join(",")}) ORDER BY id`)
+    .bind(...slipIds)
+    .all<DeductionLine>();
+  return results;
+}
+
+async function syncSlipTotals(db: AppDb, emp: Employee, calc: Awaited<ReturnType<typeof computeEmployeeSlip>>, slipId: number) {
+  const reason = `غياب ${calc.absent} يوم`;
+  const existing = await db
+    .prepare("SELECT id, edited FROM payslip_deductions WHERE payslip_id = ? AND kind = 'absence' ORDER BY id LIMIT 1")
+    .bind(slipId)
+    .first<{ id: number; edited: number }>();
+  if (!existing) {
+    await db
+      .prepare("INSERT INTO payslip_deductions (payslip_id, kind, amount, reason, edited) VALUES (?, 'absence', ?, ?, 0)")
+      .bind(slipId, calc.absenceAuto, reason)
+      .run();
+  } else if (!Number(existing.edited)) {
+    await db.prepare("UPDATE payslip_deductions SET amount = ?, reason = ? WHERE id = ?").bind(calc.absenceAuto, reason, existing.id).run();
+  }
+  const lines = await loadDeductionLines(db, [slipId]);
+  const absence = round2(lines.filter((l) => l.kind === "absence").reduce((s, l) => s + Number(l.amount || 0), 0));
+  const manual = round2(lines.filter((l) => l.kind === "manual").reduce((s, l) => s + Number(l.amount || 0), 0));
+  const pay = netPay({
+    basic: Number(emp.basic_salary || 0),
+    allowances: Number(emp.allowances || 0),
+    overtime: calc.overtime,
+    bonus: calc.bonus,
+    advances: calc.advances,
+    absenceDeduction: absence,
+    manualDeduction: manual,
+  });
+  await db
+    .prepare(
+      `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
+       deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
+    )
+    .bind(
+      emp.basic_salary,
+      emp.allowances,
+      calc.present,
+      calc.absent,
+      calc.late,
+      calc.outsideMinutes,
+      round2(absence + manual),
+      pay.net,
+      calc.overtime,
+      calc.advances,
+      calc.paidLeave,
+      calc.unpaidLeave,
+      manual,
+      calc.bonus,
+      slipId,
+    )
+    .run();
+  return { pay, lines: await loadDeductionLines(db, [slipId]), absence, manual };
 }
 
 async function insertPayslip(db: AppDb, runId: number, emp: Employee, month: string) {
@@ -239,6 +309,8 @@ async function insertPayslip(db: AppDb, runId: number, emp: Employee, month: str
       calc.bonus,
     )
     .run();
+  const row = await db.prepare("SELECT id FROM payslips WHERE run_id = ? AND employee_id = ? ORDER BY id DESC LIMIT 1").bind(runId, emp.id).first<{ id: number }>();
+  if (row) await syncSlipTotals(db, emp, calc, row.id);
 }
 
 async function ensureSlipsForActiveEmployees(db: AppDb, run: { id: number; month: string; status: string }) {
@@ -265,30 +337,8 @@ async function refreshUnpaidSlips(db: AppDb, run: { id: number; month: string; s
     if (Number(s.paid_amount || 0) > 0.005) continue;
     const emp = byId.get(s.employee_id);
     if (!emp) continue;
-    const calc = await computeEmployeeSlip(db, emp, run.month, Number(s.manual_deduction || 0));
-    await db
-      .prepare(
-        `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
-         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
-      )
-      .bind(
-        emp.basic_salary,
-        emp.allowances,
-        calc.present,
-        calc.absent,
-        calc.late,
-        calc.outsideMinutes,
-        calc.deductions,
-        calc.net,
-        calc.overtime,
-        calc.advances,
-        calc.paidLeave,
-        calc.unpaidLeave,
-        calc.manual,
-        calc.bonus,
-        s.id,
-      )
-      .run();
+    const calc = await computeEmployeeSlip(db, emp, run.month, 0);
+    await syncSlipTotals(db, emp, calc, s.id);
   }
 }
 
@@ -305,30 +355,8 @@ async function refreshUnpaidSlipsForEmployee(db: AppDb, employeeId: number) {
     .all<{ id: number; paid_amount: number; manual_deduction: number; month: string }>();
   for (const s of slips) {
     if (Number(s.paid_amount || 0) > 0.005) continue;
-    const calc = await computeEmployeeSlip(db, emp, s.month, Number(s.manual_deduction || 0));
-    await db
-      .prepare(
-        `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
-         deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
-      )
-      .bind(
-        emp.basic_salary,
-        emp.allowances,
-        calc.present,
-        calc.absent,
-        calc.late,
-        calc.outsideMinutes,
-        calc.deductions,
-        calc.net,
-        calc.overtime,
-        calc.advances,
-        calc.paidLeave,
-        calc.unpaidLeave,
-        calc.manual,
-        calc.bonus,
-        s.id,
-      )
-      .run();
+    const calc = await computeEmployeeSlip(db, emp, s.month, 0);
+    await syncSlipTotals(db, emp, calc, s.id);
   }
 }
 
@@ -374,6 +402,46 @@ hrRoutes.get("/employees", requirePerm("hr.view", "hr.manage", "hr.payroll"), as
     .bind(...params)
     .all();
   return c.json({ data: results });
+});
+
+hrRoutes.get("/employees/:id/sheet", requirePerm("hr.view", "hr.manage", "hr.payroll"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const month = /^\d{4}-\d{2}$/.test(c.req.query("month") || "") ? String(c.req.query("month")) : cairoToday().slice(0, 7);
+  const emp = await c.env.DB
+    .prepare(
+      `SELECT e.*, s.name as shift_name FROM employees e LEFT JOIN work_shifts s ON s.id = e.shift_id WHERE e.id = ? AND e.deleted_at IS NULL`,
+    )
+    .bind(id)
+    .first<Employee & { shift_name?: string | null }>();
+  if (!emp) return c.json({ error: "not_found" }, 404);
+  const calc = await computeEmployeeSlip(c.env.DB, emp, month, 0);
+  const slip = await c.env.DB
+    .prepare(
+      `SELECT p.* FROM payslips p JOIN payroll_runs r ON r.id = p.run_id WHERE p.employee_id = ? AND r.month = ? ORDER BY p.id DESC LIMIT 1`,
+    )
+    .bind(id, month)
+    .first<{ id: number; paid_amount?: number }>();
+  if (slip && Number(slip.paid_amount || 0) <= 0.005) await syncSlipTotals(c.env.DB, emp, calc, slip.id);
+  const lines = slip ? await loadDeductionLines(c.env.DB, [slip.id]) : [];
+  const { results: advances } = await c.env.DB
+    .prepare("SELECT * FROM salary_advances WHERE employee_id = ? AND status = 'open' ORDER BY id")
+    .bind(id)
+    .all();
+  const { results: leaves } = await c.env.DB
+    .prepare("SELECT * FROM leave_requests WHERE employee_id = ? AND status = 'approved' AND date_from LIKE ? ORDER BY date_from")
+    .bind(id, `${month}%`)
+    .all();
+  return c.json({
+    data: {
+      employee: emp,
+      month,
+      calc,
+      slip,
+      deductions_lines: lines.length ? lines : [{ id: 0, kind: "absence", amount: calc.absenceAuto, reason: `غياب ${calc.absent} يوم`, edited: 0 }],
+      advances,
+      leaves,
+    },
+  });
 });
 
 hrRoutes.post("/employees", requirePerm("hr.manage"), async (c) => {
@@ -658,6 +726,7 @@ hrRoutes.put("/attendance/:id", requirePerm("hr.manage", "hr.payroll"), async (c
   const row = await c.env.DB.prepare("SELECT * FROM attendance_sessions WHERE id = ?").bind(id).first<SessionRow & { approval_status?: string; late_minutes?: number; admin_notes?: string | null }>();
   if (!row) return c.json({ error: "not_found" }, 404);
   const b = await c.req.json<{
+    part?: "in" | "out";
     approval_status?: string;
     late?: number | boolean;
     late_minutes?: number;
@@ -665,30 +734,37 @@ hrRoutes.put("/attendance/:id", requirePerm("hr.manage", "hr.payroll"), async (c
     clock_in_at?: string;
     clock_out_at?: string | null;
   }>();
-  const approval = ["pending", "approved", "rejected"].includes(String(b.approval_status || "")) ? String(b.approval_status) : row.approval_status || "pending";
-  const clockIn = b.clock_in_at ? cleanStamp(b.clock_in_at) : row.clock_in_at;
-  if (!clockIn) return c.json({ error: "missing_fields" }, 400);
-  let clockOut = row.clock_out_at;
-  if (b.clock_out_at === null || b.clock_out_at === "") clockOut = null;
-  else if (b.clock_out_at) {
-    clockOut = cleanStamp(b.clock_out_at);
+  const allowed = ["pending", "approved", "rejected"];
+  const requested = String(b.approval_status || "").trim().toLowerCase();
+  const approval = allowed.includes(requested) ? requested : row.approval_status || "pending";
+  const part = b.part === "out" ? "out" : "in";
+  if (part === "out") {
+    const clockOut = b.clock_out_at ? cleanStamp(b.clock_out_at) : row.clock_out_at;
     if (!clockOut) return c.json({ error: "missing_fields" }, 400);
+    const clockIn = row.clock_in_at;
+    const work = Math.max(0, Math.round((wallMs(clockOut) - wallMs(clockIn)) / 1000 - Number(row.outside_seconds || 0)));
+    await c.env.DB
+      .prepare("UPDATE attendance_sessions SET clock_out_at=?, work_seconds=?, status='closed', out_approval_status=? WHERE id=?")
+      .bind(clockOut, work, approval, id)
+      .run();
+    await audit(c.env.DB, c.get("user"), "attendance_review_out", "attendance", id, approval);
+  } else {
+    const clockIn = b.clock_in_at ? cleanStamp(b.clock_in_at) : row.clock_in_at;
+    if (!clockIn) return c.json({ error: "missing_fields" }, 400);
+    const late = b.late == null ? row.late : b.late ? 1 : 0;
+    const lateMinutes = b.late_minutes == null ? Number(row.late_minutes || 0) : Math.max(0, Math.round(Number(b.late_minutes) || 0));
+    let work = row.work_seconds;
+    if (row.clock_out_at) {
+      work = Math.max(0, Math.round((wallMs(row.clock_out_at) - wallMs(clockIn)) / 1000 - Number(row.outside_seconds || 0)));
+    }
+    await c.env.DB
+      .prepare(
+        `UPDATE attendance_sessions SET clock_in_at=?, work_seconds=?, late=?, late_minutes=?, approval_status=?, admin_notes=?, work_date=? WHERE id=?`,
+      )
+      .bind(clockIn, work, late, lateMinutes, approval, b.admin_notes ?? row.admin_notes ?? null, clockIn.slice(0, 10), id)
+      .run();
+    await audit(c.env.DB, c.get("user"), "attendance_review", "attendance", id, approval);
   }
-  const late = b.late == null ? row.late : b.late ? 1 : 0;
-  const lateMinutes = b.late_minutes == null ? Number(row.late_minutes || 0) : Math.max(0, Math.round(Number(b.late_minutes) || 0));
-  let work = row.work_seconds;
-  let status = row.status;
-  if (clockOut) {
-    work = Math.max(0, Math.round((wallMs(clockOut) - wallMs(clockIn)) / 1000 - Number(row.outside_seconds || 0)));
-    status = "closed";
-  }
-  await c.env.DB
-    .prepare(
-      `UPDATE attendance_sessions SET clock_in_at=?, clock_out_at=?, work_seconds=?, late=?, late_minutes=?, approval_status=?, admin_notes=?, status=?, work_date=? WHERE id=?`,
-    )
-    .bind(clockIn, clockOut, work, late, lateMinutes, approval, b.admin_notes ?? row.admin_notes ?? null, status, clockIn.slice(0, 10), id)
-    .run();
-  await audit(c.env.DB, c.get("user"), "attendance_review", "attendance", id, approval);
   const updated = await c.env.DB.prepare("SELECT * FROM attendance_sessions WHERE id = ?").bind(id).first();
   return c.json({ data: updated });
 });
@@ -707,38 +783,57 @@ hrRoutes.get("/me/pay", requirePerm("attendance.own", "hr.view", "hr.payroll"), 
   if (!emp) return c.json({ data: null });
   const month = /^\d{4}-\d{2}$/.test(c.req.query("month") || "") ? String(c.req.query("month")) : cairoToday().slice(0, 7);
   const calc = await computeEmployeeSlip(c.env.DB, emp, month);
-  const slip = await c.env.DB
+  let slip = await c.env.DB
     .prepare(
       `SELECT p.* FROM payslips p JOIN payroll_runs r ON r.id = p.run_id
        WHERE p.employee_id = ? AND r.month = ? ORDER BY p.id DESC LIMIT 1`,
     )
     .bind(emp.id, month)
-    .first<{ basic: number; allowances: number; bonus: number; advances: number; manual_deduction: number; net: number; paid_amount: number }>();
+    .first<{ id: number; basic: number; allowances: number; bonus: number; advances: number; manual_deduction: number; deductions: number; net: number; paid_amount: number; present_days: number; absent_days: number; late_days: number; leave_days: number; unpaid_days: number }>();
+  if (slip && Number(slip.paid_amount || 0) <= 0.005) {
+    await syncSlipTotals(c.env.DB, emp, calc, slip.id);
+    slip = await c.env.DB.prepare("SELECT * FROM payslips WHERE id = ?").bind(slip.id).first<typeof slip>();
+  }
   const { results: bonuses } = await c.env.DB
     .prepare("SELECT * FROM employee_bonuses WHERE employee_id = ? AND month = ? ORDER BY id DESC")
     .bind(emp.id, month)
     .all();
+  const lines = slip ? await loadDeductionLines(c.env.DB, [Number((slip as { id?: number }).id || 0)].filter((n) => n > 0)) : [];
+  const absence = round2(lines.filter((l) => l.kind === "absence").reduce((s, l) => s + Number(l.amount || 0), 0) || (slip ? 0 : calc.absenceAuto));
+  const manual = round2(lines.filter((l) => l.kind === "manual").reduce((s, l) => s + Number(l.amount || 0), 0));
+  const shownLines = lines.length ? lines : [{ id: 0, kind: "absence", amount: calc.absenceAuto, reason: `غياب ${calc.absent} يوم`, edited: 0 }];
   const basic = Number(slip?.basic ?? emp.basic_salary ?? 0);
   const allowances = Number(slip?.allowances ?? emp.allowances ?? 0);
   const bonus = Number(slip?.bonus ?? calc.bonus ?? 0);
   const advances = Number(slip?.advances ?? calc.advances ?? 0);
-  const deductions = Number(slip?.manual_deduction ?? calc.manual ?? 0);
-  const net = Number(slip?.net ?? calc.net ?? 0);
+  const deductions = slip ? Number((slip as { deductions?: number }).deductions ?? manual + absence) : round2(calc.absenceAuto);
+  const net = Number(slip?.net ?? netPay({
+    basic, allowances, overtime: calc.overtime, bonus: calc.bonus, advances: calc.advances, absenceDeduction: calc.absenceAuto, manualDeduction: 0,
+  }).net);
   const paid = Number(slip?.paid_amount || 0);
   return c.json({
     data: {
-      employee: { id: emp.id, name: emp.name, code: emp.code },
+      employee: { id: emp.id, name: emp.name, code: emp.code, job_title: emp.job_title, department: emp.department },
       month,
       basic,
       allowances,
       bonus,
       advances,
       deductions,
+      absence,
+      manual,
+      present: Number(slip && (slip as { present_days?: number }).present_days != null ? (slip as { present_days?: number }).present_days : calc.present),
+      absent: Number((slip as { absent_days?: number } | null)?.absent_days ?? calc.absent),
+      late: Number((slip as { late_days?: number } | null)?.late_days ?? calc.late),
+      lateMinutes: calc.lateMinutes,
+      paidLeave: Number((slip as { leave_days?: number } | null)?.leave_days ?? calc.paidLeave),
+      unpaidLeave: Number((slip as { unpaid_days?: number } | null)?.unpaid_days ?? calc.unpaidLeave),
       overtime: Number(calc.overtime || 0),
       net,
       paid,
       remaining: round2(Math.max(0, net - paid)),
       bonuses,
+      deductions_lines: shownLines,
     },
   });
 });
@@ -842,7 +937,15 @@ hrRoutes.get("/payroll/:id", requirePerm("hr.payroll", "hr.view", "attendance.ow
     )
     .bind(id)
     .all<{ employee_id: number; user_id: number | null }>();
-  let slips = results;
+  let slips: Array<Record<string, unknown>> = results;
+  const lineRows = await loadDeductionLines(c.env.DB, results.map((s) => Number((s as { id?: number }).id || 0)).filter((n) => n > 0));
+  const linesBySlip = new Map<number, DeductionLine[]>();
+  for (const line of lineRows) {
+    const list = linesBySlip.get(Number(line.payslip_id)) || [];
+    list.push(line);
+    linesBySlip.set(Number(line.payslip_id), list);
+  }
+  slips = results.map((s) => ({ ...s, deductions_lines: linesBySlip.get(Number((s as { id?: number }).id || 0)) || [] }));
   if (!all) {
     const emp = await employeeForUser(c.env.DB, user.id);
     if (emp) await refreshUnpaidSlipsForEmployee(c.env.DB, emp.id);
@@ -855,7 +958,8 @@ hrRoutes.get("/payroll/:id", requirePerm("hr.payroll", "hr.view", "attendance.ow
         )
         .bind(id, emp.id)
         .all();
-      slips = fresh.results;
+      const freshLines = await loadDeductionLines(c.env.DB, fresh.results.map((s) => Number((s as { id?: number }).id || 0)).filter((n) => n > 0));
+      slips = fresh.results.map((s) => ({ ...s, deductions_lines: freshLines.filter((l) => Number(l.payslip_id) === Number((s as { id?: number }).id)) }));
     }
   }
   return c.json({ data: { run, slips } });
@@ -892,7 +996,7 @@ hrRoutes.post("/payroll", requirePerm("hr.payroll"), async (c) => {
 
 hrRoutes.post("/payroll/:id/deduct", requirePerm("hr.payroll"), async (c) => {
   const id = Number(c.req.param("id"));
-  const b = await c.req.json<{ payslip_id?: number; amount?: number }>();
+  const b = await c.req.json<{ payslip_id?: number; line_id?: number; kind?: string; amount?: number; reason?: string; reset_absence?: boolean; remove?: boolean }>();
   const run = await c.env.DB.prepare("SELECT * FROM payroll_runs WHERE id = ?").bind(id).first<{ id: number; month: string; status: string }>();
   if (!run) return c.json({ error: "not_found" }, 404);
   if (run.status === "paid") return c.json({ error: "already_paid" }, 400);
@@ -905,32 +1009,32 @@ hrRoutes.post("/payroll/:id/deduct", requirePerm("hr.payroll"), async (c) => {
   if (Number(slip.paid_amount || 0) > 0.005) return c.json({ error: "already_paid" }, 400);
   const emp = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ? AND deleted_at IS NULL").bind(slip.employee_id).first<Employee>();
   if (!emp) return c.json({ error: "not_found" }, 404);
-  const calc = await computeEmployeeSlip(c.env.DB, emp, run.month, Number(b.amount || 0));
-  await c.env.DB
-    .prepare(
-      `UPDATE payslips SET basic=?, allowances=?, present_days=?, absent_days=?, late_days=?, outside_minutes=?,
-       deductions=?, net=?, overtime=?, advances=?, leave_days=?, unpaid_days=?, manual_deduction=?, bonus=? WHERE id=?`,
-    )
-    .bind(
-      emp.basic_salary,
-      emp.allowances,
-      calc.present,
-      calc.absent,
-      calc.late,
-      calc.outsideMinutes,
-      calc.deductions,
-      calc.net,
-      calc.overtime,
-      calc.advances,
-      calc.paidLeave,
-      calc.unpaidLeave,
-      calc.manual,
-      calc.bonus,
-      slip.id,
-    )
-    .run();
-  await audit(c.env.DB, c.get("user"), "payroll_deduct", "payroll", id, `${emp.name}: ${calc.manual}`);
-  return c.json({ ok: true, net: calc.net, deductions: calc.deductions, manual_deduction: calc.manual });
+  const kind = b.kind === "absence" ? "absence" : "manual";
+  const reason = String(b.reason || "").trim();
+  if (b.remove && b.line_id) {
+    await c.env.DB.prepare("DELETE FROM payslip_deductions WHERE id = ? AND payslip_id = ? AND kind = 'manual'").bind(Number(b.line_id), slip.id).run();
+  } else if (b.reset_absence) {
+    await c.env.DB.prepare("UPDATE payslip_deductions SET edited = 0 WHERE payslip_id = ? AND kind = 'absence'").bind(slip.id).run();
+  } else if (kind === "absence") {
+    if (!reason) return c.json({ error: "missing_fields" }, 400);
+    const line = await c.env.DB.prepare("SELECT id FROM payslip_deductions WHERE payslip_id = ? AND kind = 'absence' ORDER BY id LIMIT 1").bind(slip.id).first<{ id: number }>();
+    if (line) {
+      await c.env.DB.prepare("UPDATE payslip_deductions SET amount = ?, reason = ?, edited = 1 WHERE id = ?").bind(round2(Number(b.amount || 0)), reason, line.id).run();
+    } else {
+      await c.env.DB.prepare("INSERT INTO payslip_deductions (payslip_id, kind, amount, reason, edited) VALUES (?, 'absence', ?, ?, 1)").bind(slip.id, round2(Number(b.amount || 0)), reason).run();
+    }
+  } else {
+    if (!reason || !(Number(b.amount) > 0)) return c.json({ error: "missing_fields" }, 400);
+    if (b.line_id) {
+      await c.env.DB.prepare("UPDATE payslip_deductions SET amount = ?, reason = ? WHERE id = ? AND payslip_id = ? AND kind = 'manual'").bind(round2(Number(b.amount)), reason, Number(b.line_id), slip.id).run();
+    } else {
+      await c.env.DB.prepare("INSERT INTO payslip_deductions (payslip_id, kind, amount, reason, edited) VALUES (?, 'manual', ?, ?, 1)").bind(slip.id, round2(Number(b.amount)), reason).run();
+    }
+  }
+  const calc = await computeEmployeeSlip(c.env.DB, emp, run.month, 0);
+  const saved = await syncSlipTotals(c.env.DB, emp, calc, slip.id);
+  await audit(c.env.DB, c.get("user"), "payroll_deduct", "payroll", id, `${emp.name}: ${reason || kind}`);
+  return c.json({ ok: true, net: saved.pay.net, deductions: round2(saved.absence + saved.manual), lines: saved.lines });
 });
 
 hrRoutes.post("/payroll/:id/pay", requirePerm("hr.payroll"), async (c) => {

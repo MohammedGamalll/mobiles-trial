@@ -56,7 +56,7 @@ export function DeliveryBoard() {
     try {
       const p = await get<{ data: any[] }>("/api/delivery/performance");
       const map: Record<number, any> = {};
-      for (const row of p.data || []) map[row.id] = row;
+      for (const row of p.data || []) map[Number(row.id)] = row;
       setPerf(map);
     } catch {
       setPerf({});
@@ -293,10 +293,12 @@ export function DeliveryBoard() {
                         <td>{a.role_type === "sales" ? tr("roleSales") : a.role_type === "both" ? tr("roleBoth") : tr("roleDelivery")}</td>
                         <td>{a.area || "-"}</td>
                         <td><span className={statusClass(a.status === "active" ? "in" : "out")}>{a.status === "active" ? tr("active") : tr("inactive")}</span></td>
-                        <td>{Number(perf[a.id]?.avg_rating || 0).toFixed(1)} ({perf[a.id]?.rating_count || 0})</td>
-                        <td>{perf[a.id]?.success_orders || 0} / {Number(perf[a.id]?.failed_orders || 0)}</td>
-                        <td>{(() => { const ok = Number(perf[a.id]?.success_orders || 0); const bad = Number(perf[a.id]?.failed_orders || 0); return ok + bad ? `${Math.round((ok / (ok + bad)) * 100)}%` : "-"; })()}</td>
-                        <td>{money(perf[a.id]?.collected || 0, lang)}<div className="text-xs text-slate-400">{money(perf[a.id]?.commissions || 0, lang)}</div></td>
+                        <td dir="ltr" className="text-end">{Number(perf[Number(a.id)]?.avg_rating || 0).toFixed(1)} ({perf[Number(a.id)]?.rating_count || 0})</td>
+                        <td>
+                          <span dir="ltr">{Number(perf[Number(a.id)]?.success_orders || 0)}</span> {tr("ordersSuccessful")} {tr("andWord")} <span dir="ltr">{Number(perf[Number(a.id)]?.failed_orders || 0)}</span> {tr("ordersFailed")}
+                        </td>
+                        <td>{(() => { const ok = Number(perf[Number(a.id)]?.success_orders || 0); const bad = Number(perf[Number(a.id)]?.failed_orders || 0); return ok + bad ? `${Math.round((ok / (ok + bad)) * 100)}%` : "-"; })()}</td>
+                        <td>{money(perf[Number(a.id)]?.collected || 0, lang)}<div className="text-xs text-slate-400">{money(perf[Number(a.id)]?.commissions || 0, lang)}</div></td>
                         <td>
                           {can("settings.edit", "hr.manage") ? (
                             <ActionBtns

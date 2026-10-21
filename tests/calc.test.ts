@@ -148,6 +148,21 @@ test("absence days stay informational and do not reduce net", () => {
   assert.equal(manual, 0);
 });
 
+test("absence deduction is separate from a manual deduction and both reduce net", () => {
+  const { net, absence, manual, deductions } = netPay({
+    basic: 6000,
+    allowances: 0,
+    overtime: 0,
+    advances: 0,
+    absenceDeduction: 1000,
+    manualDeduction: 200,
+  });
+  assert.equal(absence, 1000);
+  assert.equal(manual, 200);
+  assert.equal(net, 4800);
+  assert.equal(deductions, 1200);
+});
+
 test("manual deduction is applied after advances", () => {
   const { net, deductions, manual } = netPay({
     basic: 7000,

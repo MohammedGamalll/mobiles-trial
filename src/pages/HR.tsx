@@ -29,6 +29,13 @@ export function EmployeesPage() {
     return { id: 0, code: "", name: "", phone: "", job_title: "", department: "", hire_date: "", status: "active", work_type: "office", user_id: "", delivery_agent_id: "", shift_id: "", basic_salary: 0, allowances: 0, national_id: "", notes: "" };
   }
   const [shifts, setShifts] = useState<any[]>([]);
+  const [sheet, setSheet] = useState<any>(null);
+  const [sheetMonth, setSheetMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  async function openSheet(id: number, month = sheetMonth) {
+    const r = await get<{ data: any }>(`/api/hr/employees/${id}/sheet?month=${month}`);
+    setSheet(r.data);
+    setSheetMonth(r.data?.month || month);
+  }
   async function load() {
     const p = new URLSearchParams(f.qs);
     applyListPaging(p, f.page, listPageSize(f.values));
@@ -96,6 +103,9 @@ export function EmployeesPage() {
                   <td>{money(e.open_advances, lang)}</td>
                   <td><span className={statusClass(e.status === "active" ? "in" : "out")}>{e.status === "active" ? tr("active") : tr("inactive")}</span></td>
                   <td>
+                    {can("hr.view") || can("hr.manage") || can("hr.payroll") ? (
+                      <button className="me-2 text-xs font-bold text-cyan-800" onClick={() => openSheet(e.id)}>{tr("employeeSheet")}</button>
+                    ) : null}
                     {can("hr.manage") ? (
                       <ActionBtns
                         canEdit
@@ -113,6 +123,36 @@ export function EmployeesPage() {
       </div>
       </ListGate>
       <ListPager f={f} total={empTotal} disabled={list.loading} />
+      <Modal open={!!sheet} title={tr("employeeSheet")} onClose={() => setSheet(null)} wide>
+        {sheet ? (
+          <div className="space-y-3 text-sm">
+            <input className={`${inputCls} w-40`} type="month" value={sheetMonth} onChange={(e) => openSheet(sheet.employee.id, e.target.value)} />
+            <div className="grid gap-2 md:grid-cols-4">
+              <Stat label={tr("name")} value={sheet.employee.name} />
+              <Stat label={tr("code")} value={sheet.employee.code} />
+              <Stat label={tr("jobTitle")} value={sheet.employee.job_title || "-"} />
+              <Stat label={tr("department")} value={sheet.employee.department || "-"} />
+              <Stat label={tr("shift")} value={sheet.employee.shift_name || "-"} />
+              <Stat label={tr("basicSalary")} value={money(sheet.employee.basic_salary, lang)} />
+              <Stat label={tr("allowances")} value={money(sheet.employee.allowances, lang)} />
+              <Stat label={tr("present")} value={String(sheet.calc?.present || 0)} />
+              <Stat label={tr("absentDays")} value={String(sheet.calc?.absent || 0)} />
+              <Stat label={tr("paidLeave")} value={String(sheet.calc?.paidLeave || 0)} />
+              <Stat label={tr("unpaidLeave")} value={String(sheet.calc?.unpaidLeave || 0)} />
+              <Stat label={tr("lateDays")} value={String(sheet.calc?.late || 0)} />
+              <Stat label={tr("lateMinutes")} value={String(sheet.calc?.lateMinutes || 0)} />
+              <Stat label={tr("advances")} value={money((sheet.advances || []).reduce((s: number, a: any) => s + Number(a.remaining ?? a.amount ?? 0), 0), lang)} />
+            </div>
+            <div className="font-black">{tr("deductions")}</div>
+            {(sheet.deductions_lines || []).map((l: any) => (
+              <div key={`${l.kind}-${l.id}`} className="flex justify-between gap-2 border-b border-slate-100 py-1">
+                <span>{l.reason}</span>
+                <span dir="ltr">{money(l.amount, lang)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </Modal>
       <Modal open={open} title={form.id ? tr("edit") : tr("addEmployee")} onClose={() => setOpen(false)} wide>
         {!form.id ? (
           <StaffForm onSaved={() => { setOpen(false); list.reload(); }} onCancel={() => setOpen(false)} />
@@ -247,8 +287,9 @@ export function AttendancePage() {
     return s.length >= 19 ? s.slice(11, 19) : s;
   }
   function approvalLabel(status?: string) {
-    if (status === "approved") return tr("approvalApproved");
-    if (status === "rejected") return tr("approvalRejected");
+    const value = String(status || "").trim().toLowerCase();
+    if (value === "approved") return tr("approvalApproved");
+    if (value === "rejected") return tr("approvalRejected");
     return tr("approvalPending");
   }
   const workSec = openSeconds(session);
@@ -278,13 +319,41 @@ export function AttendancePage() {
     return () => { if (watch != null) navigator.geolocation.clearWatch(watch); };
   }, [session?.id, session?.status, isDelivery]);
 
-  function openReview(row: any) {
+  function stampFor(value: string) {
+    const stamp = String(value || "").replace("T", " ").trim();
+    return stamp.length === 16 ? `${stamp}:00` : stamp.slice(0, 19);
+  }
+  async function saveReview(status: "approved" | "rejected") {
+    if (!edit) return;
+    const part = edit.part === "out" ? "out" : "in";
+    try {
+      const saved = await put<{ data: any }>(`/api/hr/attendance/${edit.id}`, part === "out"
+        ? { part: "out", approval_status: status, clock_out_at: stampFor(edit.clock_out_at) }
+        : {
+            part: "in",
+            approval_status: status,
+            late: edit.late ? 1 : 0,
+            late_minutes: Number(edit.late_minutes || 0),
+            admin_notes: edit.admin_notes,
+            clock_in_at: stampFor(edit.clock_in_at),
+          });
+      const next = saved?.data;
+      if (next) setRows((prev) => prev.map((r) => (Number(r.id) === Number(next.id) ? { ...r, ...next } : r)));
+      setEdit(null);
+      setMsg("");
+      await list.reload();
+    } catch (e: any) {
+      setMsg(e.message || tr("error"));
+    }
+  }
+  function openReview(row: any, part: "in" | "out" = "in") {
     setEdit({
       ...row,
+      part,
       admin_notes: row.admin_notes || "",
       late: row.late ? 1 : 0,
       late_minutes: row.late_minutes || 0,
-      approval_status: row.approval_status || "pending",
+      approval_status: part === "out" ? row.out_approval_status || "pending" : row.approval_status || "pending",
       clock_in_at: String(row.clock_in_at || "").replace("T", " ").slice(0, 19),
       clock_out_at: row.clock_out_at ? String(row.clock_out_at).replace("T", " ").slice(0, 19) : "",
     });
@@ -371,6 +440,7 @@ export function AttendancePage() {
                   <th>{tr("outsideTime")}</th>
                   <th>{tr("status")}</th>
                   <th>{tr("approveAttendance")}</th>
+                  <th>{tr("approveClockOut")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -390,7 +460,11 @@ export function AttendancePage() {
                     <td>
                       <div className="text-xs">{approvalLabel(r.approval_status)}</div>
                       {r.late ? <div className="text-xs text-amber-700">{tr("lateMinutes")}: {r.late_minutes || 0}</div> : null}
-                      {canReview ? <button className="text-xs font-bold text-cyan-800" onClick={() => openReview(r)}>{tr("edit")}</button> : null}
+                      {canReview ? <button className="text-xs font-bold text-cyan-800" onClick={() => openReview(r, "in")}>{tr("approveAttendance")}</button> : null}
+                    </td>
+                    <td>
+                      <div className="text-xs">{r.clock_out_at ? approvalLabel(r.out_approval_status) : "-"}</div>
+                      {canReview && r.clock_out_at ? <button className="text-xs font-bold text-cyan-800" onClick={() => openReview(r, "out")}>{tr("approveClockOut")}</button> : null}
                     </td>
                   </tr>
                 ))}
@@ -400,35 +474,27 @@ export function AttendancePage() {
         </div>
       </ListGate>
       <ListPager f={f} total={attTotal} disabled={list.loading} />
-      <Modal open={!!edit} title={tr("approveAttendance")} onClose={() => setEdit(null)}>
-        {edit ? (
+      <Modal open={!!edit} title={edit?.part === "out" ? tr("approveClockOut") : tr("approveAttendance")} onClose={() => setEdit(null)}>
+        {edit?.part === "out" ? (
+          <div className="space-y-2">
+            <Field label={tr("date")}><input className={inputCls} type="date" value={stampDate(edit.clock_out_at)} onChange={(e) => setEdit({ ...edit, clock_out_at: joinStamp(e.target.value, stampTime(edit.clock_out_at) || "00:00") })} /></Field>
+            <Field label={tr("clockOut")}><input className={inputCls} type="time" value={stampTime(edit.clock_out_at)} onChange={(e) => setEdit({ ...edit, clock_out_at: joinStamp(stampDate(edit.clock_out_at), e.target.value) })} /></Field>
+            <div className="flex gap-2">
+              <Btn onClick={() => saveReview("approved")}>{tr("approvalApproved")}</Btn>
+              <Btn kind="danger" onClick={() => saveReview("rejected")}>{tr("approvalRejected")}</Btn>
+            </div>
+          </div>
+        ) : edit ? (
           <div className="space-y-2">
             <Field label={tr("date")}><input className={inputCls} type="date" value={stampDate(edit.clock_in_at)} onChange={(e) => setEdit({ ...edit, clock_in_at: joinStamp(e.target.value, stampTime(edit.clock_in_at) || "00:00") })} /></Field>
             <Field label={tr("clockIn")}><input className={inputCls} type="time" value={stampTime(edit.clock_in_at)} onChange={(e) => setEdit({ ...edit, clock_in_at: joinStamp(stampDate(edit.clock_in_at), e.target.value) })} /></Field>
-            <Field label={tr("date")}><input className={inputCls} type="date" value={stampDate(edit.clock_out_at)} onChange={(e) => setEdit({ ...edit, clock_out_at: e.target.value ? joinStamp(e.target.value, stampTime(edit.clock_out_at) || "00:00") : "" })} /></Field>
-            <Field label={tr("clockOut")}><input className={inputCls} type="time" value={stampTime(edit.clock_out_at)} onChange={(e) => setEdit({ ...edit, clock_out_at: e.target.value ? joinStamp(stampDate(edit.clock_out_at) || stampDate(edit.clock_in_at), e.target.value) : "" })} /></Field>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.late} onChange={(e) => setEdit({ ...edit, late: e.target.checked ? 1 : 0 })} />{tr("late")}</label>
             <Field label={tr("lateMinutes")}><input className={inputCls} dir="ltr" type="number" min={0} value={edit.late_minutes} onChange={(e) => setEdit({ ...edit, late_minutes: Number(e.target.value) })} /></Field>
-            <Field label={tr("status")}>
-              <select className={inputCls} value={edit.approval_status} onChange={(e) => setEdit({ ...edit, approval_status: e.target.value })}>
-                <option value="pending">{tr("approvalPending")}</option>
-                <option value="approved">{tr("approvalApproved")}</option>
-                <option value="rejected">{tr("approvalRejected")}</option>
-              </select>
-            </Field>
             <Field label={tr("adminNotes")}><textarea className={inputCls} value={edit.admin_notes} onChange={(e) => setEdit({ ...edit, admin_notes: e.target.value })} /></Field>
-            <Btn onClick={async () => {
-              await put(`/api/hr/attendance/${edit.id}`, {
-                approval_status: edit.approval_status,
-                late: edit.late ? 1 : 0,
-                late_minutes: Number(edit.late_minutes || 0),
-                admin_notes: edit.admin_notes,
-                clock_in_at: String(edit.clock_in_at).replace("T", " "),
-                clock_out_at: edit.clock_out_at ? String(edit.clock_out_at).replace("T", " ") : null,
-              });
-              setEdit(null);
-              await list.reload();
-            }}>{tr("save")}</Btn>
+            <div className="flex gap-2">
+              <Btn onClick={() => saveReview("approved")}>{tr("approvalApproved")}</Btn>
+              <Btn kind="danger" onClick={() => saveReview("rejected")}>{tr("approvalRejected")}</Btn>
+            </div>
           </div>
         ) : null}
       </Modal>
@@ -445,7 +511,8 @@ export function PayrollPage() {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [detail, setDetail] = useState<any>(null);
   const [payouts, setPayouts] = useState<Record<number, string>>({});
-  const [deducts, setDeducts] = useState<Record<number, string>>({});
+  const [absenceDraft, setAbsenceDraft] = useState<Record<number, { amount: string; reason: string }>>({});
+  const [lineDraft, setLineDraft] = useState<Record<number, { amount: string; reason: string }>>({});
   const [cashAccountId, setCashAccountId] = useState("");
   const [mine, setMine] = useState<any>(null);
   const [sheetOn, setSheetOn] = useState(false);
@@ -479,25 +546,32 @@ export function PayrollPage() {
     const r = await get<{ data: any }>(`/api/hr/payroll/${id}`);
     setDetail(r.data);
     const next: Record<number, string> = {};
-    const nextDeduct: Record<number, string> = {};
+    const nextAbsence: Record<number, { amount: string; reason: string }> = {};
     for (const s of r.data?.slips || []) {
       next[s.id] = String(slipDue(s));
-      nextDeduct[s.id] = String(Number(s.manual_deduction || 0));
+      const abs = (s.deductions_lines || []).find((l: any) => l.kind === "absence");
+      nextAbsence[s.id] = { amount: String(Number(abs?.amount || 0)), reason: abs?.reason || "" };
     }
     setPayouts(next);
-    setDeducts(nextDeduct);
+    setAbsenceDraft(nextAbsence);
+    setLineDraft({});
     if (can("hr.payroll")) {
       const bonuses = await get<{ data: any[] }>(`/api/hr/bonuses?month=${r.data?.run?.month || ""}`);
       setMonthBonuses(bonuses.data || []);
     }
   }
 
-  async function applyDeduction(slipId: number) {
+  function deductionLines(s: any) {
+    return (s.deductions_lines || []) as any[];
+  }
+  function deductionTotal(s: any) {
+    const lines = deductionLines(s);
+    if (lines.length) return lines.reduce((n, l) => n + Number(l.amount || 0), 0);
+    return Number(s.deductions || 0);
+  }
+  async function postDeduct(body: Record<string, unknown>) {
     if (!detail?.run) return;
-    await post(`/api/hr/payroll/${detail.run.id}/deduct`, {
-      payslip_id: slipId,
-      amount: Number(deducts[slipId] || 0),
-    });
+    await post(`/api/hr/payroll/${detail.run.id}/deduct`, body);
     await list.reload();
     await openRun(detail.run.id);
   }
@@ -580,7 +654,8 @@ export function PayrollPage() {
                 <th>{tr("bonusImmediate")}</th>
                 <th>{tr("overtime")}</th>
                 <th>{tr("advances")}</th>
-                <th>{tr("deductions")}</th>
+                <th>{tr("absenceDeduction")}</th>
+                <th>{tr("manualDeduction")}</th>
                 <th>{tr("net")}</th>
                 <th>{tr("paidNow")}</th>
                 <th>{tr("remainingPay")}</th>
@@ -596,7 +671,8 @@ export function PayrollPage() {
                   <td>{money(immediateBonus(s.employee_id), lang)}</td>
                   <td>{money(s.overtime, lang)}</td>
                   <td>{money(s.advances, lang)}</td>
-                  <td>{money(s.manual_deduction, lang)}</td>
+                  <td>{(s.deductions_lines || []).filter((l: any) => l.kind === "absence").map((l: any) => <div key={l.id}>{l.reason} {money(l.amount, lang)}</div>)}</td>
+                  <td>{(s.deductions_lines || []).filter((l: any) => l.kind === "manual").map((l: any) => <div key={l.id}>{l.reason} {money(l.amount, lang)}</div>)}</td>
                   <td>{money(s.net, lang)}</td>
                   <td>{money(s.paid_amount, lang)}</td>
                   <td>{money(slipDue(s), lang)}</td>
@@ -610,7 +686,8 @@ export function PayrollPage() {
                 <td>{money(slips.reduce((s: number, x: any) => s + immediateBonus(x.employee_id), 0), lang)}</td>
                 <td>{money(sum("overtime"), lang)}</td>
                 <td>{money(sum("advances"), lang)}</td>
-                <td>{money(sum("manual_deduction"), lang)}</td>
+                <td>{money(slips.reduce((n: number, x: any) => n + deductionLines(x).filter((l) => l.kind === "absence").reduce((a: number, l: any) => a + Number(l.amount || 0), 0), 0), lang)}</td>
+                <td>{money(slips.reduce((n: number, x: any) => n + deductionLines(x).filter((l) => l.kind === "manual").reduce((a: number, l: any) => a + Number(l.amount || 0), 0), 0), lang)}</td>
                 <td>{money(sum("net"), lang)}</td>
                 <td>{money(sum("paid_amount"), lang)}</td>
                 <td>{money(slips.reduce((s: number, x: any) => s + slipDue(x), 0), lang)}</td>
@@ -627,7 +704,7 @@ export function PayrollPage() {
           <div>{tr("basicSalary")}: {money(slipOn.basic, lang)}</div>
           <div>{tr("bonuses")}: {money(slipOn.bonus, lang)}</div>
           <div>{tr("advances")}: {money(slipOn.advances, lang)}</div>
-          <div>{tr("deductions")}: {money(slipOn.manual_deduction ?? slipOn.deductions, lang)}</div>
+          {(slipOn.deductions_lines || []).map((l: any) => <div key={l.id}>{l.reason}: {money(l.amount, lang)}</div>)}
           <div>{tr("net")}: {money(slipOn.net, lang)}</div>
           <div>{tr("paidNow")}: {money(slipOn.paid_amount ?? slipOn.paid, lang)}</div>
           <div>{tr("remainingPay")}: {money(slipOn.remaining ?? slipDue(slipOn), lang)}</div>
@@ -657,6 +734,12 @@ export function PayrollPage() {
             <Stat label={tr("bonusNowTotal")} value={money(splitBonuses(mine.bonuses).now, lang)} accent="emerald" />
             <Stat label={tr("bonusLaterTotal")} value={money(splitBonuses(mine.bonuses).later, lang)} accent="emerald" />
             <Stat label={tr("advances")} value={money(mine.advances, lang)} accent="rose" />
+            <Stat label={tr("present")} value={String(mine.present || 0)} />
+            <Stat label={tr("absentDays")} value={String(mine.absent || 0)} />
+            <Stat label={tr("paidLeave")} value={String(mine.paidLeave || 0)} />
+            <Stat label={tr("unpaidLeave")} value={String(mine.unpaidLeave || 0)} />
+            <Stat label={tr("lateDays")} value={String(mine.late || 0)} />
+            <Stat label={tr("lateMinutes")} value={String(mine.lateMinutes || 0)} />
             <Stat label={tr("deductions")} value={money(mine.deductions, lang)} accent="rose" />
             <Stat label={tr("net")} value={money(mine.net, lang)} accent="emerald" />
             <Stat label={tr("paidNow")} value={money(mine.paid, lang)} />
@@ -670,14 +753,32 @@ export function PayrollPage() {
               [tr("bonusNowTotal"), splitBonuses(mine.bonuses).now],
               [tr("bonusLaterTotal"), splitBonuses(mine.bonuses).later],
               [tr("overtime"), mine.overtime],
-              [tr("advances"), mine.advances],
-              [tr("deductions"), mine.deductions],
-              [tr("paidNow"), mine.paid],
-              [tr("remainingPay"), mine.remaining],
+              [tr("advances"), mine.advances, "money"],
+              [tr("paidNow"), mine.paid, "money"],
+              [tr("remainingPay"), mine.remaining, "money"],
             ].map(([label, value]) => (
               <div key={String(label)} className="flex items-center justify-between gap-3 border-b border-slate-100 py-1">
                 <span>{label}</span>
                 <span>{money(Number(value || 0), lang)}</span>
+              </div>
+            ))}
+            {[
+              [tr("present"), mine.present],
+              [tr("absentDays"), mine.absent],
+              [tr("paidLeave"), mine.paidLeave],
+              [tr("unpaidLeave"), mine.unpaidLeave],
+              [tr("lateDays"), mine.late],
+              [tr("lateMinutes"), mine.lateMinutes],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="flex items-center justify-between gap-3 border-b border-slate-100 py-1">
+                <span>{label}</span>
+                <span>{num(Number(value || 0), lang)}</span>
+              </div>
+            ))}
+            {(mine.deductions_lines || []).map((l: any) => (
+              <div key={`${l.kind}-${l.id}`} className="flex items-center justify-between gap-3 border-b border-slate-100 py-1">
+                <span>{l.reason}</span>
+                <span>{money(Number(l.amount || 0), lang)}</span>
               </div>
             ))}
             <div className="flex items-center justify-between gap-3 pt-2 text-lg font-black">
@@ -747,7 +848,7 @@ export function PayrollPage() {
               <Stat label={tr("net")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.net || 0), 0), lang)} accent="emerald" />
               <Stat label={tr("paidAmount")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.paid_amount || 0), 0), lang)} accent="cyan" />
               <Stat label={tr("advances")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.advances || 0), 0), lang)} accent="rose" />
-              <Stat label={tr("deductions")} value={money((detail.slips || []).reduce((s: number, x: any) => s + Number(x.manual_deduction || 0), 0), lang)} accent="rose" />
+              <Stat label={tr("deductions")} value={money((detail.slips || []).reduce((s: number, x: any) => s + deductionTotal(x), 0), lang)} accent="rose" />
             </div>
             {monthBonuses.length ? (
               <div className="rounded-2xl border border-slate-100 bg-white p-3 text-sm">
@@ -773,6 +874,7 @@ export function PayrollPage() {
                       <th>{tr("overtime")}</th>
                       <th>{tr("bonuses")}</th>
                       <th>{tr("advances")}</th>
+                      <th>{tr("absenceDeduction")}</th>
                       <th>{tr("manualDeduction")}</th>
                       <th>{tr("net")}</th>
                       <th>{tr("paidAmount")}</th>
@@ -794,22 +896,41 @@ export function PayrollPage() {
                         <td dir="ltr">{money(s.bonus, lang)}</td>
                         <td dir="ltr" className="font-bold text-rose-700">{money(s.advances, lang)}</td>
                         <td>
-                          <span className="print:inline hidden" dir="ltr">{money(s.manual_deduction, lang)}</span>
-                          {detail.run.status !== "paid" && can("hr.payroll") && Number(s.paid_amount || 0) <= 0.005 ? (
-                            <div className="no-print flex flex-wrap items-center gap-1">
-                              <input
-                                className={`${inputCls} w-24`}
-                                dir="ltr"
-                                type="number"
-                                min={0}
-                                value={deducts[s.id] ?? String(Number(s.manual_deduction || 0))}
-                                onChange={(e) => setDeducts((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                              />
-                              <Btn kind="soft" className="!px-2.5 !py-1 text-xs" onClick={() => applyDeduction(s.id)}>{tr("applyDeduction")}</Btn>
-                            </div>
-                          ) : (
-                            <span className="no-print" dir="ltr">{money(s.manual_deduction, lang)}</span>
-                          )}
+                          {(() => {
+                            const abs = deductionLines(s).find((l) => l.kind === "absence");
+                            const draft = absenceDraft[s.id] || { amount: String(abs?.amount || 0), reason: abs?.reason || "" };
+                            const editable = detail.run.status !== "paid" && can("hr.payroll") && Number(s.paid_amount || 0) <= 0.005;
+                            return editable ? (
+                              <div className="no-print space-y-1">
+                                <input className={`${inputCls} w-full`} value={draft.reason} onChange={(e) => setAbsenceDraft((prev) => ({ ...prev, [s.id]: { ...draft, reason: e.target.value } }))} />
+                                <div className="flex gap-1">
+                                  <input className={`${inputCls} w-20`} dir="ltr" type="number" min={0} value={draft.amount} onChange={(e) => setAbsenceDraft((prev) => ({ ...prev, [s.id]: { ...draft, amount: e.target.value } }))} />
+                                  <Btn kind="soft" className="!px-2 !py-1 text-xs" onClick={() => postDeduct({ payslip_id: s.id, kind: "absence", amount: Number(draft.amount || 0), reason: draft.reason })}>{tr("save")}</Btn>
+                                  <Btn kind="ghost" className="!px-2 !py-1 text-xs" onClick={() => postDeduct({ payslip_id: s.id, reset_absence: true })}>{tr("resetAbsence")}</Btn>
+                                </div>
+                              </div>
+                            ) : <span>{abs ? `${abs.reason} ${money(abs.amount, lang)}` : "-"}</span>;
+                          })()}
+                        </td>
+                        <td>
+                          <div className="space-y-1">
+                            {deductionLines(s).filter((l) => l.kind === "manual").map((l) => (
+                              <div key={l.id} className="flex items-center justify-between gap-1">
+                                <span>{l.reason}</span>
+                                <span dir="ltr">{money(l.amount, lang)}</span>
+                                {detail.run.status !== "paid" && can("hr.payroll") && Number(s.paid_amount || 0) <= 0.005 ? (
+                                  <button className="text-xs text-rose-700" onClick={() => postDeduct({ payslip_id: s.id, remove: true, line_id: l.id })}>×</button>
+                                ) : null}
+                              </div>
+                            ))}
+                            {detail.run.status !== "paid" && can("hr.payroll") && Number(s.paid_amount || 0) <= 0.005 ? (
+                              <div className="no-print flex flex-wrap gap-1">
+                                <input className={`${inputCls} w-28`} placeholder={tr("deductionReason")} value={lineDraft[s.id]?.reason || ""} onChange={(e) => setLineDraft((prev) => ({ ...prev, [s.id]: { amount: prev[s.id]?.amount || "", reason: e.target.value } }))} />
+                                <input className={`${inputCls} w-20`} dir="ltr" type="number" min={0} value={lineDraft[s.id]?.amount || ""} onChange={(e) => setLineDraft((prev) => ({ ...prev, [s.id]: { reason: prev[s.id]?.reason || "", amount: e.target.value } }))} />
+                                <Btn kind="soft" className="!px-2 !py-1 text-xs" onClick={() => postDeduct({ payslip_id: s.id, kind: "manual", amount: Number(lineDraft[s.id]?.amount || 0), reason: lineDraft[s.id]?.reason || "" })}>{tr("addDeduction")}</Btn>
+                              </div>
+                            ) : null}
+                          </div>
                         </td>
                         <td dir="ltr" className="font-bold">{money(s.net, lang)}</td>
                         <td dir="ltr">{money(s.paid_amount, lang)}</td>

@@ -615,13 +615,22 @@ deliveryRoutes.get("/performance", requirePerm("delivery.view", "delivery.update
          FROM courier_ratings GROUP BY agent_id
        ) rt ON rt.agent_id = a.id
        LEFT JOIN (
-         SELECT delivery_agent_id,
-           SUM(CASE
-             WHEN delivery_status IN ('delivered','completed')
-               OR (status IN ('completed','delivered') AND IFNULL(delivery_status,'') NOT IN ('damaged','customer_refused','returned_to_warehouse','cancelled'))
-             THEN 1 ELSE 0 END) AS success_orders
-         FROM sales_invoices
-         WHERE deleted_at IS NULL AND type = 'delivery' AND delivery_agent_id IS NOT NULL
+         SELECT delivery_agent_id, COUNT(DISTINCT invoice_id) AS success_orders
+         FROM (
+           SELECT delivery_agent_id, id AS invoice_id
+           FROM sales_invoices
+           WHERE deleted_at IS NULL AND delivery_agent_id IS NOT NULL
+             AND IFNULL(delivery_status,'') NOT IN ('damaged','customer_refused','returned_to_warehouse','cancelled')
+             AND (status IN ('completed','delivered') OR delivery_status IN ('delivered','completed'))
+           UNION
+           SELECT ds.delivery_agent_id, l.invoice_id
+           FROM delivery_settlements ds
+           JOIN delivery_settlement_lines l ON l.settlement_id = ds.id
+           JOIN sales_invoices si ON si.id = l.invoice_id
+           WHERE l.outcome = 'delivered' AND si.deleted_at IS NULL
+             AND IFNULL(si.delivery_status,'') NOT IN ('damaged','customer_refused','returned_to_warehouse','cancelled')
+             AND (si.status IN ('completed','delivered') OR si.delivery_status IN ('delivered','completed'))
+         ) success_invoices
          GROUP BY delivery_agent_id
        ) ok ON ok.delivery_agent_id = a.id
        LEFT JOIN (

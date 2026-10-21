@@ -62,7 +62,7 @@ export default function CreditSheet({ party }: { party: "customer" | "supplier" 
               <tbody>
                 {rows.map((row) => (
                   <Fragment key={row.id}>
-                    <tr className="cursor-pointer" onClick={() => setOpen(open === row.id ? null : row.id)}>
+                    <tr className="cursor-pointer" onClick={() => setOpen(open === Number(row.id) ? null : Number(row.id))}>
                       <td>{row.code}</td>
                       <td className="font-bold">{row.name}</td>
                       <td>{row.phone || "-"}</td>
@@ -72,33 +72,23 @@ export default function CreditSheet({ party }: { party: "customer" | "supplier" 
                       <td>{row.last_payment || "-"}</td>
                       <td className="font-bold">{money(row.remaining, lang)}</td>
                     </tr>
-                    {open === row.id ? (
-                      <tr key={`${row.id}-inv`}>
-                        <td colSpan={8}>
-                          <table className="stack-cols w-full">
-                            <thead>
-                              <tr>
-                                <th>{tr("invoiceNo")}</th>
-                                <th>{tr("date")}</th>
-                                <th>{tr("total")}</th>
-                                <th>{tr("paid")}</th>
-                                <th>{tr("remaining")}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(row.invoices || []).map((inv) => (
-                                <tr key={inv.id}>
-                                  <td>{inv.number}</td>
-                                  <td>{inv.date}</td>
-                                  <td>{money(inv.total, lang)}</td>
-                                  <td>{money(inv.paid, lang)}</td>
-                                  <td>{money(inv.remaining, lang)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </td>
-                      </tr>
+                    {open === Number(row.id) ? (
+                      (row.invoices || []).length ? (row.invoices || []).map((inv) => (
+                        <tr key={`${row.id}-${inv.id}`} className="bg-slate-50">
+                          <td>{inv.number}</td>
+                          <td>{inv.date}</td>
+                          <td></td>
+                          <td></td>
+                          <td>{money(inv.total, lang)}</td>
+                          <td>{money(inv.paid, lang)}</td>
+                          <td></td>
+                          <td>{money(inv.remaining, lang)}</td>
+                        </tr>
+                      )) : (
+                        <tr key={`${row.id}-empty`} className="bg-slate-50">
+                          <td colSpan={8}>{tr("noOpenInvoices")}</td>
+                        </tr>
+                      )
                     ) : null}
                   </Fragment>
                 ))}
