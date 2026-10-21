@@ -1,4 +1,4 @@
-import type { AppDb } from "./db";
+import { ensureExpenseCategories, type AppDb } from "./db";
 import { ensureWhatsappTemplates } from "./whatsapp";
 
 export const KEEP_TABLES = new Set([
@@ -105,6 +105,7 @@ async function restoreFactorySkeleton(db: AppDb) {
       code,
     );
   }
+  await ensureExpenseCategories(db);
   await tryExec(
     db,
     `INSERT OR IGNORE INTO revenue_categories (id, name_ar, name_en, active) VALUES

@@ -5,6 +5,7 @@ import { postExpenseJournal, postOtherRevenueJournal, reverseJournal, tryLedger 
 import { attachOpenShift } from "../lib/pos-shifts";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates, sqlText } from "../lib/filters";
 import { loadProfitBreakdown } from "../lib/profit-breakdown";
+import { ensureExpenseCategories } from "../lib/db";
 
 export const financeRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -43,7 +44,8 @@ financeRoutes.get("/expenses", requirePerm("expenses.view"), async (c) => {
 });
 
 financeRoutes.get("/expense-categories", requirePerm("expenses.view", "settings.view"), async (c) => {
-  const { results } = await c.env.DB.prepare("SELECT * FROM expense_categories WHERE active = 1").all();
+  await ensureExpenseCategories(c.env.DB);
+  const { results } = await c.env.DB.prepare("SELECT * FROM expense_categories WHERE active = 1 ORDER BY id").all();
   return c.json({ data: results });
 });
 

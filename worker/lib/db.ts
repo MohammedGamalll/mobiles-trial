@@ -137,6 +137,29 @@ export class AppDb {
   }
 }
 
+const EXPENSE_CATEGORIES = `(1, 'إيجار', 'Rent', 1),
+    (2, 'كهرباء', 'Electricity', 1),
+    (3, 'انتقالات', 'Transportation', 1),
+    (4, 'توصيل', 'Delivery', 1),
+    (5, 'مرتبات', 'Salaries', 1),
+    (6, 'صيانة', 'Maintenance', 1),
+    (7, 'أخرى', 'Other', 1)`;
+
+export async function ensureExpenseCategories(db: AppDb) {
+  await db.exec(`CREATE TABLE IF NOT EXISTS expense_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name_ar TEXT NOT NULL,
+    name_en TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+  )`);
+  try {
+    await db.exec("ALTER TABLE expense_categories ADD COLUMN active INTEGER NOT NULL DEFAULT 1");
+  } catch {
+    /* column already exists */
+  }
+  await db.exec(`INSERT OR IGNORE INTO expense_categories (id, name_ar, name_en, active) VALUES ${EXPENSE_CATEGORIES}`);
+}
+
 export async function ensureAppSchema(db: AppDb) {
   const run = async (sql: string) => {
     try {
@@ -190,6 +213,10 @@ export async function ensureAppSchema(db: AppDb) {
     ["sales_invoice_items", "unit_name TEXT"],
     ["sales_invoice_items", "unit_factor REAL NOT NULL DEFAULT 1"],
     ["work_shifts", "weekdays TEXT"],
+    ["expenses", "cost_center TEXT"],
+    ["expenses", "recurring INTEGER NOT NULL DEFAULT 0"],
+    ["expenses", "recur_every_days INTEGER"],
+    ["expenses", "next_due TEXT"],
     ["expenses", "cash_account_id INTEGER"],
     ["products", "last_purchase_price REAL NOT NULL DEFAULT 0"],
     ["purchase_invoice_items", "returned_qty INTEGER NOT NULL DEFAULT 0"],
@@ -408,6 +435,7 @@ export async function ensureAppSchema(db: AppDb) {
   )`);
   await run("CREATE INDEX idx_other_revenues_date ON other_revenues(date)");
   await run("CREATE INDEX idx_vouchers_invoice ON vouchers(invoice_id)");
+  await ensureExpenseCategories(db);
   await run(`INSERT OR IGNORE INTO revenue_categories (id, name_ar, name_en, active) VALUES
     (1, 'إيجار معرّض', 'Display rent', 1),
     (2, 'رسوم خدمات', 'Service fees', 1),

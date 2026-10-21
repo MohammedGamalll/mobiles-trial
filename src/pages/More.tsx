@@ -1458,10 +1458,11 @@ export function ExpensesPage() {
   async function load() {
     const p = new URLSearchParams(f.qs);
     applyListPaging(p, f.page, listPageSize(f.values));
+    const catRes = await get<{ data: any[] }>("/api/expense-categories");
+    setCats(catRes.data || []);
     const r = await get<{ data: any[]; totals?: any }>(`/api/expenses?${p}`);
     setRows(r.data);
     setTotals(r.totals || {});
-    setCats((await get<{ data: any[] }>("/api/expense-categories")).data);
     try {
       const today = await get<{ collected_today?: number; expenses_today?: number; expected_cash?: number }>("/api/pos/today");
       setShift({
