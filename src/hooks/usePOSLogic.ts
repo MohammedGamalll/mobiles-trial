@@ -99,6 +99,30 @@ function todayIso() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
 }
 
+function printedItems(items: any[] | undefined, lines: Line[]) {
+  const rows = items?.length ? items : lines;
+  return rows.map((it: any) => {
+    const pid = Number(it.product_id || it.id || 0);
+    const line = lines.find((l) => Number(l.id) === pid);
+    if (!line) return it;
+    return {
+      ...it,
+      product_name: it.product_name || line.name_ar,
+      name_ar: it.name_ar || line.name_ar,
+      name_en: it.name_en || line.name_en,
+      quality: it.quality || line.quality || null,
+      category_ar: it.category_ar || line.category_ar || null,
+      category_en: it.category_en || line.category_en || null,
+      part_type_ar: it.part_type_ar || line.part_type_ar || null,
+      part_type_en: it.part_type_en || line.part_type_en || null,
+      brand_ar: it.brand_ar || line.brand_ar || null,
+      brand_en: it.brand_en || line.brand_en || null,
+      supplier_name: it.supplier_name || line.supplier_name || null,
+      last_supplier_name: it.last_supplier_name || line.last_supplier_name || null,
+    };
+  });
+}
+
 export function usePOSLogic(variant: "modern" | "classic" = "modern") {
   const { tr, lang, lookups, can, settings, branchId, warehouseId, refreshLookups } = useApp();
   const showCost = can("costs.view");
@@ -315,6 +339,15 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
           qty: Number(it.quantity) || 0,
           unit_price: Number(it.unit_price) || 0,
           discount: it.discount || 0,
+          quality: it.quality || cat?.quality,
+          category_ar: it.category_ar || cat?.category_ar,
+          category_en: it.category_en || cat?.category_en,
+          part_type_ar: it.part_type_ar || cat?.part_type_ar,
+          part_type_en: it.part_type_en || cat?.part_type_en,
+          brand_ar: it.brand_ar || cat?.brand_ar,
+          brand_en: it.brand_en || cat?.brand_en,
+          supplier_name: it.supplier_name || cat?.supplier_name,
+          last_supplier_name: it.last_supplier_name || cat?.last_supplier_name,
           batch_id: null,
           serials: [],
           unit_name: it.unit_name || cat?.unit || "",
@@ -876,6 +909,12 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
     }
     const paidAmt = opts?.paid ?? paid;
     const asQuote = !!(opts?.quote || quoteMode);
+    const deliveryHold = type === "delivery" && !asQuote && !opts?.order;
+    if ((opts?.hold || deliveryHold) && !Number(agentId)) {
+      playSound("err");
+      setErr(tr("errCourierRequired"));
+      return;
+    }
     if (payMethod === "credit" && !opts?.hold && !asQuote && !opts?.order && (Number(paidAmt) < 0 || Number(paidAmt) > total + 0.001)) {
       playSound("err");
       setErr(tr("errPaidRange"));
@@ -930,7 +969,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
         const snap = {
           ...data,
           print_title: "فاتورة معلقة / بيان أسعار",
-          items: data.items?.length ? data.items : cart,
+          items: printedItems(data.items, cart),
           customer_name: data.customer_name || party?.name || walkIn || customerQ,
           customer_phone: data.customer_phone || party?.phone || newCust.phone,
           customer_whatsapp: data.customer_whatsapp || party?.whatsapp || party?.phone || newCust.phone,
@@ -953,7 +992,7 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
       playSound("done");
       const sold = {
         ...(res.data || {}),
-        items: res.data?.items?.length ? res.data.items : cart,
+        items: printedItems(res.data?.items, cart),
         total: res.data?.total ?? total,
         extra_amount: res.data?.extra_amount ?? Number(extraAmount || 0),
         subtotal: res.data?.subtotal ?? subtotal,
@@ -996,6 +1035,11 @@ export function usePOSLogic(variant: "modern" | "classic" = "modern") {
 
   async function holdInvoice() {
     if (!cart.length || resuming || busy) return;
+    if (type === "delivery" && !Number(agentId)) {
+      playSound("err");
+      setErr(tr("errCourierRequired"));
+      return;
+    }
     await submit({ hold: true });
   }
 

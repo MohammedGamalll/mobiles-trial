@@ -59,8 +59,7 @@ export type InvoicePrintModel = {
 };
 
 export function PrintBrandFooter() {
-  const { tr } = useApp();
-  return <div className="print-brand-footer">{tr("poweredBy")}</div>;
+  return <div className="print-brand-footer">Powered by Pixel01 ----- 01034029665</div>;
 }
 
 function itemName(item: InvoicePrintItem, lang: string) {
@@ -137,7 +136,7 @@ export function InvoicePrint({
       <div className="inv-print-head">
         <div className="inv-print-brand">
           {settings.logo_url ? <img src={settings.logo_url} alt="" /> : null}
-          <div>
+          <div className="inv-print-brand-text">
             <div className="inv-print-title">{tr("app")}</div>
             <div className="inv-print-store">
               {settings.store_name_ar || settings.store_name || tr("app")}
@@ -167,7 +166,7 @@ export function InvoicePrint({
           ) : null}
           {inv.status || inv.delivery_status ? <div>{statusLabel(deliveryDisplayStatus(inv), lang)}</div> : null}
           {inv.payment_method ? (
-            <div>
+            <div className="thermal-hide">
               <b>{tr("payMethod")}:</b> {inv.payment_method}
             </div>
           ) : null}
@@ -176,7 +175,6 @@ export function InvoicePrint({
 
       <div className={`inv-print-meta${isDelivery ? " is-split" : ""}`}>
         <section className="inv-print-box">
-          <h3>{tr("customerDetails")}</h3>
           <div className="inv-print-strong">{customerName}</div>
           {inv.customer_phone ? (
             <div>
@@ -185,17 +183,17 @@ export function InvoicePrint({
           ) : null}
           {inv.customer_whatsapp &&
           inv.customer_whatsapp !== inv.customer_phone ? (
-            <div>
+            <div className="thermal-hide">
               {tr("whatsapp")}: {inv.customer_whatsapp}
             </div>
           ) : null}
           {inv.city ? (
-            <div>
+            <div className="thermal-hide">
               {tr("city")}: {inv.city}
             </div>
           ) : null}
           {inv.area ? (
-            <div>
+            <div className="thermal-hide">
               {tr("area")}: {inv.area}
             </div>
           ) : null}
@@ -207,14 +205,13 @@ export function InvoicePrint({
         </section>
         {isDelivery ? (
           <section className="inv-print-box">
-            <h3>{tr("deliveryDetails")}</h3>
             {inv.delivery_agent_name ? (
               <div>
                 {tr("agent")}: <b>{inv.delivery_agent_name}</b>
               </div>
             ) : null}
             {inv.delivery_agent_code ? (
-              <div>
+              <div className="thermal-hide">
                 {tr("agentCode")}: {inv.delivery_agent_code}
               </div>
             ) : null}
@@ -224,22 +221,22 @@ export function InvoicePrint({
               </div>
             ) : null}
             {inv.expected_delivery_time ? (
-              <div>
+              <div className="thermal-hide">
                 {tr("expectedTime")}: {inv.expected_delivery_time}
               </div>
             ) : null}
             {inv.area ? (
-              <div>
+              <div className="thermal-hide">
                 {tr("area")}: {inv.area}
               </div>
             ) : null}
             {inv.address ? (
-              <div>
+              <div className="thermal-hide">
                 {tr("address")}: {inv.address}
               </div>
             ) : null}
             {extra ? (
-              <div>
+              <div className="thermal-hide">
                 {tr("deliveryFee")}: <b>{money(extra, lang)}</b>
               </div>
             ) : null}
@@ -262,6 +259,9 @@ export function InvoicePrint({
           {items.length ? (
             items.map((item, i) => {
               const bits = itemBits(item, lang);
+              const lineMeta = [bits.category, bits.type, bits.brand, bits.supplier]
+                .filter(Boolean)
+                .join(" · ");
               return (
                 <tr key={item.id ?? i}>
                   <td className="is-n">{i + 1}</td>
@@ -269,6 +269,9 @@ export function InvoicePrint({
                     <div className="inv-print-strong">
                       {itemName(item, lang)}
                     </div>
+                    {lineMeta ? (
+                      <div className="inv-print-line-meta">{lineMeta}</div>
+                    ) : null}
                     {bits.category || bits.type || bits.brand ? (
                       <div className="inv-print-itemmeta">
                         {bits.category ? (
@@ -316,7 +319,7 @@ export function InvoicePrint({
       </table>
 
       <div className="inv-print-foot">
-        <div className="inv-print-notes">
+        <div className="inv-print-notes thermal-hide">
           {inv.notes ? (
             <div>
               <b>{tr("notes")}:</b> {inv.notes}
@@ -338,14 +341,20 @@ export function InvoicePrint({
             <span>{tr("subtotal")}</span>
             <b>{money(subtotal, lang)}</b>
           </div>
-          {discount ? (
+          {isDelivery || extra ? (
             <div>
+              <span>{isDelivery ? tr("deliveryFee") : extraLabel}</span>
+              <b>{money(extra, lang)}</b>
+            </div>
+          ) : null}
+          {discount ? (
+            <div className="thermal-hide">
               <span>{tr("discount")}</span>
               <b>{money(discount, lang)}</b>
             </div>
           ) : null}
           {tax ? (
-            <div>
+            <div className="thermal-hide">
               <span>
                 {tr("tax")}
                 {inv.tax_rate ? ` (${inv.tax_rate}%)` : ""}
@@ -353,14 +362,8 @@ export function InvoicePrint({
               <b>{money(tax, lang)}</b>
             </div>
           ) : null}
-          {extra ? (
-            <div>
-              <span>{extraLabel}</span>
-              <b>{money(extra, lang)}</b>
-            </div>
-          ) : null}
           {returned ? (
-            <div>
+            <div className="thermal-hide">
               <span>{tr("returnedAmount")}</span>
               <b>{money(returned, lang)}</b>
             </div>
@@ -369,6 +372,12 @@ export function InvoicePrint({
             <span>{returned ? tr("netTotal") : tr("total")}</span>
             <b>{money(total, lang)}</b>
           </div>
+          {inv.payment_method ? (
+            <div className="inv-print-pay">
+              <span>{tr("payMethod")}</span>
+              <b>{inv.payment_method}</b>
+            </div>
+          ) : null}
           <div>
             <span>{tr("paid")}</span>
             <b>{money(paid, lang)}</b>

@@ -669,7 +669,6 @@ export default function POSClassic() {
                   open={courierOpen}
                   onToggle={() => { setCashOpen(false); setCustListOpen(false); setCourierOpen((v) => !v); }}
                 >
-                  <button type="button" onClick={() => { setAgentId(""); setCourierOpen(false); }}>{tr("agent")}</button>
                   {couriers.map((a) => (
                     <button
                       key={a.id}
@@ -1009,7 +1008,6 @@ export default function POSClassic() {
       <Modal open={courierFormOpen} title={tr("addAgent")} onClose={() => setCourierFormOpen(false)} wide>
         <StaffForm
           defaultKind="courier"
-          lockKind
           onSaved={(row) => {
             if (row.agent_id) setAgentId(row.agent_id);
             setType("delivery");

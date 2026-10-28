@@ -1048,23 +1048,29 @@ html[data-ui="modern"] button.pos-held:hover {
     margin: 10mm;
   }
 
+  @page slip {
+    size: 80mm auto;
+    margin: 0;
+  }
+
   html.print-thermal,
   html.print-thermal body,
   html.print-thermal main,
   html.print-thermal #root {
-    width: 76mm !important;
-    max-width: 76mm !important;
-    overflow: hidden !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    overflow: visible !important;
   }
 
   html.print-thermal .print-sheet,
   html.print-thermal .inv-print {
+    page: slip;
     border: 0 !important;
     box-shadow: none !important;
     padding: 0 !important;
-    width: 76mm !important;
-    max-width: 76mm !important;
-    overflow: hidden !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    overflow: visible !important;
     font-size: 11px;
     line-height: 1.3;
   }
@@ -4453,6 +4459,11 @@ html[data-ui="modern"] .login-gold {
   margin-top: 4px;
 }
 
+.inv-print-line-meta,
+.inv-print-pay {
+  display: none;
+}
+
 .inv-print-chip {
   display: inline-block;
   border-radius: 999px;
@@ -4576,7 +4587,6 @@ html[data-ui="modern"] .login-gold {
   }
 
   html.print-thermal .inv-print-meta.is-split,
-  html.print-thermal .inv-print-head,
   html.print-thermal .inv-print-foot {
     display: grid;
     grid-template-columns: 1fr;
@@ -4584,23 +4594,71 @@ html[data-ui="modern"] .login-gold {
   }
 
   html.print-thermal .inv-print-head {
+    display: flex;
+    flex-direction: row;
+    direction: ltr;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 2mm;
     margin-bottom: 8px;
     padding-bottom: 6px;
   }
 
+  html.print-thermal .inv-print-brand {
+    flex: 0 0 auto;
+  }
+
+  html.print-thermal .inv-print-brand-text,
+  html.print-thermal .thermal-hide {
+    display: none !important;
+  }
+
+  html.print-thermal .print-brand-footer {
+    display: block !important;
+  }
+
   html.print-thermal .inv-print-brand img {
-    width: 32px;
-    height: 32px;
+    width: 22mm;
+    height: 22mm;
+    object-fit: contain;
   }
 
-  html.print-thermal .inv-print-title {
-    font-size: 15px;
-  }
-
-  html.print-thermal .inv-print-side,
-  html.print-thermal .inv-print-doc {
-    text-align: start;
+  html.print-thermal .inv-print-side {
+    flex: 1;
+    min-width: 0;
+    direction: rtl;
+    text-align: right;
     font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+
+  html.print-thermal .inv-print-doc {
+    font-size: 13px;
+  }
+
+  html.print-thermal .inv-print-line-meta {
+    display: block;
+    margin-top: 1px;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #334155;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  html.print-thermal .inv-print-pay {
+    display: flex;
+  }
+
+  html.print-thermal .inv-print-table th.is-n,
+  html.print-thermal .inv-print-table td.is-n,
+  html.print-thermal .inv-print-table th.is-price,
+  html.print-thermal .inv-print-table td.is-price,
+  html.print-thermal .inv-print-table th.is-disc,
+  html.print-thermal .inv-print-table td.is-disc {
+    display: none !important;
   }
 
   html.print-thermal .inv-print-box {

@@ -342,7 +342,7 @@ export function printPage(mode: "a4" | "thermal" | "landscape" = "a4") {
     document.head.appendChild(style);
   }
   style.textContent = mode === "thermal"
-    ? "@page { size: 80mm auto; margin: 2mm; }"
+    ? "@page { size: 80mm auto; margin: 0; }"
     : mode === "landscape"
       ? "@page { size: A4 landscape; margin: 8mm; }"
       : "@page { size: A4; margin: 10mm; }";

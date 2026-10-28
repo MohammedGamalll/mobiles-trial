@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
-import { get, post, put, del } from "../lib/api";
+import { get, post, del } from "../lib/api";
 import { deliveryAwaitingConfirm, deliveryDisplayStatus, money, statusClass, statusLabel } from "../lib/format";
-import { Btn, Field, Modal, PrintBtn, PrintLetterhead, inputCls } from "../components/ui";
+import { Btn, Modal, PrintBtn, PrintLetterhead } from "../components/ui";
 import { ListGate } from "../components/ListGate";
 import { EmptyFilterState, SmartFilter } from "../components/SmartFilter";
 import { useListQuery } from "../hooks/useListQuery";
@@ -12,7 +12,7 @@ import { OsmMap } from "../components/OsmMap";
 import { ActionBtns, useConfirm } from "../components/Confirm";
 import { ListPager, TablePager } from "../components/TablePager";
 import { applyListPaging, inferredTotal, listPageSize, usePagedRows } from "../hooks/usePagedRows";
-import { StaffForm } from "../components/StaffForm";
+import { StaffForm, type StaffEdit } from "../components/StaffForm";
 
 export function DeliveryBoard() {
   const { tr, lang, can, user, settings } = useApp();
@@ -28,7 +28,8 @@ export function DeliveryBoard() {
   const [agents, setAgents] = useState<any[]>([]);
   const [perf, setPerf] = useState<Record<number, any>>({});
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 });
+  const [staffRow, setStaffRow] = useState<StaffEdit | null>(null);
+  const [linkAgent, setLinkAgent] = useState<any | null>(null);
   const { confirmDelete, dialog } = useConfirm();
 
   async function loadOrders() {
@@ -263,7 +264,7 @@ export function DeliveryBoard() {
       {tab === "agents" ? (
         <div>
           {can("settings.edit", "hr.manage") ? (
-            <Btn className="no-print mb-3" onClick={() => { setForm({ name: "", code: "", phone: "", notes: "", status: "active", role_type: "delivery", commission_rate: 0, area: "", id: 0 }); setOpen(true); }}>{tr("addCourier")}</Btn>
+            <Btn className="no-print mb-3" onClick={() => { setStaffRow(null); setLinkAgent(null); setOpen(true); }}>{tr("addCourier")}</Btn>
           ) : null}
           <ListGate loading={agentsList.loading} err={agentsList.err} onRetry={agentsList.reload} empty={!agents.length} emptyFallback={<div className="rounded-2xl bg-white p-8 text-center text-slate-400">{tr("noData")}</div>}>
             <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
@@ -304,7 +305,13 @@ export function DeliveryBoard() {
                             <ActionBtns
                               canEdit
                               canDelete
-                              onEdit={() => { setForm({ ...a, notes: a.notes || "", role_type: a.role_type || "delivery", commission_rate: a.commission_rate || 0, area: a.area || "" }); setOpen(true); }}
+                              onEdit={() => {
+                                void get<{ data: StaffEdit | null }>(`/api/hr/staff/by-agent/${a.id}`).then((r) => {
+                                  setStaffRow(r.data?.id ? r.data : null);
+                                  setLinkAgent(r.data?.id ? null : a);
+                                  setOpen(true);
+                                });
+                              }}
                               onDelete={() => confirmDelete(a.name, async () => { await del(`/api/delivery/agents/${a.id}`); agentsList.reload(); })}
                             />
                           ) : null}
@@ -317,30 +324,25 @@ export function DeliveryBoard() {
             </div>
           </ListGate>
           <TablePager page={agentPage} pageSize={agentSize} total={agents.length} disabled={agentsList.loading} onPage={setAgentPage} onPageSize={setAgentSize} />
-          <Modal open={open} title={form.id ? tr("edit") : tr("addCourier")} onClose={() => setOpen(false)} wide>
-            {!form.id ? (
-              <StaffForm defaultKind="courier" onSaved={() => { setOpen(false); agentsList.reload(); }} onCancel={() => setOpen(false)} />
-            ) : (
-            <div className="space-y-3">
-              <Field label={tr("name")}><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-              <Field label={tr("code")}><input className={inputCls} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></Field>
-              <Field label={tr("phone")}><input className={inputCls} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-              <Field label={tr("status")}>
-                <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                  <option value="active">{tr("active")}</option>
-                  <option value="inactive">{tr("inactive")}</option>
-                </select>
-              </Field>
-              <Field label={tr("commissionRate")}><input className={inputCls} type="number" value={form.commission_rate} onChange={(e) => setForm({ ...form, commission_rate: Number(e.target.value) })} /></Field>
-              <Field label={tr("area")}><input className={inputCls} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} /></Field>
-              <Field label={tr("notes")}><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
-              <Btn onClick={async () => {
-                await put(`/api/delivery/agents/${form.id}`, form);
-                setOpen(false);
-                agentsList.reload();
-              }}>{tr("save")}</Btn>
-            </div>
-            )}
+          <Modal open={open} title={staffRow || linkAgent ? tr("edit") : tr("addCourier")} onClose={() => setOpen(false)} wide>
+            <StaffForm
+              key={`${staffRow?.id || 0}-${linkAgent?.id || 0}`}
+              defaultKind="courier"
+              employee={staffRow}
+              linkAgentId={linkAgent?.id || null}
+              draft={linkAgent ? {
+                name: linkAgent.name,
+                phone: linkAgent.phone,
+                code: linkAgent.code,
+                notes: linkAgent.notes || "",
+                commission_rate: linkAgent.commission_rate || 0,
+                area: linkAgent.area || "",
+                status: linkAgent.status || "active",
+                work_type: "delivery",
+              } : null}
+              onSaved={() => { setOpen(false); agentsList.reload(); }}
+              onCancel={() => setOpen(false)}
+            />
           </Modal>
           {dialog}
         </div>

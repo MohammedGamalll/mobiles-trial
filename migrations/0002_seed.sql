@@ -399,7 +399,7 @@ Thank you for choosing {{store_name}} ❤️'),
   ('out_for_delivery', 'خرج للتوصيل', 'Out for Delivery',
    'أهلاً {{customer_name}} 👋
 
-طلبك رقم {{invoice_number}} خرج الآن مع التيار {{agent_name}} ({{agent_code}}).
+طلبك رقم {{invoice_number}} خرج الآن مع الطيار {{agent_name}} ({{agent_code}}).
 {{time_block}}
 {{address_block}}
 للمتابعة: {{agent_phone}}

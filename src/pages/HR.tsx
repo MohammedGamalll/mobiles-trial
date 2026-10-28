@@ -16,11 +16,10 @@ import { applyListPaging, inferredTotal, listPageSize } from "../hooks/usePagedR
 import { StaffForm } from "../components/StaffForm";
 
 export function EmployeesPage() {
-  const { tr, lang, lookups, can } = useApp();
+  const { tr, lang, can } = useApp();
   const f = useListQuery("employees");
   const [rows, setRows] = useState<any[]>([]);
   const [empTotal, setEmpTotal] = useState(0);
-  const [users, setUsers] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>(emptyEmp());
   const { confirmDelete, dialog } = useConfirm();
@@ -45,11 +44,7 @@ export function EmployeesPage() {
   }
   const list = useLiveList(async () => {
     await load();
-    const [u, s] = await Promise.all([
-      get<{ data: any[] }>("/api/hr/users-lite"),
-      get<{ data: any[] }>("/api/hr/shifts"),
-    ]);
-    setUsers(u.data || []);
+    const s = await get<{ data: any[] }>("/api/hr/shifts");
     setShifts(s.data || []);
   }, [f.qs]);
 
@@ -154,63 +149,11 @@ export function EmployeesPage() {
         ) : null}
       </Modal>
       <Modal open={open} title={form.id ? tr("edit") : tr("addEmployee")} onClose={() => setOpen(false)} wide>
-        {!form.id ? (
-          <StaffForm onSaved={() => { setOpen(false); list.reload(); }} onCancel={() => setOpen(false)} />
-        ) : (
-          <>
-            <div className="detail-strip mb-4 grid gap-2 md:grid-cols-5">
-              <Stat label={tr("name")} value={form.name || "-"} />
-              <Stat label={tr("code")} value={form.code || "-"} />
-              <Stat label={tr("phone")} value={form.phone || "-"} />
-              <Stat label={tr("jobTitle")} value={form.job_title || "-"} />
-              <Stat label={tr("department")} value={form.department || "-"} />
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {["code", "name", "phone", "job_title", "department", "national_id"].map((k) => (
-                <Field key={k} label={k}><input className={inputCls} value={form[k] || ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>
-              ))}
-              <Field label={tr("hireDate")}><input className={inputCls} type="date" value={form.hire_date || ""} onChange={(e) => setForm({ ...form, hire_date: e.target.value })} /></Field>
-              <Field label={tr("workType")}>
-                <select className={inputCls} value={form.work_type} onChange={(e) => setForm({ ...form, work_type: e.target.value })}>
-                  <option value="office">{tr("workOffice")}</option>
-                  <option value="delivery">{tr("workDelivery")}</option>
-                </select>
-              </Field>
-              <Field label={tr("basicSalary")}><input className={inputCls} type="number" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: Number(e.target.value) })} /></Field>
-              <Field label={tr("allowances")}><input className={inputCls} type="number" value={form.allowances} onChange={(e) => setForm({ ...form, allowances: Number(e.target.value) })} /></Field>
-              <Field label={tr("status")}>
-                <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                  <option value="active">{tr("active")}</option>
-                  <option value="inactive">{tr("inactive")}</option>
-                </select>
-              </Field>
-              <Field label={tr("linkedUser")}>
-                <select className={inputCls} value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value ? Number(e.target.value) : "" })}>
-                  <option value="">-</option>
-                  {users.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.username})</option>)}
-                </select>
-              </Field>
-              <Field label={tr("agent")}>
-                <select className={inputCls} value={form.delivery_agent_id} onChange={(e) => setForm({ ...form, delivery_agent_id: e.target.value ? Number(e.target.value) : "" })}>
-                  <option value="">-</option>
-                  {(lookups?.delivery_agents || []).map((a) => <option key={a.id} value={a.id}>{a.name} ({a.code})</option>)}
-                </select>
-              </Field>
-              <Field label={tr("shift")}>
-                <select className={inputCls} value={form.shift_id} onChange={(e) => setForm({ ...form, shift_id: e.target.value ? Number(e.target.value) : "" })}>
-                  <option value="">-</option>
-                  {shifts.map((s) => <option key={s.id} value={s.id}>{lang === "ar" ? s.name : (s.name_en || s.name)} {s.start_time}-{s.end_time}</option>)}
-                </select>
-              </Field>
-            </div>
-            <Btn className="mt-4" onClick={async () => {
-              const body = { ...form, user_id: form.user_id || null, delivery_agent_id: form.delivery_agent_id || null, shift_id: form.shift_id || null };
-              await put(`/api/hr/employees/${form.id}`, body);
-              setOpen(false);
-              list.reload();
-            }}>{tr("save")}</Btn>
-          </>
-        )}
+        <StaffForm
+          employee={form.id ? form : null}
+          onSaved={() => { setOpen(false); list.reload(); }}
+          onCancel={() => setOpen(false)}
+        />
       </Modal>
       {dialog}
     </div>

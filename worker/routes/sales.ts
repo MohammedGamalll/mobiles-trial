@@ -269,7 +269,10 @@ salesRoutes.post("/invoices", requirePerm("sales.create"), async (c) => {
   }
   let agent = null as null | { id: number; name: string; code: string; phone: string | null };
   if (type === "delivery" && b.delivery_agent_id) {
-    agent = await c.env.DB.prepare("SELECT * FROM delivery_agents WHERE id = ?").bind(b.delivery_agent_id).first();
+    agent = await c.env.DB.prepare("SELECT * FROM delivery_agents WHERE id = ? AND deleted_at IS NULL").bind(b.delivery_agent_id).first();
+  }
+  if (type === "delivery" && (b.hold || (!b.quote && !b.order)) && !agent) {
+    return c.json({ error: "courier_required" }, 400);
   }
   let salesAgentId = b.sales_agent_id || null;
   if (salesAgentId) {

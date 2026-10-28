@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../context";
 import { get } from "../lib/api";
 import { apiMessage } from "../lib/errors";
-import { saveStaff } from "../lib/staff-client";
+import { saveStaff, updateStaff } from "../lib/staff-client";
 import { Btn, Field, inputCls } from "./ui";
 
 export const STAFF_KINDS = ["courier", "cashier", "warehouse", "accountant"] as const;
@@ -23,24 +23,53 @@ const KIND_LABEL: Record<StaffKind, "staffKindCourier" | "staffKindCashier" | "s
   accountant: "staffKindAccountant",
 };
 
-function emptyForm(kind: StaffKind) {
+export type StaffEdit = {
+  id?: number;
+  name?: string;
+  phone?: string;
+  code?: string;
+  username?: string;
+  job_title?: string;
+  department?: string;
+  hire_date?: string;
+  basic_salary?: number;
+  allowances?: number;
+  national_id?: string;
+  notes?: string;
+  shift_id?: number | "" | null;
+  commission_rate?: number;
+  area?: string;
+  status?: string;
+  role_slug?: string;
+  work_type?: string;
+};
+
+function kindFrom(row?: StaffEdit | null): StaffKind {
+  if (row?.role_slug === "delivery" || row?.work_type === "delivery") return "courier";
+  if (row?.role_slug === "warehouse") return "warehouse";
+  if (row?.role_slug === "accountant") return "accountant";
+  return "cashier";
+}
+
+function emptyForm(kind: StaffKind, row?: StaffEdit | null) {
   return {
-    kind,
-    name: "",
-    phone: "",
-    code: "",
-    username: "",
+    kind: row ? kindFrom(row) : kind,
+    name: row?.name || "",
+    phone: row?.phone || "",
+    code: row?.code || "",
+    username: row?.username || "",
     password: "",
-    job_title: "",
-    department: "",
-    hire_date: new Date().toISOString().slice(0, 10),
-    basic_salary: 0,
-    allowances: 0,
-    national_id: "",
-    notes: "",
-    shift_id: "" as number | "",
-    commission_rate: 0,
-    area: "",
+    job_title: row?.job_title || "",
+    department: row?.department || "",
+    hire_date: row?.hire_date || new Date().toISOString().slice(0, 10),
+    basic_salary: Number(row?.basic_salary || 0),
+    allowances: Number(row?.allowances || 0),
+    national_id: row?.national_id || "",
+    notes: row?.notes || "",
+    status: row?.status || "active",
+    shift_id: (row?.shift_id || "") as number | "",
+    commission_rate: Number(row?.commission_rate || 0),
+    area: row?.area || "",
     agent_role: "delivery",
   };
 }
@@ -48,24 +77,31 @@ function emptyForm(kind: StaffKind) {
 export function StaffForm({
   defaultKind = "cashier",
   lockKind = false,
+  employee,
+  draft,
+  linkAgentId,
   onSaved,
   onCancel,
 }: {
   defaultKind?: StaffKind;
   lockKind?: boolean;
+  employee?: StaffEdit | null;
+  draft?: StaffEdit | null;
+  linkAgentId?: number | null;
   onSaved?: (row: StaffSaved) => void;
   onCancel?: () => void;
 }) {
   const { tr, lang, refreshLookups } = useApp();
-  const [form, setForm] = useState(() => emptyForm(defaultKind));
+  const seed = employee || draft;
+  const [form, setForm] = useState(() => emptyForm(defaultKind, seed));
   const [shifts, setShifts] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const needsAgent = form.kind === "courier";
 
   useEffect(() => {
-    setForm(emptyForm(defaultKind));
-  }, [defaultKind]);
+    setForm(emptyForm(defaultKind, employee || draft));
+  }, [defaultKind, employee?.id, linkAgentId]);
 
   useEffect(() => {
     get<{ data: any[] }>("/api/hr/shifts")
@@ -105,8 +141,16 @@ export function StaffForm({
           <input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
         </Field>
         <Field label={tr("password")}>
-          <input className={inputCls} type="password" placeholder={tr("staffPasswordHint")} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <input className={inputCls} type="password" placeholder={employee || linkAgentId ? tr("staffPasswordKeep") : tr("staffPasswordHint")} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
         </Field>
+        {employee || linkAgentId ? (
+          <Field label={tr("status")}>
+            <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <option value="active">{tr("active")}</option>
+              <option value="inactive">{tr("inactive")}</option>
+            </select>
+          </Field>
+        ) : null}
         <Field label={tr("jobTitle")}>
           <input className={inputCls} value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })} />
         </Field>
@@ -159,11 +203,15 @@ export function StaffForm({
             setBusy(true);
             setErr("");
             try {
-              const r = await saveStaff({
+              const payload = {
                 ...form,
                 shift_id: form.shift_id || null,
                 agent_role: needsAgent ? form.agent_role : undefined,
-              });
+                status: form.status,
+              };
+              const r = employee?.id
+                ? await updateStaff(employee.id, payload)
+                : await saveStaff({ ...payload, existing_agent_id: needsAgent && linkAgentId ? linkAgentId : null });
               await refreshLookups();
               onSaved?.(r);
             } catch (e) {

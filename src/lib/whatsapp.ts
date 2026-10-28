@@ -41,7 +41,7 @@ export function heldInvoiceMessage(store: string, inv: {
     `الإجمالي: ${inv.subtotal ?? ""}`,
     `الخصم: ${inv.discount ?? 0}`,
     `الصافي: ${inv.total ?? ""}`,
-    inv.delivery_agent_name ? `التيار: ${inv.delivery_agent_name}${inv.delivery_agent_phone ? ` - ${inv.delivery_agent_phone}` : ""}` : "",
+    inv.delivery_agent_name ? `الطيار: ${inv.delivery_agent_name}${inv.delivery_agent_phone ? ` - ${inv.delivery_agent_phone}` : ""}` : "",
   ].filter(Boolean).join("\n");
 }
 

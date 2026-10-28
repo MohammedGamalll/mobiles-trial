@@ -1,5 +1,5 @@
 import type { StaffKind, StaffSaved } from "../components/StaffForm";
-import { ApiError, get, post } from "./api";
+import { ApiError, get, post, put } from "./api";
 
 const KIND_ROLE: Record<StaffKind, string> = {
   courier: "delivery",
@@ -22,10 +22,12 @@ export type StaffPayload = {
   allowances?: number;
   national_id?: string;
   notes?: string;
+  status?: string;
   shift_id?: number | null;
   commission_rate?: number;
   area?: string;
   agent_role?: string;
+  existing_agent_id?: number | null;
 };
 
 function missingRoute(err: unknown) {
@@ -113,6 +115,10 @@ async function saveStaffLegacy(body: StaffPayload): Promise<StaffSaved> {
   });
 
   return { employee_id: emp.id, user_id: user.id, agent_id: agentId, username, name };
+}
+
+export async function updateStaff(employeeId: number, body: StaffPayload): Promise<StaffSaved> {
+  return put<StaffSaved>(`/api/hr/staff/${employeeId}`, body);
 }
 
 export async function saveStaff(body: StaffPayload): Promise<StaffSaved> {

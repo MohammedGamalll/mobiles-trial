@@ -53,8 +53,8 @@ const WA_VARS = [
   { key: "store_name", ar: "اسم المحل", en: "Store" },
   { key: "order_type", ar: "نوع الطلب", en: "Order type" },
   { key: "address", ar: "العنوان", en: "Address" },
-  { key: "agent_name", ar: "التيار", en: "Courier" },
-  { key: "agent_phone", ar: "هاتف التيار", en: "Courier phone" },
+  { key: "agent_name", ar: "الطيار", en: "Courier" },
+  { key: "agent_phone", ar: "هاتف الطيار", en: "Courier phone" },
   { key: "delivery_time", ar: "وقت التوصيل", en: "Delivery time" },
 ] as const;
 

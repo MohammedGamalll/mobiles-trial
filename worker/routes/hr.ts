@@ -7,7 +7,7 @@ import { isSuperAdmin, userHasPerm } from "../lib/user-permissions";
 import { applyDate, applyEq, applyRange, applySearch, listParams, resolveDates } from "../lib/filters";
 import { notifyAdmins, safeNotify, sendNotification, userIdForEmployee } from "../lib/notifications";
 import { accruedBonusTotal, applyAdvanceDeduction, netPay } from "../lib/invoice-math";
-import { createStaff, STAFF_KINDS, type StaffInput } from "../lib/staff";
+import { createStaff, updateStaff, STAFF_KINDS, type StaffInput } from "../lib/staff";
 
 export const hrRoutes = new Hono<{ Bindings: AppBindings; Variables: AppVars }>();
 
@@ -367,8 +367,41 @@ hrRoutes.post("/staff", requirePerm("hr.manage", "users.manage", "settings.edit"
     return c.json(created, 201);
   } catch (e) {
     const code = e instanceof Error ? e.message : "error";
-    if (code === "missing_name" || code === "invalid_kind") return c.json({ error: code }, 400);
-    if (code === "username_taken") return c.json({ error: code }, 409);
+    if (code === "missing_name" || code === "invalid_kind" || code === "missing_fields") return c.json({ error: code }, 400);
+    if (code === "username_taken" || code === "code_taken") return c.json({ error: code }, 409);
+    if (code === "not_found") return c.json({ error: code }, 404);
+    throw e;
+  }
+});
+
+hrRoutes.get("/staff/by-agent/:agentId", requirePerm("hr.manage", "users.manage", "settings.edit"), async (c) => {
+  const agentId = Number(c.req.param("agentId"));
+  const row = await c.env.DB
+    .prepare(
+      `SELECT e.*, u.username, r.slug as role_slug, da.commission_rate, da.area
+       FROM employees e
+       LEFT JOIN users u ON u.id = e.user_id
+       LEFT JOIN roles r ON r.id = u.role_id
+       LEFT JOIN delivery_agents da ON da.id = e.delivery_agent_id
+       WHERE e.delivery_agent_id = ? AND e.deleted_at IS NULL
+       ORDER BY e.id LIMIT 1`,
+    )
+    .bind(agentId)
+    .first();
+  return c.json({ data: row || null });
+});
+
+hrRoutes.put("/staff/:employeeId", requirePerm("hr.manage", "users.manage", "settings.edit"), async (c) => {
+  const id = Number(c.req.param("employeeId"));
+  const b = await c.req.json<StaffInput>();
+  try {
+    const saved = await updateStaff(c.env.DB, id, b, c.get("user"));
+    return c.json(saved);
+  } catch (e) {
+    const code = e instanceof Error ? e.message : "error";
+    if (code === "missing_name" || code === "invalid_kind" || code === "missing_fields") return c.json({ error: code }, 400);
+    if (code === "username_taken" || code === "code_taken") return c.json({ error: code }, 409);
+    if (code === "not_found") return c.json({ error: code }, 404);
     throw e;
   }
 });
@@ -391,10 +424,12 @@ hrRoutes.get("/employees", requirePerm("hr.view", "hr.manage", "hr.payroll"), as
   applyDate(where, params, "e.hire_date", { ...p, period: p.hire_period || p.period, from: p.hire_from || p.from, to: p.hire_to || p.to, day: p.hire_date || p.day });
   const { results } = await c.env.DB
     .prepare(
-      `SELECT e.*, u.username, da.name as agent_name, da.code as agent_code, s.name as shift_name, s.start_time as shift_start,
+      `SELECT e.*, u.username, r.slug as role_slug, da.name as agent_name, da.code as agent_code,
+              da.commission_rate, da.area, s.name as shift_name, s.start_time as shift_start,
               COALESCE((SELECT SUM(COALESCE(sa.remaining, sa.amount)) FROM salary_advances sa WHERE sa.employee_id = e.id AND sa.status = 'open'), 0) as open_advances
        FROM employees e
        LEFT JOIN users u ON u.id = e.user_id
+       LEFT JOIN roles r ON r.id = u.role_id
        LEFT JOIN delivery_agents da ON da.id = e.delivery_agent_id
        LEFT JOIN work_shifts s ON s.id = e.shift_id
        WHERE ${where.join(" AND ")} ORDER BY e.code`,

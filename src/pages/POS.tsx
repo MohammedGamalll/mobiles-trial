@@ -938,16 +938,6 @@ export default function POS() {
                             autoFocus
                             onChange={(e) => setCourierQ(e.target.value)}
                           />
-                          <button
-                            type="button"
-                            className="block w-full px-3 py-2.5 text-start text-sm hover:bg-[var(--surface-2)]"
-                            onClick={() => {
-                              setAgentId("");
-                              setCourierOpen(false);
-                            }}
-                          >
-                            {tr("agent")}
-                          </button>
                           {courierHits.map((a) => (
                             <button
                               key={a.id}
@@ -2004,7 +1994,6 @@ export default function POS() {
       >
         <StaffForm
           defaultKind="courier"
-          lockKind
           onSaved={(row) => {
             if (row.agent_id) setAgentId(row.agent_id);
             setCourierFormOpen(false);

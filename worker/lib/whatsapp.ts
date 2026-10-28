@@ -76,7 +76,7 @@ Thank you for choosing {{store_name}} ❤️`,
     name_en: "Out for delivery",
     body_ar: `أهلاً {{customer_name}} 👋
 
-طلبك رقم {{invoice_number}} خرج الآن مع التيار {{agent_name}} ({{agent_code}}).
+طلبك رقم {{invoice_number}} خرج الآن مع الطيار {{agent_name}} ({{agent_code}}).
 {{time_block}}
 {{address_block}}
 للمتابعة: {{agent_phone}}
@@ -278,7 +278,7 @@ export function invoiceTemplateVars(
   if (isDelivery && invoice.delivery_agent_name) {
     agentBlock =
       lang === "ar"
-        ? `\nالتيار:\n${invoice.delivery_agent_name}\n\nرقم التيار:\n${invoice.delivery_agent_code || "-"}\n${invoice.delivery_agent_phone ? `\nهاتف التيار:\n${invoice.delivery_agent_phone}\n` : ""}`
+        ? `\nالطيار:\n${invoice.delivery_agent_name}\n\nرقم الطيار:\n${invoice.delivery_agent_code || "-"}\n${invoice.delivery_agent_phone ? `\nهاتف الطيار:\n${invoice.delivery_agent_phone}\n` : ""}`
         : `\nCourier:\n${invoice.delivery_agent_name}\n\nCourier no.:\n${invoice.delivery_agent_code || "-"}\n${invoice.delivery_agent_phone ? `\nPhone:\n${invoice.delivery_agent_phone}\n` : ""}`;
   }
   let timeBlock = "";
